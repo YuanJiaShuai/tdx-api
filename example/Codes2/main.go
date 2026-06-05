@@ -1,0 +1,24 @@
+package main
+
+import (
+	"strings"
+
+	"github.com/injoyai/logs"
+	"github.com/injoyai/tdx"
+)
+
+func main() {
+	cs, err := tdx.NewCodes()
+	logs.PanicErr(err)
+
+	//c := cs.Get("sz000001")
+	//
+	//fmt.Println(c.FloatStock, c.TotalStock)
+
+	for _, v := range cs.GetIndexes().Codes() {
+		if strings.HasPrefix(v, "sz") {
+			logs.Debug(v)
+		}
+	}
+
+}

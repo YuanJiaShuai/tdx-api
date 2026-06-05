@@ -1,0 +1,44 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Go
+bin/
+*.test
+coverage.out
+
+# Local build outputs
+*.exe
+*.dll
+*.so
+*.dylib
+*.log
+
+# Project runtime data and generated reports
+data/
+reports/
+web/data/
+web/output.log
+web/server.exe
+
+# Local editor and environment files
+.idea/
+.vscode/
+*.swp
+*.swo
+.env
+.env.*
