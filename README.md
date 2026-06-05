@@ -6,8 +6,8 @@
 [![Docker](https://img.shields.io/badge/Docker-支持-2496ED?style=flat&logo=docker)](https://www.docker.com)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**感谢源作者 [injoyai](https://github.com/injoyai/tdx)，请支持原作者！**
-
+**感谢项目原作者 [tdx-api](https://github.com/oficcejo/tdx-api)，请支持原作者！**
+**感谢数据源作者 [injoyai](https://github.com/injoyai/tdx)，请支持原作者！**
 ---
 
 ## ✨ 功能特性
@@ -215,6 +215,7 @@ tdx-api/
 
 | 资源 | 链接 |
 |-----|------|
+| 原项目 | [tdx-api](https://github.com/oficcejo/tdx-api) |
 | 原项目 | [injoyai/tdx](https://github.com/injoyai/tdx) |
 | API文档 | [API_接口文档.md](API_接口文档.md) |
 | Docker部署 | [DOCKER_DEPLOY.md](DOCKER_DEPLOY.md) |
