@@ -43,6 +43,7 @@ function switchWorkspace(name, button) {
         }, 50);
     }
     if (name === 'formulas') loadFormulaList();
+    if (name === 'dataCenter') loadDataCenter();
     if (name === 'selectionResults') loadSelectionResults();
     if (name === 'automations') loadAutomationData();
     if (name === 'webhooks') loadWebhooks();
@@ -84,6 +85,97 @@ function escapeHTML(value) {
         '"': '&quot;',
         "'": '&#39;'
     }[ch]));
+}
+
+function compactValue(value) {
+    if (value === null || value === undefined || value === '') return '--';
+    if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/\.?0+$/, '');
+    if (typeof value === 'boolean') return value ? '是' : '否';
+    if (Array.isArray(value)) return value.length > 6 ? `${value.slice(0, 6).join(', ')} ...` : value.join(', ');
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+}
+
+function setLoadingText(containerId, text = '加载中...') {
+    const container = document.getElementById(containerId);
+    if (container) container.innerHTML = `<div class="data-item">${escapeHTML(text)}</div>`;
+}
+
+function setErrorText(containerId, error) {
+    const container = document.getElementById(containerId);
+    if (container) container.innerHTML = `<div class="data-item">${escapeHTML(error.message || error)}</div>`;
+}
+
+function renderMetricCards(containerId, items) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = items.map(item => `
+        <div class="metric-card">
+            <span class="metric-label">${escapeHTML(item.label)}</span>
+            <span class="metric-value">${escapeHTML(item.value)}</span>
+            ${item.note ? `<span class="metric-note">${escapeHTML(item.note)}</span>` : ''}
+        </div>
+    `).join('');
+}
+
+function renderTable(containerId, rows, columns) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    if (!rows || rows.length === 0) {
+        container.innerHTML = '<div class="data-item">暂无数据</div>';
+        return;
+    }
+    const visibleRows = rows.slice(0, 300);
+    container.innerHTML = `
+        <table class="data-table">
+            <thead>
+                <tr>${columns.map(col => `<th>${escapeHTML(col.label)}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+                ${visibleRows.map(row => `
+                    <tr>
+                        ${columns.map(col => `<td>${escapeHTML(compactValue(typeof col.value === 'function' ? col.value(row) : row[col.key]))}</td>`).join('')}
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderKeyValuePanel(title, data) {
+    const entries = Object.entries(data || {}).filter(([, value]) => value !== undefined && value !== null && typeof value !== 'object');
+    if (entries.length === 0) {
+        return `
+            <div class="data-panel">
+                <div class="data-panel-title">${escapeHTML(title)}</div>
+                <div class="data-panel-body"><pre class="json-output">${escapeHTML(prettyJSON(data || {}))}</pre></div>
+            </div>
+        `;
+    }
+    return `
+        <div class="data-panel">
+            <div class="data-panel-title">${escapeHTML(title)}</div>
+            <div class="data-panel-body">
+                <div class="kv-grid">
+                    ${entries.slice(0, 80).map(([key, value]) => `
+                        <div class="kv-item">
+                            <span class="kv-key">${escapeHTML(key)}</span>
+                            <span class="kv-value">${escapeHTML(compactValue(value))}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderJsonPanel(title, data) {
+    return `
+        <div class="data-panel">
+            <div class="data-panel-title">${escapeHTML(title)}</div>
+            <div class="data-panel-body"><pre class="json-output">${escapeHTML(prettyJSON(data))}</pre></div>
+        </div>
+    `;
 }
 
 // 搜索股票
@@ -1063,6 +1155,232 @@ async function deleteWebhook(id) {
     if (!confirm('确认删除这个 Webhook？')) return;
     await apiFetch(`/api/webhooks/${id}`, { method: 'DELETE' });
     await loadWebhooks();
+}
+
+let dataCenterLoaded = false;
+
+async function loadDataCenter() {
+    if (dataCenterLoaded) return;
+    dataCenterLoaded = true;
+    await Promise.allSettled([
+        loadMarketOverview(),
+        loadStockProfile(),
+        loadHistoryData('tdx'),
+        loadBlockData()
+    ]);
+}
+
+async function loadMarketOverview() {
+    setLoadingText('marketOverviewStats');
+    try {
+        const [status, stats, count] = await Promise.all([
+            apiFetch('/api/server-status'),
+            apiFetch('/api/market-stats'),
+            apiFetch('/api/market-count')
+        ]);
+        renderMetricCards('marketOverviewStats', [
+            { label: '服务状态', value: status.status || '--', note: status.connected ? '通达信已连接' : '连接异常' },
+            { label: '市场证券数', value: count.total || 0, note: (count.exchanges || []).map(v => `${v.exchange}:${v.count}`).join(' · ') },
+            { label: '沪市股票', value: stats.sh?.total || 0, note: `涨 ${stats.sh?.up || 0} · 跌 ${stats.sh?.down || 0} · 平 ${stats.sh?.flat || 0}` },
+            { label: '深市股票', value: stats.sz?.total || 0, note: `涨 ${stats.sz?.up || 0} · 跌 ${stats.sz?.down || 0} · 平 ${stats.sz?.flat || 0}` },
+            { label: '北交所', value: stats.bj?.total || 0, note: `涨 ${stats.bj?.up || 0} · 跌 ${stats.bj?.down || 0} · 平 ${stats.bj?.flat || 0}` }
+        ]);
+        await loadCodeDirectory();
+    } catch (error) {
+        setErrorText('marketOverviewStats', error);
+    }
+}
+
+async function loadCodeDirectory() {
+    setLoadingText('marketDirectoryOutput');
+    try {
+        const exchange = document.getElementById('marketCodeExchange')?.value || 'all';
+        const limit = document.getElementById('marketCodeLimit')?.value || '80';
+        const data = await apiFetch(`/api/codes?exchange=${encodeURIComponent(exchange)}`);
+        const rows = (data.codes || []).slice(0, Number(limit) || 80);
+        renderTable('marketDirectoryOutput', rows, [
+            { key: 'code', label: '代码' },
+            { key: 'name', label: '名称' },
+            { key: 'exchange', label: '市场' }
+        ]);
+    } catch (error) {
+        setErrorText('marketDirectoryOutput', error);
+    }
+}
+
+async function loadETFDirectory() {
+    setLoadingText('marketDirectoryOutput');
+    try {
+        const exchange = document.getElementById('marketCodeExchange')?.value || 'all';
+        const limit = document.getElementById('marketCodeLimit')?.value || '80';
+        const data = await apiFetch(`/api/etf?exchange=${encodeURIComponent(exchange)}&limit=${encodeURIComponent(limit)}`);
+        renderTable('marketDirectoryOutput', data.list || [], [
+            { key: 'code', label: '代码' },
+            { key: 'name', label: '名称' },
+            { key: 'exchange', label: '市场' },
+            { key: 'last_price', label: '最新价' }
+        ]);
+    } catch (error) {
+        setErrorText('marketDirectoryOutput', error);
+    }
+}
+
+function syncDataStockInputs() {
+    const code = document.getElementById('dataStockCode')?.value || currentStock || '000001';
+    const historyCode = document.getElementById('historyCode');
+    if (historyCode && !historyCode.value.trim()) historyCode.value = code;
+    return code.trim();
+}
+
+async function loadStockProfile() {
+    setLoadingText('stockProfileOutput');
+    try {
+        const code = syncDataStockInputs();
+        const [finance, categories, gbbq, auction] = await Promise.allSettled([
+            apiFetch(`/api/finance?code=${encodeURIComponent(code)}`),
+            apiFetch(`/api/company/categories?code=${encodeURIComponent(code)}`),
+            apiFetch(`/api/gbbq?code=${encodeURIComponent(code)}`),
+            apiFetch(`/api/call-auction?code=${encodeURIComponent(code)}`)
+        ]);
+        const categoryList = categories.status === 'fulfilled' ? categories.value || [] : [];
+        const panels = [
+            finance.status === 'fulfilled' ? renderKeyValuePanel('财务信息', finance.value) : renderJsonPanel('财务信息', finance.reason?.message || '加载失败'),
+            renderJsonPanel('F10目录', categoryList.slice(0, 20)),
+            renderJsonPanel('股本变迁', (gbbq.status === 'fulfilled' ? gbbq.value || [] : []).slice?.(0, 20) || gbbq.value || []),
+            renderJsonPanel('集合竞价', auction.status === 'fulfilled' ? auction.value : auction.reason?.message || '加载失败')
+        ];
+        document.getElementById('stockProfileOutput').innerHTML = panels.join('');
+    } catch (error) {
+        setErrorText('stockProfileOutput', error);
+    }
+}
+
+async function loadIncomeReport() {
+    const output = document.getElementById('stockProfileOutput');
+    if (!output) return;
+    setLoadingText('stockProfileOutput');
+    try {
+        const code = syncDataStockInputs();
+        const startDate = document.getElementById('incomeStartDate')?.value || '';
+        const days = document.getElementById('incomeDays')?.value || '';
+        const data = await apiFetch(`/api/income?code=${encodeURIComponent(code)}&start_date=${encodeURIComponent(startDate)}&days=${encodeURIComponent(days)}`);
+        output.innerHTML = renderJsonPanel('收益测算', data);
+    } catch (error) {
+        setErrorText('stockProfileOutput', error);
+    }
+}
+
+async function loadHistoryData(mode) {
+    setLoadingText('historyOutput');
+    try {
+        const code = document.getElementById('historyCode')?.value || document.getElementById('dataStockCode')?.value || '000001';
+        const type = document.getElementById('historyType')?.value || 'day';
+        const limit = document.getElementById('historyLimit')?.value || '120';
+        const date = document.getElementById('historyDate')?.value || '';
+        const startDate = document.getElementById('historyStartDate')?.value || '';
+        const endDate = document.getElementById('historyEndDate')?.value || '';
+        let data;
+        if (mode === 'ths') {
+            data = await apiFetch(`/api/kline-all/ths?code=${encodeURIComponent(code)}&type=${encodeURIComponent(type)}&limit=${encodeURIComponent(limit)}`);
+            renderKlineRows(data);
+        } else if (mode === 'history') {
+            data = await apiFetch(`/api/kline-history?code=${encodeURIComponent(code)}&type=${encodeURIComponent(type)}&limit=${encodeURIComponent(limit)}`);
+            renderKlineRows(data);
+        } else if (mode === 'trade') {
+            data = await apiFetch(`/api/trade-history/full?code=${encodeURIComponent(code)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&limit=${encodeURIComponent(limit)}`);
+            renderTradeRows(data.list || []);
+        } else if (mode === 'minuteTrade') {
+            data = await apiFetch(`/api/minute-trade-all?code=${encodeURIComponent(code)}&date=${encodeURIComponent(date)}`);
+            renderTradeRows(data.List || data.list || []);
+        } else {
+            data = await apiFetch(`/api/kline-all/tdx?code=${encodeURIComponent(code)}&type=${encodeURIComponent(type)}&limit=${encodeURIComponent(limit)}`);
+            renderKlineRows(data);
+        }
+    } catch (error) {
+        setErrorText('historyOutput', error);
+    }
+}
+
+function renderKlineRows(data) {
+    const rows = data.list || data.List || [];
+    renderTable('historyOutput', rows, [
+        { key: 'time', label: '时间', value: row => row.time || row.Time },
+        { key: 'open', label: '开盘', value: row => row.open ?? row.Open },
+        { key: 'high', label: '最高', value: row => row.high ?? row.High },
+        { key: 'low', label: '最低', value: row => row.low ?? row.Low },
+        { key: 'close', label: '收盘', value: row => row.close ?? row.Close },
+        { key: 'volume', label: '成交量', value: row => row.volume ?? row.Volume },
+        { key: 'amount', label: '成交额', value: row => row.amount ?? row.Amount }
+    ]);
+}
+
+function renderTradeRows(rows) {
+    renderTable('historyOutput', rows, [
+        { key: 'time', label: '时间', value: row => row.time || row.Time },
+        { key: 'price', label: '价格', value: row => row.price ?? row.Price },
+        { key: 'volume', label: '成交量', value: row => row.volume ?? row.Volume },
+        { key: 'number', label: '笔数', value: row => row.number ?? row.Number },
+        { key: 'status', label: '性质', value: row => row.status ?? row.Status }
+    ]);
+}
+
+async function loadWorkdayRange() {
+    setLoadingText('historyOutput');
+    try {
+        const startDate = document.getElementById('historyStartDate')?.value || '';
+        const endDate = document.getElementById('historyEndDate')?.value || '';
+        const data = await apiFetch(`/api/workday/range?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`);
+        renderTable('historyOutput', data.list || [], [
+            { key: 'iso', label: '日期' },
+            { key: 'numeric', label: '数字日期' }
+        ]);
+    } catch (error) {
+        setErrorText('historyOutput', error);
+    }
+}
+
+async function loadBlockData() {
+    setLoadingText('blockIndustryOutput');
+    try {
+        const file = document.getElementById('blockFile')?.value || 'gn';
+        const withIndex = document.getElementById('blockWithIndex')?.checked ? 'true' : 'false';
+        const data = await apiFetch(`/api/block?file=${encodeURIComponent(file)}&with_index=${withIndex}`);
+        renderTable('blockIndustryOutput', data.list || [], [
+            { key: 'Name', label: '板块' },
+            { key: 'Index', label: '指数代码' },
+            { key: 'Type', label: '类型' },
+            { key: 'Codes', label: '成分', value: row => row.Codes || row.codes || [] }
+        ]);
+    } catch (error) {
+        setErrorText('blockIndustryOutput', error);
+    }
+}
+
+async function loadIndustryData(kind) {
+    setLoadingText('blockIndustryOutput');
+    try {
+        const endpoints = {
+            hy: '/api/tdx-hy',
+            stat: '/api/tdx-stat',
+            stat2: '/api/tdx-stat2',
+            xgsg: '/api/xgsg'
+        };
+        const data = await apiFetch(endpoints[kind] || endpoints.hy);
+        const rows = data.list || data.List || [];
+        if (kind === 'hy') {
+            renderTable('blockIndustryOutput', rows, [
+                { key: 'Code', label: '代码' },
+                { key: 'TdxHy', label: '通达信行业' },
+                { key: 'SwHy', label: '申万行业' }
+            ]);
+        } else {
+            const sample = rows[0] || {};
+            const columns = Object.keys(sample).slice(0, 8).map(key => ({ key, label: key }));
+            renderTable('blockIndustryOutput', rows, columns.length ? columns : [{ key: 'value', label: '数据', value: row => row }]);
+        }
+    } catch (error) {
+        setErrorText('blockIndustryOutput', error);
+    }
 }
 
 async function loadHQChart() {

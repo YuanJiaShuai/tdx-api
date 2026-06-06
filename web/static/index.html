@@ -38,6 +38,7 @@
         <div class="workspace-tabs">
             <button class="workspace-tab active" onclick="switchWorkspace('market', this)">行情</button>
             <button class="workspace-tab" onclick="switchWorkspace('proChart', this)">专业行情</button>
+            <button class="workspace-tab" onclick="switchWorkspace('dataCenter', this)">数据中心</button>
             <button class="workspace-tab" onclick="switchWorkspace('formulas', this)">公式</button>
             <button class="workspace-tab" onclick="switchWorkspace('selectionResults', this)">选股结果</button>
             <button class="workspace-tab" onclick="switchWorkspace('automations', this)">自动化</button>
@@ -206,6 +207,103 @@
                     <select id="hqFormulaSelect"></select>
                     <button class="btn-secondary" onclick="testSelectedFormula()">测试当前股票</button>
                     <pre id="formulaTestOutput" class="json-output"></pre>
+                </div>
+            </div>
+        </section>
+
+        <section id="dataCenterWorkspace" class="workspace">
+            <div class="data-center-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>市场总览</h3>
+                        <button class="btn-secondary" onclick="loadMarketOverview()">刷新</button>
+                    </div>
+                    <div id="marketOverviewStats" class="metric-grid"></div>
+                    <div class="form-row">
+                        <select id="marketCodeExchange">
+                            <option value="all">全部市场</option>
+                            <option value="sh">沪市</option>
+                            <option value="sz">深市</option>
+                            <option value="bj">北交所</option>
+                        </select>
+                        <input id="marketCodeLimit" type="number" min="1" max="500" value="80" placeholder="返回数量">
+                        <button class="btn-primary compact" onclick="loadCodeDirectory()">代码目录</button>
+                        <button class="btn-secondary compact" onclick="loadETFDirectory()">ETF</button>
+                    </div>
+                    <div id="marketDirectoryOutput" class="data-table-wrap"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>个股资料</h3>
+                        <button class="btn-secondary" onclick="loadStockProfile()">查询</button>
+                    </div>
+                    <div class="form-row">
+                        <input id="dataStockCode" type="text" value="000001" placeholder="股票代码，如 000001">
+                        <input id="incomeStartDate" type="text" value="2024-11-01" placeholder="收益起始日期">
+                        <input id="incomeDays" type="text" value="5,10,20" placeholder="收益周期">
+                    </div>
+                    <div class="item-actions data-actions">
+                        <button class="primary" onclick="loadStockProfile()">财务/F10/股本</button>
+                        <button onclick="loadIncomeReport()">收益测算</button>
+                    </div>
+                    <div id="stockProfileOutput" class="data-output-stack"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>历史数据</h3>
+                        <button class="btn-secondary" onclick="loadHistoryData('tdx')">加载</button>
+                    </div>
+                    <div class="form-row">
+                        <input id="historyCode" type="text" value="000001" placeholder="股票代码">
+                        <select id="historyType">
+                            <option value="day">日K</option>
+                            <option value="week">周K</option>
+                            <option value="month">月K</option>
+                            <option value="minute30">30分钟</option>
+                            <option value="minute5">5分钟</option>
+                        </select>
+                        <input id="historyLimit" type="number" min="1" max="2000" value="120" placeholder="数量">
+                    </div>
+                    <div class="form-row">
+                        <input id="historyDate" type="text" value="20241108" placeholder="成交日期">
+                        <input id="historyStartDate" type="text" value="2024-11-01" placeholder="开始日期">
+                        <input id="historyEndDate" type="text" value="2024-11-08" placeholder="结束日期">
+                    </div>
+                    <div class="item-actions data-actions">
+                        <button class="primary" onclick="loadHistoryData('tdx')">TDX K线</button>
+                        <button class="primary" onclick="loadHistoryData('ths')">THS前复权</button>
+                        <button onclick="loadHistoryData('history')">分页K线</button>
+                        <button onclick="loadHistoryData('trade')">历史成交</button>
+                        <button onclick="loadHistoryData('minuteTrade')">全天分时成交</button>
+                        <button onclick="loadWorkdayRange()">交易日</button>
+                    </div>
+                    <div id="historyOutput" class="data-table-wrap"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>板块行业</h3>
+                        <button class="btn-secondary" onclick="loadBlockData()">查询</button>
+                    </div>
+                    <div class="form-row">
+                        <select id="blockFile">
+                            <option value="gn">概念板块</option>
+                            <option value="fg">地域风格</option>
+                            <option value="zs">指数板块</option>
+                            <option value="hy">行业板块</option>
+                        </select>
+                        <label class="check-line inline-check"><input id="blockWithIndex" type="checkbox" checked> 含指数代码</label>
+                    </div>
+                    <div class="item-actions data-actions">
+                        <button class="primary" onclick="loadBlockData()">板块成分</button>
+                        <button onclick="loadIndustryData('hy')">行业归属</button>
+                        <button onclick="loadIndustryData('stat')">个股统计</button>
+                        <button onclick="loadIndustryData('stat2')">资金流向</button>
+                        <button onclick="loadIndustryData('xgsg')">新股申购</button>
+                    </div>
+                    <div id="blockIndustryOutput" class="data-table-wrap"></div>
                 </div>
             </div>
         </section>
