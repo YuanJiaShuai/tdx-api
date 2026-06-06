@@ -1,3 +1,4 @@
+import argparse
 import json
 import sys
 from typing import Dict, List, Optional
@@ -78,6 +79,14 @@ def extract_metric(payload: Dict) -> Optional[str]:
 
 
 def main() -> int:
+    global BASE_URL
+
+    parser = argparse.ArgumentParser(description="Run smoke checks against the tdx-api HTTP service.")
+    parser.add_argument("--base-url", default=BASE_URL, help=f"API base URL, default: {BASE_URL}")
+    args = parser.parse_args()
+
+    BASE_URL = args.base_url.rstrip("/")
+
     successes: List[str] = []
     failures: List[str] = []
 
@@ -111,4 +120,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
