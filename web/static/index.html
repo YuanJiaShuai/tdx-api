@@ -21,17 +21,28 @@
 </head>
 <body>
     <div class="container">
-        <!-- 头部 -->
-        <header class="header">
-            <div>
-                <p class="eyebrow">LOCAL STOCK DATA WORKBENCH</p>
-                <h1>TDX API 股票终端</h1>
-                <p class="subtitle">本地行情数据、公式选股与自动化任务中心</p>
+        <header class="app-shell">
+            <div class="brand-block">
+                <div class="brand-mark">TDX</div>
+                <div>
+                    <p class="eyebrow">LOCAL STOCK DATA WORKBENCH</p>
+                    <h1>股票数据终端</h1>
+                    <p class="subtitle">行情查询、专业图表、公式选股与自动化任务中心</p>
+                </div>
             </div>
-            <div class="header-meta">
-                <span>REST API</span>
-                <span>HQChart</span>
-                <span>Docker</span>
+            <div class="system-strip" id="systemStrip">
+                <div class="system-item">
+                    <span class="system-label">服务</span>
+                    <strong id="serviceStatusText">检测中</strong>
+                </div>
+                <div class="system-item">
+                    <span class="system-label">公式引擎</span>
+                    <strong id="formulaEngineText">检测中</strong>
+                </div>
+                <div class="system-item">
+                    <span class="system-label">更新时间</span>
+                    <strong id="systemTimeText">--</strong>
+                </div>
             </div>
         </header>
 
@@ -46,13 +57,27 @@
         </div>
 
         <section id="marketWorkspace" class="workspace active">
-            <!-- 搜索区域 -->
-            <div class="search-section">
-                <div class="search-box">
-                    <input type="text" id="stockCode" placeholder="请输入股票代码或名称（如：000001 或 平安银行）" />
-                    <button onclick="searchStock()" class="btn-primary">搜索</button>
+            <div class="market-hero">
+                <div class="market-hero-main">
+                    <div class="section-kicker">MARKET</div>
+                    <h2>快速定位标的，进入行情分析</h2>
+                    <div class="search-section">
+                        <div class="search-box">
+                            <input type="text" id="stockCode" placeholder="输入代码或名称，例如 000001 / 平安银行" />
+                            <button onclick="searchStock()" class="btn-primary">搜索</button>
+                        </div>
+                        <div id="searchResults" class="search-results"></div>
+                    </div>
                 </div>
-                <div id="searchResults" class="search-results"></div>
+                <div class="market-quick-panel">
+                    <span class="quick-label">快捷标的</span>
+                    <div class="quick-symbols">
+                        <button onclick="loadQuickStock('000001')">平安银行</button>
+                        <button onclick="loadQuickStock('600519')">贵州茅台</button>
+                        <button onclick="loadQuickStock('601318')">中国平安</button>
+                        <button onclick="loadQuickStock('510300')">沪深300ETF</button>
+                    </div>
+                </div>
             </div>
 
             <!-- 主内容区域 -->

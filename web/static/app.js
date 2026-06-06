@@ -31,6 +31,33 @@ async function apiFetch(url, options = {}) {
     return result.data;
 }
 
+async function refreshSystemStatus() {
+    const serviceNode = document.getElementById('serviceStatusText');
+    const engineNode = document.getElementById('formulaEngineText');
+    const timeNode = document.getElementById('systemTimeText');
+    if (!serviceNode || !engineNode || !timeNode) return;
+    try {
+        const [status, formula] = await Promise.all([
+            apiFetch('/api/server-status'),
+            apiFetch('/api/formula/health')
+        ]);
+        serviceNode.textContent = status.ready ? '运行正常' : (status.status || '异常');
+        engineNode.textContent = formula.engine || 'fallback';
+        timeNode.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    } catch (error) {
+        serviceNode.textContent = '连接异常';
+        engineNode.textContent = '--';
+        timeNode.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    }
+}
+
+function loadQuickStock(code) {
+    const input = document.getElementById('stockCode');
+    if (input) input.value = code;
+    currentStock = code;
+    loadStockData(code);
+}
+
 function switchWorkspace(name, button) {
     document.querySelectorAll('.workspace-tab').forEach(btn => btn.classList.remove('active'));
     if (button) button.classList.add('active');
@@ -1436,6 +1463,11 @@ function drawHQChart(rows) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+        await refreshSystemStatus();
+        setInterval(refreshSystemStatus, 30000);
+        if (!currentStock) {
+            loadQuickStock('000001');
+        }
         await Promise.all([loadFormulaList(), loadPools(), loadWebhooks()]);
         await loadAutomations();
         await loadRuns();
