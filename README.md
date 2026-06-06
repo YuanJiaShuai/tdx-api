@@ -1,12 +1,28 @@
 # TDX 股票数据查询系统
 
-基于通达信协议的股票数据获取库，带 Web 可视化界面、RESTful API、Docker 部署和常用数据拉取任务。
+一套面向本地部署的股票数据服务：基于通达信协议获取行情数据，内置 Web 可视化界面、RESTful API、公式选股、自动化任务和 Docker 单服务部署能力。
 
-感谢原项目 [oficcejo/tdx-api](https://github.com/oficcejo/tdx-api) 和上游协议库 [injoyai/tdx](https://github.com/injoyai/tdx)。
+> [!IMPORTANT]
+> 目标是让用户只启动一个 `tdx-api` Docker 服务，就能在本地完成行情查询、专业 K 线展示、公式测试、股票池选股、定时同步和任务结果查看。
 
-本项目的专业行情展示和公式计算方向参考/集成 [jones2000/HQChart](https://github.com/jones2000/HQChart) 及其公式计算相关项目 [jones2000/hqchartPy2](https://github.com/jones2000/hqchartPy2)。HQChart 用于专业 K 线、指标和图表展示能力，hqchartPy2 用于后续接入通达信/麦语法风格公式解析与批量选股。相关组件的版权与许可证归原作者及对应开源项目所有。
+| 能力方向 | 当前重点 |
+| --- | --- |
+| 数据服务 | 通达信行情、K 线、分时、分笔、财务、除权、板块和扩展行情接口 |
+| Web 界面 | 股票搜索、行情卡片、K 线/分时图、专业行情页、选股结果中心 |
+| 公式选股 | 自定义公式管理、公式测试、手动选股、定时选股、运行记录 |
+| 自动化 | 系统同步任务、Cron 调度、任务模板、Webhook 通知 |
+| 部署方式 | Docker Compose 单服务启动，同时运行 Go Web 服务和 Python 公式 worker |
 
-当前 Docker 内置公式 worker 会自动检测 `HQChartPy2` 模块：检测到时会报告 `engine=hqchartpy2`，未安装时使用内置 fallback 公式执行器保障本地闭环。
+## 项目来源与组件声明
+
+| 项目 | 用途 | 说明 |
+| --- | --- | --- |
+| [oficcejo/tdx-api](https://github.com/oficcejo/tdx-api) | 原始项目基础 | 本项目在其基础上继续扩展 Web、API、自动化和部署能力 |
+| [injoyai/tdx](https://github.com/injoyai/tdx) | 上游协议库 | 提供通达信协议相关能力 |
+| [jones2000/HQChart](https://github.com/jones2000/HQChart) | 专业行情展示 | 用于专业 K 线、指标和图表展示方向 |
+| [jones2000/hqchartPy2](https://github.com/jones2000/hqchartPy2) | 公式计算引擎 | 用于后续接入通达信/麦语法风格公式解析与批量选股 |
+
+相关开源组件的版权与许可证归原作者及对应项目所有。本项目的 Docker 公式 worker 会自动检测 `HQChartPy2` 模块：检测到时报告 `engine=hqchartpy2`，未安装时使用内置 fallback 公式执行器保障本地闭环。
 
 ## 功能概览
 
