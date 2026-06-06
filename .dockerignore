@@ -35,6 +35,14 @@ vendor/
 web/stock-web
 web/*.exe
 
+# Runtime data and generated artifacts
+data/
+reports/
+__pycache__/
+scripts/__pycache__/
+*.rar
+*.zip
+
 # Temporary files
 tmp/
 temp/
@@ -46,4 +54,3 @@ example/
 
 # Test files
 *_test.go
-

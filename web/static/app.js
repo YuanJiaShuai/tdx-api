@@ -2,6 +2,11 @@
 let currentStock = '';
 let klineChart = null;
 let minuteChart = null;
+let hqChart = null;
+let formulas = [];
+let pools = [];
+let automations = [];
+let webhooks = [];
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -11,6 +16,33 @@ function showLoading() {
 // 工具函数 - 隐藏加载
 function hideLoading() {
     document.getElementById('loading').style.display = 'none';
+}
+
+async function apiFetch(url, options = {}) {
+    const response = await fetch(url, {
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options
+    });
+    const result = await response.json();
+    if (result.code !== 0) {
+        throw new Error(result.message || '请求失败');
+    }
+    return result.data;
+}
+
+function switchWorkspace(name, button) {
+    document.querySelectorAll('.workspace-tab').forEach(btn => btn.classList.remove('active'));
+    if (button) button.classList.add('active');
+    document.querySelectorAll('.workspace').forEach(item => item.classList.remove('active'));
+    document.getElementById(name + 'Workspace').classList.add('active');
+    if (name === 'proChart') {
+        setTimeout(() => {
+            if (hqChart) hqChart.resize();
+        }, 50);
+    }
+    if (name === 'formulas') loadFormulaList();
+    if (name === 'automations') loadAutomationData();
+    if (name === 'webhooks') loadWebhooks();
 }
 
 // 工具函数 - 格式化数字
@@ -35,6 +67,20 @@ function formatAmount(num) {
 function formatPrice(price) {
     if (!price || isNaN(price)) return '--';
     return (parseFloat(price) / 1000).toFixed(2);
+}
+
+function prettyJSON(value) {
+    return JSON.stringify(value, null, 2);
+}
+
+function escapeHTML(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[ch]));
 }
 
 // 搜索股票
@@ -629,6 +675,357 @@ window.addEventListener('resize', function() {
         if (minuteChart) {
             minuteChart.resize();
         }
+        if (hqChart) {
+            hqChart.resize();
+        }
     }, 100);
 });
 
+async function loadFormulaList() {
+    formulas = await apiFetch('/api/formulas');
+    const formulaOptions = formulas.map(f => `<option value="${f.id}">${escapeHTML(f.name)}</option>`).join('');
+    document.getElementById('hqFormulaSelect').innerHTML = formulaOptions;
+    document.getElementById('automationFormula').innerHTML = formulaOptions;
+    document.getElementById('formulaList').innerHTML = formulas.map(f => `
+        <div class="data-item">
+            <div class="data-item-title">${escapeHTML(f.name)}</div>
+            <div class="data-item-meta">${escapeHTML(f.type)} · ${escapeHTML(f.period)} · ${f.enabled ? '启用' : '停用'}</div>
+            <div class="data-item-meta">${escapeHTML(f.script)}</div>
+            <div class="item-actions">
+                <button onclick="fillFormula('${f.id}')">编辑</button>
+                <button class="primary" onclick="quickTestFormula('${f.id}')">测试</button>
+                <button onclick="deleteFormula('${f.id}')">删除</button>
+            </div>
+        </div>
+    `).join('') || '<div class="data-item">暂无公式</div>';
+}
+
+function fillFormula(id) {
+    const f = formulas.find(item => item.id === id);
+    if (!f) return;
+    document.getElementById('formulaName').dataset.id = f.id;
+    document.getElementById('formulaName').value = f.name;
+    document.getElementById('formulaType').value = f.type;
+    document.getElementById('formulaPeriod').value = f.period;
+    document.getElementById('formulaRight').value = String(f.right);
+    document.getElementById('formulaScript').value = f.script;
+    document.getElementById('formulaArgs').value = f.args_json || '[]';
+}
+
+async function saveFormula() {
+    try {
+        const id = document.getElementById('formulaName').dataset.id || '';
+        JSON.parse(document.getElementById('formulaArgs').value || '[]');
+        await apiFetch(id ? `/api/formulas/${id}` : '/api/formulas', {
+            method: id ? 'PUT' : 'POST',
+            body: JSON.stringify({
+                id,
+                name: document.getElementById('formulaName').value,
+                type: document.getElementById('formulaType').value,
+                period: document.getElementById('formulaPeriod').value,
+                right: Number(document.getElementById('formulaRight').value),
+                script: document.getElementById('formulaScript').value,
+                args_json: document.getElementById('formulaArgs').value || '[]',
+                enabled: true
+            })
+        });
+        document.getElementById('formulaName').dataset.id = '';
+        await loadFormulaList();
+        alert('公式已保存');
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function deleteFormula(id) {
+    if (!confirm('确认删除这个公式？')) return;
+    await apiFetch(`/api/formulas/${id}`, { method: 'DELETE' });
+    await loadFormulaList();
+}
+
+async function quickTestFormula(id) {
+    const symbol = currentStock || document.getElementById('hqSymbol').value || '000001';
+    await runFormulaTest(id, symbol);
+    switchWorkspace('proChart', document.querySelectorAll('.workspace-tab')[1]);
+}
+
+async function testSelectedFormula() {
+    const id = document.getElementById('hqFormulaSelect').value;
+    const symbol = document.getElementById('hqSymbol').value || currentStock || '000001';
+    await runFormulaTest(id, symbol);
+}
+
+async function runFormulaTest(id, symbol) {
+    try {
+        const data = await apiFetch(`/api/formulas/${id}/test`, {
+            method: 'POST',
+            body: JSON.stringify({ symbol, calc_count: 240, out_count: 5 })
+        });
+        document.getElementById('formulaTestOutput').textContent = prettyJSON(data);
+    } catch (error) {
+        document.getElementById('formulaTestOutput').textContent = error.message;
+    }
+}
+
+async function loadPools() {
+    pools = await apiFetch('/api/stock-pools');
+    document.getElementById('automationPool').innerHTML = pools.map(p => `<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
+    document.getElementById('poolList').innerHTML = pools.map(p => `
+        <div class="data-item">
+            <div class="data-item-title">${escapeHTML(p.name)}</div>
+            <div class="data-item-meta">${p.symbols.length} 只股票 · ${escapeHTML(p.symbols.join(', '))}</div>
+            <div class="item-actions">
+                <button onclick="fillPool('${p.id}')">编辑</button>
+                <button onclick="deletePool('${p.id}')">删除</button>
+            </div>
+        </div>
+    `).join('') || '<div class="data-item">暂无股票池</div>';
+}
+
+function fillPool(id) {
+    const p = pools.find(item => item.id === id);
+    if (!p) return;
+    document.getElementById('poolName').dataset.id = p.id;
+    document.getElementById('poolName').value = p.name;
+    document.getElementById('poolSymbols').value = p.symbols.join('\n');
+}
+
+async function savePool() {
+    try {
+        const id = document.getElementById('poolName').dataset.id || '';
+        const symbols = document.getElementById('poolSymbols').value.split(/[\s,，]+/).filter(Boolean);
+        await apiFetch(id ? `/api/stock-pools/${id}` : '/api/stock-pools', {
+            method: id ? 'PUT' : 'POST',
+            body: JSON.stringify({ id, name: document.getElementById('poolName').value, symbols })
+        });
+        document.getElementById('poolName').dataset.id = '';
+        await loadPools();
+        alert('股票池已保存');
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function deletePool(id) {
+    if (!confirm('确认删除这个股票池？')) return;
+    await apiFetch(`/api/stock-pools/${id}`, { method: 'DELETE' });
+    await loadPools();
+}
+
+async function loadAutomationData() {
+    await Promise.all([loadFormulaList(), loadPools(), loadWebhooks(), loadAutomations(), loadRuns()]);
+}
+
+async function loadAutomations() {
+    automations = await apiFetch('/api/automations');
+    document.getElementById('automationList').innerHTML = automations.map(t => `
+        <div class="data-item">
+            <div class="data-item-title">${escapeHTML(t.name)}</div>
+            <div class="data-item-meta">${escapeHTML(t.type)} · ${escapeHTML(t.cron)} · ${t.enabled ? '启用' : '停用'}</div>
+            <div class="data-item-meta">上次：${escapeHTML(t.last_status || '--')} ${escapeHTML(t.last_message || '')}</div>
+            <div class="item-actions">
+                <button onclick="fillAutomation('${t.id}')">编辑</button>
+                <button class="primary" onclick="runAutomation('${t.id}')">立即运行</button>
+                <button onclick="deleteAutomation('${t.id}')">删除</button>
+            </div>
+        </div>
+    `).join('') || '<div class="data-item">暂无任务</div>';
+}
+
+function fillAutomation(id) {
+    const t = automations.find(item => item.id === id);
+    if (!t) return;
+    const payload = JSON.parse(t.payload_json || '{}');
+    document.getElementById('automationName').dataset.id = t.id;
+    document.getElementById('automationName').value = t.name;
+    document.getElementById('automationFormula').value = payload.formula_id || '';
+    document.getElementById('automationPool').value = payload.pool_id || '';
+    document.getElementById('automationCron').value = t.cron;
+    document.getElementById('automationEnabled').checked = !!t.enabled;
+    const ids = JSON.parse(t.webhook_ids || '[]');
+    Array.from(document.getElementById('automationWebhook').options).forEach(opt => {
+        opt.selected = ids.includes(opt.value);
+    });
+}
+
+async function saveAutomation() {
+    try {
+        const id = document.getElementById('automationName').dataset.id || '';
+        const webhookIds = Array.from(document.getElementById('automationWebhook').selectedOptions).map(opt => opt.value);
+        const payload = {
+            formula_id: document.getElementById('automationFormula').value,
+            pool_id: document.getElementById('automationPool').value,
+            calc_count: 240,
+            out_count: 1
+        };
+        await apiFetch(id ? `/api/automations/${id}` : '/api/automations', {
+            method: id ? 'PUT' : 'POST',
+            body: JSON.stringify({
+                id,
+                name: document.getElementById('automationName').value,
+                type: 'stock_selection',
+                cron: document.getElementById('automationCron').value,
+                enabled: document.getElementById('automationEnabled').checked,
+                payload_json: JSON.stringify(payload),
+                webhook_ids: JSON.stringify(webhookIds)
+            })
+        });
+        document.getElementById('automationName').dataset.id = '';
+        await loadAutomations();
+        alert('任务已保存');
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function runAutomation(id) {
+    try {
+        await apiFetch(`/api/automations/${id}/run`, { method: 'POST' });
+        await Promise.all([loadAutomations(), loadRuns()]);
+        alert('任务执行完成');
+    } catch (error) {
+        alert(error.message);
+        await loadRuns();
+    }
+}
+
+async function deleteAutomation(id) {
+    if (!confirm('确认删除这个任务？')) return;
+    await apiFetch(`/api/automations/${id}`, { method: 'DELETE' });
+    await loadAutomations();
+}
+
+async function loadRuns() {
+    const runs = await apiFetch('/api/automations/runs?limit=30');
+    document.getElementById('runList').innerHTML = runs.map(r => `
+        <div class="data-item">
+            <div class="data-item-title">${escapeHTML(r.task_name)} · ${escapeHTML(r.status)}</div>
+            <div class="data-item-meta">${escapeHTML(r.started_at)} · 命中 ${r.matched_count}</div>
+            <div class="data-item-meta">${escapeHTML(r.log || (r.result_json || '').slice(0, 240))}</div>
+        </div>
+    `).join('') || '<div class="data-item">暂无运行记录</div>';
+}
+
+async function loadWebhooks() {
+    webhooks = await apiFetch('/api/webhooks');
+    const select = document.getElementById('automationWebhook');
+    if (select) {
+        select.innerHTML = webhooks.map(h => `<option value="${h.id}">${escapeHTML(h.name)}</option>`).join('');
+    }
+    const list = document.getElementById('webhookList');
+    if (!list) return;
+    list.innerHTML = webhooks.map(h => `
+        <div class="data-item">
+            <div class="data-item-title">${escapeHTML(h.name)}</div>
+            <div class="data-item-meta">${escapeHTML(h.url)} · ${h.enabled ? '启用' : '停用'}</div>
+            <div class="item-actions">
+                <button onclick="fillWebhook('${h.id}')">编辑</button>
+                <button class="primary" onclick="testWebhook('${h.id}')">测试</button>
+                <button onclick="deleteWebhook('${h.id}')">删除</button>
+            </div>
+        </div>
+    `).join('') || '<div class="data-item">暂无 Webhook</div>';
+}
+
+function fillWebhook(id) {
+    const h = webhooks.find(item => item.id === id);
+    if (!h) return;
+    document.getElementById('webhookName').dataset.id = h.id;
+    document.getElementById('webhookName').value = h.name;
+    document.getElementById('webhookURL').value = h.url;
+    document.getElementById('webhookHeaders').value = h.headers_json || '{}';
+    document.getElementById('webhookEvents').value = h.events || '[]';
+    document.getElementById('webhookEnabled').checked = !!h.enabled;
+}
+
+async function saveWebhook() {
+    try {
+        const id = document.getElementById('webhookName').dataset.id || '';
+        JSON.parse(document.getElementById('webhookHeaders').value || '{}');
+        JSON.parse(document.getElementById('webhookEvents').value || '[]');
+        await apiFetch(id ? `/api/webhooks/${id}` : '/api/webhooks', {
+            method: id ? 'PUT' : 'POST',
+            body: JSON.stringify({
+                id,
+                name: document.getElementById('webhookName').value,
+                url: document.getElementById('webhookURL').value,
+                method: 'POST',
+                headers_json: document.getElementById('webhookHeaders').value || '{}',
+                events: document.getElementById('webhookEvents').value || '[]',
+                enabled: document.getElementById('webhookEnabled').checked
+            })
+        });
+        document.getElementById('webhookName').dataset.id = '';
+        await loadWebhooks();
+        alert('Webhook 已保存');
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function testWebhook(id) {
+    try {
+        const data = await apiFetch(`/api/webhooks/${id}/test`, { method: 'POST' });
+        alert(data.join('\n') || '已发送');
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function deleteWebhook(id) {
+    if (!confirm('确认删除这个 Webhook？')) return;
+    await apiFetch(`/api/webhooks/${id}`, { method: 'DELETE' });
+    await loadWebhooks();
+}
+
+async function loadHQChart() {
+    try {
+        const symbol = document.getElementById('hqSymbol').value || '000001';
+        const period = document.getElementById('hqPeriod').value;
+        const data = await apiFetch(`/api/hqchart/kline?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&limit=500`);
+        drawHQChart(data.data || []);
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+function drawHQChart(rows) {
+    const chartDom = document.getElementById('hqChart');
+    if (!hqChart) hqChart = echarts.init(chartDom);
+    const dates = rows.map(r => String(r.date));
+    const candles = rows.map(r => [r.open, r.close, r.low, r.high]);
+    const volume = rows.map(r => r.vol);
+    hqChart.setOption({
+        animation: false,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        grid: [
+            { left: '8%', right: '3%', top: '5%', height: '62%' },
+            { left: '8%', right: '3%', top: '76%', height: '14%' }
+        ],
+        xAxis: [
+            { type: 'category', data: dates, scale: true, boundaryGap: true },
+            { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false } }
+        ],
+        yAxis: [{ scale: true }, { scale: true, gridIndex: 1, axisLabel: { show: false } }],
+        dataZoom: [
+            { type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 },
+            { type: 'slider', xAxisIndex: [0, 1], top: '93%', start: 50, end: 100 }
+        ],
+        series: [
+            { name: 'K线', type: 'candlestick', data: candles, itemStyle: { color: '#d93026', color0: '#188038', borderColor: '#d93026', borderColor0: '#188038' } },
+            { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volume, itemStyle: { color: '#64748b' } }
+        ]
+    });
+    hqChart.resize();
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        await Promise.all([loadFormulaList(), loadPools(), loadWebhooks()]);
+        await loadAutomations();
+        await loadRuns();
+        await loadHQChart();
+    } catch (error) {
+        console.warn('初始化自动化页面失败:', error);
+    }
+});

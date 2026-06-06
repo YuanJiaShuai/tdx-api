@@ -23,21 +23,30 @@
     <div class="container">
         <!-- 头部 -->
         <header class="header">
-            <h1>📈 股票数据查询系统</h1>
-            <p class="subtitle">基于通达信数据源的实时行情查询</p>
+            <h1>TDX API 股票终端</h1>
+            <p class="subtitle">行情、公式、选股和自动化任务</p>
         </header>
 
-        <!-- 搜索区域 -->
-        <div class="search-section">
-            <div class="search-box">
-                <input type="text" id="stockCode" placeholder="请输入股票代码或名称（如：000001 或 平安银行）" />
-                <button onclick="searchStock()" class="btn-primary">搜索</button>
-            </div>
-            <div id="searchResults" class="search-results"></div>
+        <div class="workspace-tabs">
+            <button class="workspace-tab active" onclick="switchWorkspace('market', this)">行情</button>
+            <button class="workspace-tab" onclick="switchWorkspace('proChart', this)">专业行情</button>
+            <button class="workspace-tab" onclick="switchWorkspace('formulas', this)">公式</button>
+            <button class="workspace-tab" onclick="switchWorkspace('automations', this)">自动化</button>
+            <button class="workspace-tab" onclick="switchWorkspace('webhooks', this)">Webhook</button>
         </div>
 
-        <!-- 主内容区域 -->
-        <div id="mainContent" style="display: none;">
+        <section id="marketWorkspace" class="workspace active">
+            <!-- 搜索区域 -->
+            <div class="search-section">
+                <div class="search-box">
+                    <input type="text" id="stockCode" placeholder="请输入股票代码或名称（如：000001 或 平安银行）" />
+                    <button onclick="searchStock()" class="btn-primary">搜索</button>
+                </div>
+                <div id="searchResults" class="search-results"></div>
+            </div>
+
+            <!-- 主内容区域 -->
+            <div id="mainContent" style="display: none;">
             <!-- 股票基本信息卡片 -->
             <div class="card">
                 <div class="card-header">
@@ -163,7 +172,118 @@
                     </div>
                 </div>
             </div>
-        </div>
+            </div>
+        </section>
+
+        <section id="proChartWorkspace" class="workspace">
+            <div class="panel-grid two">
+                <div class="card">
+                    <h3>专业行情</h3>
+                    <div class="form-row">
+                        <input id="hqSymbol" type="text" placeholder="股票代码，如 000001" value="000001">
+                        <select id="hqPeriod">
+                            <option value="day">日K</option>
+                            <option value="week">周K</option>
+                            <option value="month">月K</option>
+                            <option value="minute5">5分钟</option>
+                            <option value="minute30">30分钟</option>
+                        </select>
+                        <button class="btn-primary compact" onclick="loadHQChart()">加载</button>
+                    </div>
+                    <div id="hqChart" class="stable-chart"></div>
+                </div>
+                <div class="card">
+                    <h3>指标测试</h3>
+                    <select id="hqFormulaSelect"></select>
+                    <button class="btn-secondary" onclick="testSelectedFormula()">测试当前股票</button>
+                    <pre id="formulaTestOutput" class="json-output"></pre>
+                </div>
+            </div>
+        </section>
+
+        <section id="formulasWorkspace" class="workspace">
+            <div class="panel-grid two">
+                <div class="card">
+                    <h3>公式管理</h3>
+                    <input id="formulaName" type="text" placeholder="公式名称">
+                    <select id="formulaType">
+                        <option value="selection">选股公式</option>
+                        <option value="indicator">图表指标</option>
+                    </select>
+                    <div class="form-row">
+                        <select id="formulaPeriod">
+                            <option value="day">日K</option>
+                            <option value="week">周K</option>
+                            <option value="month">月K</option>
+                            <option value="minute5">5分钟</option>
+                            <option value="minute30">30分钟</option>
+                        </select>
+                        <select id="formulaRight">
+                            <option value="1">前复权</option>
+                            <option value="0">不复权</option>
+                            <option value="2">后复权</option>
+                        </select>
+                    </div>
+                    <textarea id="formulaScript" rows="8" placeholder="例如：CROSS(MA(C,5),MA(C,20));"></textarea>
+                    <textarea id="formulaArgs" rows="3" placeholder='参数 JSON，例如 [{"Name":"M","Value":5}]'>[]</textarea>
+                    <button class="btn-primary" onclick="saveFormula()">保存公式</button>
+                </div>
+                <div class="card">
+                    <h3>公式列表</h3>
+                    <div id="formulaList" class="data-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="automationsWorkspace" class="workspace">
+            <div class="panel-grid two">
+                <div class="card">
+                    <h3>股票池</h3>
+                    <input id="poolName" type="text" placeholder="股票池名称">
+                    <textarea id="poolSymbols" rows="4" placeholder="一行一个或逗号分隔：000001, 600000"></textarea>
+                    <button class="btn-primary" onclick="savePool()">保存股票池</button>
+                    <div id="poolList" class="data-list"></div>
+                </div>
+                <div class="card">
+                    <h3>选股任务</h3>
+                    <input id="automationName" type="text" placeholder="任务名称">
+                    <select id="automationFormula"></select>
+                    <select id="automationPool"></select>
+                    <input id="automationCron" type="text" placeholder="Cron，例如 0 30 21 * * *" value="0 30 21 * * *">
+                    <select id="automationWebhook" multiple size="3"></select>
+                    <label class="check-line"><input id="automationEnabled" type="checkbox"> 启用定时</label>
+                    <button class="btn-primary" onclick="saveAutomation()">保存任务</button>
+                </div>
+            </div>
+            <div class="panel-grid two">
+                <div class="card">
+                    <h3>任务列表</h3>
+                    <div id="automationList" class="data-list"></div>
+                </div>
+                <div class="card">
+                    <h3>运行记录</h3>
+                    <div id="runList" class="data-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="webhooksWorkspace" class="workspace">
+            <div class="panel-grid two">
+                <div class="card">
+                    <h3>Webhook 通知</h3>
+                    <input id="webhookName" type="text" placeholder="通知名称">
+                    <input id="webhookURL" type="text" placeholder="Webhook URL">
+                    <textarea id="webhookHeaders" rows="3" placeholder='请求头 JSON，例如 {"Authorization":"Bearer ..."}'>{}</textarea>
+                    <textarea id="webhookEvents" rows="3" placeholder='事件 JSON，例如 ["automation.failed","stock_selection.finished"]'>["automation.failed","stock_selection.finished","webhook.test"]</textarea>
+                    <label class="check-line"><input id="webhookEnabled" type="checkbox" checked> 启用</label>
+                    <button class="btn-primary" onclick="saveWebhook()">保存 Webhook</button>
+                </div>
+                <div class="card">
+                    <h3>Webhook 列表</h3>
+                    <div id="webhookList" class="data-list"></div>
+                </div>
+            </div>
+        </section>
 
         <!-- 加载指示器 -->
         <div id="loading" class="loading" style="display: none;">
@@ -175,4 +295,3 @@
     <script src="app.js"></script>
 </body>
 </html>
-

@@ -1,6 +1,6 @@
 # 多阶段构建 - 第一阶段：构建
 # 使用官方镜像（如果国内拉取慢，可以配置docker daemon的registry-mirrors）
-FROM golang:1.23-alpine AS builder
+FROM docker.1ms.run/library/golang:1.23-alpine AS builder
 
 # 替换Alpine镜像源为阿里云
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
@@ -27,11 +27,11 @@ COPY . .
 RUN go mod tidy && (cd web && go build -ldflags="-s -w" -o ../stock-web .)
 
 # 多阶段构建 - 第二阶段：运行
-FROM alpine:latest
+FROM docker.1ms.run/library/alpine:latest
 
 # 替换Alpine镜像源为阿里云，安装必要的运行时依赖
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk --no-cache add ca-certificates tzdata wget
+    apk --no-cache add ca-certificates tzdata wget python3 py3-pip
 
 # 设置时区为上海
 ENV TZ=Asia/Shanghai
@@ -55,8 +55,12 @@ COPY --from=builder /app/stock-web .
 COPY --from=builder /app/web/static ./static
 # ===================================================================
 
+COPY --from=builder /app/formula-worker ./formula-worker
+COPY --from=builder /app/docker-entrypoint.sh ./docker-entrypoint.sh
+
 # 更改文件所有者
-RUN chown -R appuser:appuser /app
+RUN chmod +x /app/docker-entrypoint.sh /app/formula-worker/worker.py && \
+    chown -R appuser:appuser /app
 
 # 切换到非root用户
 USER appuser
@@ -69,4 +73,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1
 
 # 启动应用
-CMD ["./stock-web"]
+CMD ["./docker-entrypoint.sh"]

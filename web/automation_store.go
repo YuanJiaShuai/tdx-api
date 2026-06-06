@@ -1,0 +1,688 @@
+package main
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "github.com/glebarez/go-sqlite"
+	"github.com/google/uuid"
+	"github.com/injoyai/tdx"
+)
+
+type AppStore struct {
+	db *sql.DB
+}
+
+type Formula struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Script      string `json:"script"`
+	ArgsJSON    string `json:"args_json"`
+	Period      string `json:"period"`
+	Right       int    `json:"right"`
+	Enabled     bool   `json:"enabled"`
+	Description string `json:"description"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type StockPool struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Symbols     []string `json:"symbols"`
+	Description string   `json:"description"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
+}
+
+type AutomationTask struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Cron        string `json:"cron"`
+	Enabled     bool   `json:"enabled"`
+	PayloadJSON string `json:"payload_json"`
+	WebhookIDs  string `json:"webhook_ids"`
+	LastRunAt   string `json:"last_run_at"`
+	NextRunAt   string `json:"next_run_at"`
+	LastStatus  string `json:"last_status"`
+	LastMessage string `json:"last_message"`
+	CronEntryID int    `json:"-"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type AutomationRun struct {
+	ID           string `json:"id"`
+	TaskID       string `json:"task_id"`
+	TaskName     string `json:"task_name"`
+	TaskType     string `json:"task_type"`
+	Status       string `json:"status"`
+	StartedAt    string `json:"started_at"`
+	FinishedAt   string `json:"finished_at"`
+	Log          string `json:"log"`
+	ResultJSON   string `json:"result_json"`
+	MatchedCount int    `json:"matched_count"`
+}
+
+type Webhook struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	Method      string `json:"method"`
+	HeadersJSON string `json:"headers_json"`
+	Events      string `json:"events"`
+	Enabled     bool   `json:"enabled"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+func OpenAppStore() (*AppStore, error) {
+	if err := os.MkdirAll(tdx.DefaultDatabaseDir, 0755); err != nil {
+		return nil, err
+	}
+
+	dbPath := filepath.Join(tdx.DefaultDatabaseDir, "automation.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+
+	store := &AppStore{db: db}
+	if err := store.migrate(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := store.seedDefaults(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+func (s *AppStore) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+func (s *AppStore) migrate() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS formulas (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL DEFAULT 'indicator',
+			script TEXT NOT NULL,
+			args_json TEXT NOT NULL DEFAULT '[]',
+			period TEXT NOT NULL DEFAULT 'day',
+			right INTEGER NOT NULL DEFAULT 1,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS stock_pools (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			symbols_json TEXT NOT NULL DEFAULT '[]',
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS automation_tasks (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			cron TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			webhook_ids TEXT NOT NULL DEFAULT '[]',
+			last_run_at TEXT NOT NULL DEFAULT '',
+			next_run_at TEXT NOT NULL DEFAULT '',
+			last_status TEXT NOT NULL DEFAULT '',
+			last_message TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS automation_runs (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			task_name TEXT NOT NULL,
+			task_type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			finished_at TEXT NOT NULL DEFAULT '',
+			log TEXT NOT NULL DEFAULT '',
+			result_json TEXT NOT NULL DEFAULT '{}',
+			matched_count INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS webhooks (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			url TEXT NOT NULL,
+			method TEXT NOT NULL DEFAULT 'POST',
+			headers_json TEXT NOT NULL DEFAULT '{}',
+			events TEXT NOT NULL DEFAULT '["automation.failed","stock_selection.finished"]',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *AppStore) seedDefaults() error {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM formulas`).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		now := nowText()
+		_, err := s.db.Exec(`INSERT INTO formulas
+			(id,name,type,script,args_json,period,right,enabled,description,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			uuid.NewString(), "5日上穿20日均线", "selection",
+			"CROSS(MA(C,5),MA(C,20));", "[]", "day", 1, 1,
+			"示例选股公式：短期均线上穿长期均线。", now, now)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM stock_pools`).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		pool := StockPool{
+			Name:        "示例股票池",
+			Symbols:     []string{"000001", "600000", "000858", "002202"},
+			Description: "第一版内置的小股票池，可在页面里改成你的自选列表。",
+		}
+		_, err := s.UpsertStockPool(pool)
+		return err
+	}
+	return nil
+}
+
+func nowText() string {
+	return time.Now().Format(time.RFC3339)
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func intBool(v int) bool {
+	return v != 0
+}
+
+func normalizeFormula(f Formula) Formula {
+	f.Name = strings.TrimSpace(f.Name)
+	f.Type = strings.TrimSpace(f.Type)
+	if f.Type == "" {
+		f.Type = "indicator"
+	}
+	f.Script = strings.TrimSpace(f.Script)
+	if strings.TrimSpace(f.ArgsJSON) == "" {
+		f.ArgsJSON = "[]"
+	}
+	f.Period = strings.TrimSpace(f.Period)
+	if f.Period == "" {
+		f.Period = "day"
+	}
+	if f.Right < 0 || f.Right > 2 {
+		f.Right = 1
+	}
+	return f
+}
+
+func (s *AppStore) ListFormulas() ([]Formula, error) {
+	rows, err := s.db.Query(`SELECT id,name,type,script,args_json,period,right,enabled,description,created_at,updated_at FROM formulas ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Formula
+	for rows.Next() {
+		var f Formula
+		var enabled int
+		if err := rows.Scan(&f.ID, &f.Name, &f.Type, &f.Script, &f.ArgsJSON, &f.Period, &f.Right, &enabled, &f.Description, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		f.Enabled = intBool(enabled)
+		list = append(list, f)
+	}
+	return list, rows.Err()
+}
+
+func (s *AppStore) GetFormula(id string) (Formula, error) {
+	var f Formula
+	var enabled int
+	err := s.db.QueryRow(`SELECT id,name,type,script,args_json,period,right,enabled,description,created_at,updated_at FROM formulas WHERE id=?`, id).
+		Scan(&f.ID, &f.Name, &f.Type, &f.Script, &f.ArgsJSON, &f.Period, &f.Right, &enabled, &f.Description, &f.CreatedAt, &f.UpdatedAt)
+	f.Enabled = intBool(enabled)
+	return f, err
+}
+
+func (s *AppStore) UpsertFormula(f Formula) (Formula, error) {
+	f = normalizeFormula(f)
+	if f.Name == "" || f.Script == "" {
+		return f, errors.New("公式名称和内容不能为空")
+	}
+	if !json.Valid([]byte(f.ArgsJSON)) {
+		return f, errors.New("args_json不是有效JSON")
+	}
+
+	now := nowText()
+	if f.ID == "" {
+		f.ID = uuid.NewString()
+		f.CreatedAt = now
+	} else if f.CreatedAt == "" {
+		old, err := s.GetFormula(f.ID)
+		if err == nil {
+			f.CreatedAt = old.CreatedAt
+		} else {
+			f.CreatedAt = now
+		}
+	}
+	f.UpdatedAt = now
+
+	_, err := s.db.Exec(`INSERT INTO formulas
+		(id,name,type,script,args_json,period,right,enabled,description,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			name=excluded.name,type=excluded.type,script=excluded.script,args_json=excluded.args_json,
+			period=excluded.period,right=excluded.right,enabled=excluded.enabled,description=excluded.description,
+			updated_at=excluded.updated_at`,
+		f.ID, f.Name, f.Type, f.Script, f.ArgsJSON, f.Period, f.Right, boolInt(f.Enabled), f.Description, f.CreatedAt, f.UpdatedAt)
+	return f, err
+}
+
+func (s *AppStore) DeleteFormula(id string) error {
+	_, err := s.db.Exec(`DELETE FROM formulas WHERE id=?`, id)
+	return err
+}
+
+func (s *AppStore) ListStockPools() ([]StockPool, error) {
+	rows, err := s.db.Query(`SELECT id,name,symbols_json,description,created_at,updated_at FROM stock_pools ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []StockPool
+	for rows.Next() {
+		var pool StockPool
+		var symbols string
+		if err := rows.Scan(&pool.ID, &pool.Name, &symbols, &pool.Description, &pool.CreatedAt, &pool.UpdatedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(symbols), &pool.Symbols)
+		list = append(list, pool)
+	}
+	return list, rows.Err()
+}
+
+func (s *AppStore) GetStockPool(id string) (StockPool, error) {
+	var pool StockPool
+	var symbols string
+	err := s.db.QueryRow(`SELECT id,name,symbols_json,description,created_at,updated_at FROM stock_pools WHERE id=?`, id).
+		Scan(&pool.ID, &pool.Name, &symbols, &pool.Description, &pool.CreatedAt, &pool.UpdatedAt)
+	_ = json.Unmarshal([]byte(symbols), &pool.Symbols)
+	return pool, err
+}
+
+func (s *AppStore) UpsertStockPool(pool StockPool) (StockPool, error) {
+	pool.Name = strings.TrimSpace(pool.Name)
+	if pool.Name == "" {
+		return pool, errors.New("股票池名称不能为空")
+	}
+	pool.Symbols = normalizeSymbols(pool.Symbols)
+	raw, err := json.Marshal(pool.Symbols)
+	if err != nil {
+		return pool, err
+	}
+
+	now := nowText()
+	if pool.ID == "" {
+		pool.ID = uuid.NewString()
+		pool.CreatedAt = now
+	} else if pool.CreatedAt == "" {
+		old, err := s.GetStockPool(pool.ID)
+		if err == nil {
+			pool.CreatedAt = old.CreatedAt
+		} else {
+			pool.CreatedAt = now
+		}
+	}
+	pool.UpdatedAt = now
+
+	_, err = s.db.Exec(`INSERT INTO stock_pools
+		(id,name,symbols_json,description,created_at,updated_at)
+		VALUES (?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			name=excluded.name,symbols_json=excluded.symbols_json,description=excluded.description,updated_at=excluded.updated_at`,
+		pool.ID, pool.Name, string(raw), pool.Description, pool.CreatedAt, pool.UpdatedAt)
+	return pool, err
+}
+
+func (s *AppStore) DeleteStockPool(id string) error {
+	_, err := s.db.Exec(`DELETE FROM stock_pools WHERE id=?`, id)
+	return err
+}
+
+func normalizeSymbols(symbols []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		s := strings.TrimSpace(strings.ToUpper(symbol))
+		s = strings.TrimSuffix(strings.TrimSuffix(s, ".SH"), ".SZ")
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		result = append(result, s)
+	}
+	return result
+}
+
+func normalizeTask(t AutomationTask) AutomationTask {
+	t.Name = strings.TrimSpace(t.Name)
+	t.Type = strings.TrimSpace(t.Type)
+	if t.Type == "" {
+		t.Type = "custom"
+	}
+	t.Cron = strings.TrimSpace(t.Cron)
+	if strings.TrimSpace(t.PayloadJSON) == "" {
+		t.PayloadJSON = "{}"
+	}
+	if strings.TrimSpace(t.WebhookIDs) == "" {
+		t.WebhookIDs = "[]"
+	}
+	return t
+}
+
+func (s *AppStore) ListAutomationTasks() ([]AutomationTask, error) {
+	rows, err := s.db.Query(`SELECT id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at FROM automation_tasks ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []AutomationTask
+	for rows.Next() {
+		var t AutomationTask
+		var enabled int
+		if err := rows.Scan(&t.ID, &t.Name, &t.Type, &t.Cron, &enabled, &t.PayloadJSON, &t.WebhookIDs, &t.LastRunAt, &t.NextRunAt, &t.LastStatus, &t.LastMessage, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		t.Enabled = intBool(enabled)
+		list = append(list, t)
+	}
+	return list, rows.Err()
+}
+
+func (s *AppStore) GetAutomationTask(id string) (AutomationTask, error) {
+	var t AutomationTask
+	var enabled int
+	err := s.db.QueryRow(`SELECT id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at FROM automation_tasks WHERE id=?`, id).
+		Scan(&t.ID, &t.Name, &t.Type, &t.Cron, &enabled, &t.PayloadJSON, &t.WebhookIDs, &t.LastRunAt, &t.NextRunAt, &t.LastStatus, &t.LastMessage, &t.CreatedAt, &t.UpdatedAt)
+	t.Enabled = intBool(enabled)
+	return t, err
+}
+
+func (s *AppStore) UpsertAutomationTask(t AutomationTask) (AutomationTask, error) {
+	t = normalizeTask(t)
+	if t.Name == "" || t.Cron == "" {
+		return t, errors.New("任务名称和cron不能为空")
+	}
+	if !json.Valid([]byte(t.PayloadJSON)) {
+		return t, errors.New("payload_json不是有效JSON")
+	}
+	if !json.Valid([]byte(t.WebhookIDs)) {
+		return t, errors.New("webhook_ids不是有效JSON数组")
+	}
+
+	now := nowText()
+	if t.ID == "" {
+		t.ID = uuid.NewString()
+		t.CreatedAt = now
+	} else if t.CreatedAt == "" {
+		old, err := s.GetAutomationTask(t.ID)
+		if err == nil {
+			t.CreatedAt = old.CreatedAt
+		} else {
+			t.CreatedAt = now
+		}
+	}
+	t.UpdatedAt = now
+
+	_, err := s.db.Exec(`INSERT INTO automation_tasks
+		(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			name=excluded.name,type=excluded.type,cron=excluded.cron,enabled=excluded.enabled,payload_json=excluded.payload_json,
+			webhook_ids=excluded.webhook_ids,next_run_at=excluded.next_run_at,updated_at=excluded.updated_at`,
+		t.ID, t.Name, t.Type, t.Cron, boolInt(t.Enabled), t.PayloadJSON, t.WebhookIDs, t.LastRunAt, t.NextRunAt, t.LastStatus, t.LastMessage, t.CreatedAt, t.UpdatedAt)
+	return t, err
+}
+
+func (s *AppStore) DeleteAutomationTask(id string) error {
+	_, err := s.db.Exec(`DELETE FROM automation_tasks WHERE id=?`, id)
+	return err
+}
+
+func (s *AppStore) CreateAutomationRun(task AutomationTask) (AutomationRun, error) {
+	run := AutomationRun{
+		ID:         uuid.NewString(),
+		TaskID:     task.ID,
+		TaskName:   task.Name,
+		TaskType:   task.Type,
+		Status:     "running",
+		StartedAt:  nowText(),
+		ResultJSON: "{}",
+	}
+	_, err := s.db.Exec(`INSERT INTO automation_runs
+		(id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.TaskID, run.TaskName, run.TaskType, run.Status, run.StartedAt, run.FinishedAt, run.Log, run.ResultJSON, run.MatchedCount)
+	return run, err
+}
+
+func (s *AppStore) FinishAutomationRun(runID, status, logText, resultJSON string, matchedCount int) error {
+	if strings.TrimSpace(resultJSON) == "" {
+		resultJSON = "{}"
+	}
+	_, err := s.db.Exec(`UPDATE automation_runs SET status=?,finished_at=?,log=?,result_json=?,matched_count=? WHERE id=?`,
+		status, nowText(), logText, resultJSON, matchedCount, runID)
+	return err
+}
+
+func (s *AppStore) GetAutomationRun(runID string) (AutomationRun, error) {
+	var run AutomationRun
+	err := s.db.QueryRow(`SELECT id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count FROM automation_runs WHERE id=?`, runID).
+		Scan(&run.ID, &run.TaskID, &run.TaskName, &run.TaskType, &run.Status, &run.StartedAt, &run.FinishedAt, &run.Log, &run.ResultJSON, &run.MatchedCount)
+	return run, err
+}
+
+func (s *AppStore) UpdateTaskRunState(taskID, status, message string) error {
+	_, err := s.db.Exec(`UPDATE automation_tasks SET last_run_at=?,last_status=?,last_message=?,updated_at=? WHERE id=?`,
+		nowText(), status, message, nowText(), taskID)
+	return err
+}
+
+func (s *AppStore) UpdateTaskNextRun(taskID, nextRun string) error {
+	_, err := s.db.Exec(`UPDATE automation_tasks SET next_run_at=?,updated_at=? WHERE id=?`, nextRun, nowText(), taskID)
+	return err
+}
+
+func (s *AppStore) ListAutomationRuns(taskID string, limit int) ([]AutomationRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	query := `SELECT id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count FROM automation_runs`
+	args := []interface{}{}
+	if taskID != "" {
+		query += ` WHERE task_id=?`
+		args = append(args, taskID)
+	}
+	query += ` ORDER BY started_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []AutomationRun
+	for rows.Next() {
+		var run AutomationRun
+		if err := rows.Scan(&run.ID, &run.TaskID, &run.TaskName, &run.TaskType, &run.Status, &run.StartedAt, &run.FinishedAt, &run.Log, &run.ResultJSON, &run.MatchedCount); err != nil {
+			return nil, err
+		}
+		list = append(list, run)
+	}
+	return list, rows.Err()
+}
+
+func normalizeWebhook(h Webhook) Webhook {
+	h.Name = strings.TrimSpace(h.Name)
+	h.URL = strings.TrimSpace(h.URL)
+	h.Method = strings.ToUpper(strings.TrimSpace(h.Method))
+	if h.Method == "" {
+		h.Method = "POST"
+	}
+	if strings.TrimSpace(h.HeadersJSON) == "" {
+		h.HeadersJSON = "{}"
+	}
+	if strings.TrimSpace(h.Events) == "" {
+		h.Events = `["automation.failed","stock_selection.finished"]`
+	}
+	return h
+}
+
+func (s *AppStore) ListWebhooks() ([]Webhook, error) {
+	rows, err := s.db.Query(`SELECT id,name,url,method,headers_json,events,enabled,created_at,updated_at FROM webhooks ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Webhook
+	for rows.Next() {
+		var h Webhook
+		var enabled int
+		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Events, &enabled, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		h.Enabled = intBool(enabled)
+		list = append(list, h)
+	}
+	return list, rows.Err()
+}
+
+func (s *AppStore) GetWebhook(id string) (Webhook, error) {
+	var h Webhook
+	var enabled int
+	err := s.db.QueryRow(`SELECT id,name,url,method,headers_json,events,enabled,created_at,updated_at FROM webhooks WHERE id=?`, id).
+		Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Events, &enabled, &h.CreatedAt, &h.UpdatedAt)
+	h.Enabled = intBool(enabled)
+	return h, err
+}
+
+func (s *AppStore) UpsertWebhook(h Webhook) (Webhook, error) {
+	h = normalizeWebhook(h)
+	if h.Name == "" || h.URL == "" {
+		return h, errors.New("Webhook名称和URL不能为空")
+	}
+	if !json.Valid([]byte(h.HeadersJSON)) {
+		return h, errors.New("headers_json不是有效JSON")
+	}
+	if !json.Valid([]byte(h.Events)) {
+		return h, errors.New("events不是有效JSON数组")
+	}
+
+	now := nowText()
+	if h.ID == "" {
+		h.ID = uuid.NewString()
+		h.CreatedAt = now
+	} else if h.CreatedAt == "" {
+		old, err := s.GetWebhook(h.ID)
+		if err == nil {
+			h.CreatedAt = old.CreatedAt
+		} else {
+			h.CreatedAt = now
+		}
+	}
+	h.UpdatedAt = now
+
+	_, err := s.db.Exec(`INSERT INTO webhooks
+		(id,name,url,method,headers_json,events,enabled,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			name=excluded.name,url=excluded.url,method=excluded.method,headers_json=excluded.headers_json,
+			events=excluded.events,enabled=excluded.enabled,updated_at=excluded.updated_at`,
+		h.ID, h.Name, h.URL, h.Method, h.HeadersJSON, h.Events, boolInt(h.Enabled), h.CreatedAt, h.UpdatedAt)
+	return h, err
+}
+
+func (s *AppStore) DeleteWebhook(id string) error {
+	_, err := s.db.Exec(`DELETE FROM webhooks WHERE id=?`, id)
+	return err
+}
+
+func (s *AppStore) ResolveWebhooks(idsJSON string) ([]Webhook, error) {
+	var ids []string
+	if strings.TrimSpace(idsJSON) == "" {
+		return nil, nil
+	}
+	if err := json.Unmarshal([]byte(idsJSON), &ids); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	hooks := make([]Webhook, 0, len(ids))
+	for _, id := range ids {
+		h, err := s.GetWebhook(id)
+		if err != nil {
+			continue
+		}
+		if h.Enabled {
+			hooks = append(hooks, h)
+		}
+	}
+	return hooks, nil
+}
+
+func mustJSON(v interface{}) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf(`{"error":%q}`, err.Error())
+	}
+	return string(raw)
+}

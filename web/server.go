@@ -716,6 +716,11 @@ func getMinuteWithFallback(code, date string) (*protocol.MinuteResp, string, err
 }
 
 func main() {
+	if err := initAutomationServices(); err != nil {
+		log.Printf("初始化自动化服务失败: %v", err)
+		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化自动化服务失败: %v", err))
+	}
+
 	// 静态文件服务
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 
@@ -767,8 +772,26 @@ func main() {
 	http.HandleFunc("/api/tasks/pull-trade", handleCreatePullTradeTask)
 	http.HandleFunc("/api/tasks", handleListTasks)
 	http.HandleFunc("/api/tasks/", handleTaskOperations)
+	http.HandleFunc("/api/formula/health", handleFormulaHealth)
+	http.HandleFunc("/api/formula/run", handleFormulaRun)
+	http.HandleFunc("/api/formulas", handleFormulas)
+	http.HandleFunc("/api/formulas/", handleFormulaOperations)
+	http.HandleFunc("/api/stock-pools", handleStockPools)
+	http.HandleFunc("/api/stock-pools/", handleStockPoolOperations)
+	http.HandleFunc("/api/automations", handleAutomationTasks)
+	http.HandleFunc("/api/automations/runs", handleAutomationRuns)
+	http.HandleFunc("/api/automations/", handleAutomationOperations)
+	http.HandleFunc("/api/webhooks", handleWebhooks)
+	http.HandleFunc("/api/webhooks/", handleWebhookOperations)
+	http.HandleFunc("/api/hqchart/kline", handleHQChartKline)
 
-	port := ":8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
 	log.Printf("服务启动成功，访问 http://localhost%s\n", port)
 	log.Fatal(http.ListenAndServe(port, nil))
 }

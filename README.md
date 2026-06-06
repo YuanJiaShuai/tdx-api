@@ -11,9 +11,10 @@
 | 行情数据 | 五档报价、K 线、分时、分笔成交、指数、ETF、交易日 |
 | 扩展数据 | 集合竞价、股本变迁、财务/F10、板块、行业归属、统计、新股申购 |
 | 数据源 | 通达信原始数据、同花顺前复权日线、扩展行情 TdxExHq |
-| Web 界面 | 股票搜索、行情卡片、K 线图、分时图、成交明细 |
-| 任务接口 | K 线拉取、分时成交拉取、任务查询与取消 |
-| 部署 | Docker Compose、本地源码运行、Windows/macOS/Linux 脚本 |
+| Web 界面 | 股票搜索、行情卡片、K 线图、分时图、成交明细、专业行情页 |
+| 公式与选股 | 自定义公式、公式测试、股票池、选股任务、运行记录 |
+| 自动化 | 系统任务/选股任务模型、Cron 调度、Webhook 通知 |
+| 部署 | Docker Compose 单服务、本地源码运行、Windows/macOS/Linux 脚本 |
 
 ## 快速开始
 
@@ -23,7 +24,7 @@
 docker-compose up -d
 ```
 
-访问 `http://localhost:8080`。
+访问 `http://localhost:8080`。Docker 镜像内部会同时启动 Go Web 服务和 Python 公式 worker，用户只需要启动这一个服务。
 
 常用命令：
 
@@ -39,6 +40,7 @@ docker-compose down
 
 ```bash
 go mod download
+python3 formula-worker/worker.py
 cd web
 go run .
 ```
@@ -71,6 +73,13 @@ go run .
 | `GET /api/finance` | 财务信息 | `/api/finance?code=600519` |
 | `GET /api/block` | 板块成分 | `/api/block?file=gn&with_index=true` |
 | `GET /api/exhq/markets` | 扩展行情市场 | `/api/exhq/markets` |
+| `GET /api/formulas` | 公式列表 | `/api/formulas` |
+| `POST /api/formulas/{id}/test` | 公式测试 | `{"symbol":"000001"}` |
+| `GET /api/stock-pools` | 股票池列表 | `/api/stock-pools` |
+| `GET /api/automations` | 自动化任务列表 | `/api/automations` |
+| `POST /api/automations/{id}/run` | 手动运行任务 | `{}` |
+| `GET /api/webhooks` | Webhook 列表 | `/api/webhooks` |
+| `GET /api/hqchart/kline` | 专业行情 K 线适配 | `/api/hqchart/kline?symbol=000001&period=day` |
 
 完整接口说明见 [docs/API.md](docs/API.md)。
 
@@ -91,6 +100,7 @@ tdx-api/
 ├── client.go                  # 通达信客户端核心
 ├── protocol/                  # 协议帧、模型和解析
 ├── extend/                    # 扩展爬取、拉取、收益计算
+├── formula-worker/            # 容器内公式计算服务
 ├── web/                       # REST API 与 Web 静态资源
 ├── scripts/                   # Python 策略、回测、接口检查脚本
 ├── docs/                      # 长期维护文档
