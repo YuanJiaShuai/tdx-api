@@ -1,251 +1,112 @@
-# 📈 TDX通达信股票数据查询系统
+# TDX 股票数据查询系统
 
-> 基于通达信协议的股票数据获取库 + Web可视化界面 + RESTful API
+基于通达信协议的股票数据获取库，带 Web 可视化界面、RESTful API、Docker 部署和常用数据拉取任务。
 
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
-[![Docker](https://img.shields.io/badge/Docker-支持-2496ED?style=flat&logo=docker)](https://www.docker.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+感谢原项目 [oficcejo/tdx-api](https://github.com/oficcejo/tdx-api) 和上游协议库 [injoyai/tdx](https://github.com/injoyai/tdx)。
 
-**感谢项目原作者 [tdx-api](https://github.com/oficcejo/tdx-api)，请支持原作者！**
-**感谢数据源作者 [injoyai](https://github.com/injoyai/tdx)，请支持原作者！**
----
+## 功能概览
 
-## ✨ 功能特性
+| 模块 | 能力 |
+| --- | --- |
+| 行情数据 | 五档报价、K 线、分时、分笔成交、指数、ETF、交易日 |
+| 扩展数据 | 集合竞价、股本变迁、财务/F10、板块、行业归属、统计、新股申购 |
+| 数据源 | 通达信原始数据、同花顺前复权日线、扩展行情 TdxExHq |
+| Web 界面 | 股票搜索、行情卡片、K 线图、分时图、成交明细 |
+| 任务接口 | K 线拉取、分时成交拉取、任务查询与取消 |
+| 部署 | Docker Compose、本地源码运行、Windows/macOS/Linux 脚本 |
 
-| 分类 | 功能 |
-|-----|------|
-| **📊 核心功能** | 实时行情（五档盘口）、K线数据（10种周期）、分时数据、股票搜索、批量查询 |
-| **🌐 Web界面** | 现代化UI、ECharts图表、智能搜索、实时刷新 |
-| **🔌 RESTful API** | 32个接口、完整文档、多语言示例、高性能 |
-| **🐳 Docker部署** | 开箱即用、国内镜像加速、跨平台支持 |
+## 快速开始
 
----
-
-## 🚀 快速开始
-
-### 方式一：Docker部署（推荐）⭐
+### Docker
 
 ```bash
-# 克隆项目
-git clone https://github.com/oficcejo/tdx-api.git
-cd tdx-api
-
-# 启动服务（已配置国内镜像加速）
 docker-compose up -d
-
-# 访问 http://localhost:8080
 ```
 
-**一键启动脚本：**
-- Windows: 双击 `docker-start.bat`
-- Linux/Mac: `chmod +x docker-start.sh && ./docker-start.sh`
+访问 `http://localhost:8080`。
 
-### 方式二：源码运行
+常用命令：
 
 ```bash
-# 前置要求: Go 1.22+
+docker-compose logs -f
+docker-compose restart
+docker-compose down
+```
 
-# 1. 下载依赖
+### 源码运行
+
+要求 Go 1.23+。
+
+```bash
 go mod download
-
-# 2. 进入web目录并运行
 cd web
 go run .
-
-# 3. 访问 http://localhost:8080
 ```
 
-> ⚠️ **注意**: 必须使用 `go run .` 编译所有Go文件，不能使用 `go run server.go`
+访问 `http://localhost:8080`。
 
----
+注意：Web 服务必须使用 `go run .`，不能只运行 `server.go`，否则扩展接口文件不会参与编译。
 
-## � API接口列表
+## 常用 API
 
-### 核心接口
+所有标准 API 均返回：
+
+```json
+{"code": 0, "message": "success", "data": {}}
+```
 
 | 接口 | 说明 | 示例 |
-|-----|------|------|
-| `/api/quote` | 五档行情 | `?code=000001` |
-| `/api/kline` | K线数据 | `?code=000001&type=day` |
-| `/api/minute` | 分时数据 | `?code=000001` |
-| `/api/trade` | 分时成交 | `?code=000001` |
-| `/api/search` | 搜索股票 | `?keyword=平安` |
-| `/api/stock-info` | 综合信息 | `?code=000001` |
+| --- | --- | --- |
+| `GET /api/quote` | 五档行情 | `/api/quote?code=000001` |
+| `GET /api/kline` | K 线 | `/api/kline?code=000001&type=day` |
+| `GET /api/minute` | 分时 | `/api/minute?code=000001` |
+| `GET /api/trade` | 分笔成交 | `/api/trade?code=000001` |
+| `GET /api/search` | 股票搜索 | `/api/search?keyword=平安` |
+| `GET /api/stock-info` | 综合信息 | `/api/stock-info?code=000001` |
+| `POST /api/batch-quote` | 批量行情 | `{"codes":["000001","600519"]}` |
+| `GET /api/kline-all/tdx` | 通达信全量 K 线 | `/api/kline-all/tdx?code=000001&type=day` |
+| `GET /api/kline-all/ths` | 同花顺前复权 K 线 | `/api/kline-all/ths?code=000001&type=day` |
+| `GET /api/workday` | 交易日 | `/api/workday?date=2026-06-05` |
+| `GET /api/gbbq` | 股本变迁 | `/api/gbbq?code=600519` |
+| `GET /api/finance` | 财务信息 | `/api/finance?code=600519` |
+| `GET /api/block` | 板块成分 | `/api/block?file=gn&with_index=true` |
+| `GET /api/exhq/markets` | 扩展行情市场 | `/api/exhq/markets` |
 
-### 扩展接口
+完整接口说明见 [docs/API.md](docs/API.md)。
 
-| 接口 | 说明 |
-|-----|------|
-| `/api/codes` | 获取股票代码列表 |
-| `/api/batch-quote` | 批量获取行情 |
-| `/api/kline-history` | 历史K线数据 |
-| `/api/kline-all` | 完整K线数据 |
-| `/api/kline-all/tdx` | TDX源K线数据 |
-| `/api/kline-all/ths` | 同花顺源K线数据（含前复权） |
-| `/api/index` | 指数数据 |
-| `/api/index/all` | 全部指数数据 |
-| `/api/market-stats` | 市场统计 |
-| `/api/market-count` | 市场数量统计 |
-| `/api/stock-codes` | 股票代码 |
-| `/api/etf-codes` | ETF代码 |
-| `/api/etf` | ETF列表 |
-| `/api/trade-history` | 历史成交 |
-| `/api/trade-history/full` | 完整历史成交 |
-| `/api/minute-trade-all` | 全部分时成交 |
-| `/api/workday` | 交易日查询 |
-| `/api/workday/range` | 交易日范围 |
-| `/api/income` | 收益数据 |
-| `/api/call-auction` | 集合竞价 |
-| `/api/gbbq` | 股本变迁/除权除息 |
-| `/api/finance` | 财务/基本面信息 |
-| `/api/company/categories` | F10资料目录 |
-| `/api/company/content` | F10资料正文 |
-| `/api/block` | 板块成分/板块指数 |
-| `/api/tdx-hy` | 行业归属 |
-| `/api/tdx-stat` | 个股综合统计 |
-| `/api/tdx-stat2` | 资金流向统计 |
-| `/api/xgsg` | 新股申购 |
-| `/api/exhq/*` | 扩展行情（期货/港股/外盘） |
-| `/api/tasks/pull-kline` | 创建K线拉取任务 |
-| `/api/tasks/pull-trade` | 创建成交拉取任务 |
-| `/api/tasks` | 任务列表 |
-| `/api/server-status` | 服务器状态 |
-| `/api/health` | 健康检查 |
+## 文档索引
 
-**完整API文档**: [API_接口文档.md](API_接口文档.md)
-**上游能力补充接口**: [API_上游能力接口.md](API_上游能力接口.md)
+| 文档 | 说明 |
+| --- | --- |
+| [docs/API.md](docs/API.md) | REST API 参考 |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker、本地运行和排障 |
+| [docs/WEB.md](docs/WEB.md) | Web 页面使用说明 |
+| [docs/gbbq_除权除息与复权算法.md](docs/gbbq_除权除息与复权算法.md) | gbbq 与复权算法说明 |
+| [docs/HISTORY.md](docs/HISTORY.md) | 历史文档合并摘要 |
 
----
+## 项目结构
 
-## � 使用示例
-
-### API调用
-
-```bash
-# 获取实时行情
-curl "http://localhost:8080/api/quote?code=000001"
-
-# 获取日K线
-curl "http://localhost:8080/api/kline?code=000001&type=day"
-
-# 搜索股票
-curl "http://localhost:8080/api/search?keyword=平安"
-
-# 健康检查
-curl "http://localhost:8080/api/health"
-```
-
-### Go库使用
-
-```go
-import "github.com/injoyai/tdx"
-
-// 连接服务器
-c, _ := tdx.DialDefault(tdx.WithDebug(false))
-
-// 获取行情
-quotes, _ := c.GetQuote("000001", "600519")
-
-// 获取日K线
-kline, _ := c.GetKlineDayAll("000001")
-```
-
----
-
-## � Docker配置说明
-
-### 国内镜像加速
-
-Docker配置已使用国内镜像源，加速构建：
-
-| 组件 | 镜像源 |
-|-----|-------|
-| Go基础镜像 | `registry.cn-hangzhou.aliyuncs.com/library/golang` |
-| Alpine镜像 | `registry.cn-hangzhou.aliyuncs.com/library/alpine` |
-| Alpine APK | `mirrors.aliyun.com` |
-| Go Proxy | `goproxy.cn` + `mirrors.aliyun.com/goproxy` |
-
-### 常用命令
-
-```bash
-docker-compose up -d       # 启动服务
-docker-compose logs -f     # 查看日志
-docker-compose stop        # 停止服务
-docker-compose restart     # 重启服务
-docker-compose down        # 完全清理
-```
-
-**详细部署文档**: [DOCKER_DEPLOY.md](DOCKER_DEPLOY.md)
-
----
-
-## 📊 支持的数据类型
-
-| 数据类型 | 方法 | 说明 |
-|---------|------|------|
-| 五档行情 | `GetQuote` | 实时买卖五档、最新价、成交量 |
-| 1/5/15/30/60分钟K线 | `GetKlineXXXAll` | 分钟级K线数据 |
-| 日/周/月K线 | `GetKlineDayAll` 等 | 中长期K线数据 |
-| 分时数据 | `GetMinute` | 当日每分钟价格 |
-| 分时成交 | `GetTrade` | 逐笔成交记录 |
-| 股票列表 | `GetCodeAll` | 全市场代码 |
-
----
-
-## 📁 项目结构
-
-```
+```text
 tdx-api/
-├── client.go              # TDX客户端核心
-├── protocol/              # 通达信协议实现
-├── web/                   # Web应用
-│   ├── server.go          # 主服务器
-│   ├── server_api_extended.go  # 扩展API
-│   ├── tasks.go           # 任务管理
-│   └── static/            # 前端文件
-├── extend/                # 扩展功能
-├── Dockerfile             # Docker镜像（国内源）
-├── docker-compose.yml     # Docker编排
-└── docs/                  # 文档
+├── client.go                  # 通达信客户端核心
+├── protocol/                  # 协议帧、模型和解析
+├── extend/                    # 扩展爬取、拉取、收益计算
+├── web/                       # REST API 与 Web 静态资源
+├── scripts/                   # Python 策略、回测、接口检查脚本
+├── docs/                      # 长期维护文档
+├── Dockerfile
+└── docker-compose.yml
 ```
 
----
+## 开发验证
 
-## � 相关资源
+```bash
+GOPROXY=https://goproxy.cn,direct go test ./...
+cd web
+GOPROXY=https://goproxy.cn,direct go test ./...
+GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-api-web .
+```
 
-| 资源 | 链接 |
-|-----|------|
-| 原项目 | [tdx-api](https://github.com/oficcejo/tdx-api) |
-| 原项目 | [injoyai/tdx](https://github.com/injoyai/tdx) |
-| API文档 | [API_接口文档.md](API_接口文档.md) |
-| Docker部署 | [DOCKER_DEPLOY.md](DOCKER_DEPLOY.md) |
-| Python示例 | [API_使用示例.py](API_使用示例.py) |
+## 免责声明
 
-### 通达信服务器
-
-系统自动连接最快的服务器：
-
-| IP | 地区 |
-|----|------|
-| 124.71.187.122 | 上海(华为) |
-| 122.51.120.217 | 上海(腾讯) |
-| 121.36.54.217 | 北京(华为) |
-| 124.71.85.110 | 广州(华为) |
-
----
-
-## ⚠️ 免责声明
-
-1. 本项目仅供学习和研究使用
-2. 数据来源于通达信公共服务器，可能存在延迟
-3. 不构成任何投资建议，投资有风险
-
----
-
-## 📄 许可证
-
-MIT License - 详见 [LICENSE](LICENSE)
-
----
-
-**如果这个项目对您有帮助，请点个 Star ⭐ 支持一下！**
+本项目仅供学习和研究使用。数据来自通达信公共服务器及相关公开接口，可能存在延迟或不完整，不构成任何投资建议。

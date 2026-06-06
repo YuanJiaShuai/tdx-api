@@ -2,7 +2,7 @@
 
 ## 🌐 基础信息
 
-**Base URL**: `http://your-server:8080`  
+**Base URL**: `http://localhost:8080`  
 **Content-Type**: `application/json; charset=utf-8`  
 **编码**: UTF-8
 
@@ -98,8 +98,7 @@ GET /api/quote?code=000001,600519
 
 **接口**: `GET /api/kline`
 
-**描述**: 获取股票K线数据（OHLC + 成交量成交额）。日/周/月K线默认返回同花顺前复权数据；若第三方源不可用将直接返回错误提示，不再自动切换通达信源。需要原始数据或自行设置兜底时，可调用文末的 `/api/kline-all/tdx` 等接口。
-**描述**: 获取股票K线数据（OHLC + 成交量成交额）。日/周/月K线优先返回同花顺前复权数据，若第三方源不可用则自动回退到通达信原始数据；分钟级及小时级为原始数据。
+**描述**: 获取股票K线数据（OHLC + 成交量成交额）。日/周/月K线默认返回同花顺前复权数据；分钟级及小时级为通达信原始数据。需要原始数据可调用 `/api/kline-all/tdx`。
 
 **请求参数**:
 | 参数 | 类型 | 必填 | 说明 |
@@ -161,8 +160,7 @@ GET /api/kline?code=600519&type=minute30
 
 **接口**: `GET /api/minute`
 
-**描述**: 获取股票分时走势数据。接口严格按照请求日期返回结果，不再自动回退其他交易日；若指定日期无数据，将返回空列表并保留原日期。
-**描述**: 获取股票分时走势数据；若查询日期或当日无数据，会自动回退至最近一个有交易数据的工作日，并在响应体中附加实际数据日期。
+**描述**: 获取股票分时走势数据。接口严格按照请求日期返回结果；若指定日期无数据，将返回空列表并保留请求日期。
 
 **请求参数**:
 | 参数 | 类型 | 必填 | 说明 |
@@ -182,8 +180,7 @@ GET /api/minute?code=000001&date=20241103
   "code": 0,
   "message": "success",
   "data": {
-    "date": "20251110",   // 实际数据日期，与请求日期一致
-    "date": "20251107",   // 实际数据日期，可能与请求日期不同
+    "date": "20241108",   // 实际数据日期
     "Count": 240,
     "List": [
       {
@@ -931,7 +928,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 ```python
 import requests
 
-BASE_URL = "http://your-server:8080"
+BASE_URL = "http://localhost:8080"
 
 # 1. 获取五档行情
 def get_quote(code):
@@ -978,7 +975,7 @@ if __name__ == "__main__":
 ### JavaScript示例
 
 ```javascript
-const BASE_URL = 'http://your-server:8080';
+const BASE_URL = 'http://localhost:8080';
 
 // 1. 获取五档行情
 async function getQuote(code) {
@@ -1190,28 +1187,44 @@ curl -X POST http://localhost:8080/api/batch-quote \
 
 ---
 
-## 📝 更新日志
+## 上游能力补充接口
 
-### v1.0.0 (2024-11-03)
-- ✅ 实现基础6个API接口
-- ✅ 统一响应格式
-- ✅ 完整文档和示例
+### 标准行情扩展
 
-### v1.1.0 (计划中)
-- 🔄 批量查询接口
-- 🔄 历史K线范围查询
-- 🔄 指数数据接口
-- 🔄 WebSocket实时推送
+| 接口 | 说明 | 示例 |
+| --- | --- | --- |
+| `GET /api/call-auction` | 集合竞价 | `/api/call-auction?code=000001` |
+| `GET /api/gbbq` | 股本变迁/除权除息事件 | `/api/gbbq?code=600519` |
+| `GET /api/finance` | 财务/基本面信息 | `/api/finance?code=600519` |
+| `GET /api/company/categories` | F10 公司资料目录 | `/api/company/categories?code=600519` |
+| `GET /api/company/content` | F10 公司资料正文 | `/api/company/content?code=600519&filename=xxx&start=0&length=1024` |
 
----
+### 板块与配置
 
-## 📞 技术支持
+| 接口 | 说明 | 参数 |
+| --- | --- | --- |
+| `GET /api/block` | 板块成分，可选补板块指数代码 | `file=gn/fg/zs/hy/block`，`with_index=true/false` |
+| `GET /api/tdx-hy` | 通达信/申万行业归属 | 无 |
+| `GET /api/tdx-stat` | 个股综合统计 | 无 |
+| `GET /api/tdx-stat2` | 资金流向与板块归属统计 | 无 |
+| `GET /api/xgsg` | 新股申购列表 | 无 |
 
-- 文档地址：本文件
-- API测试：使用Postman或cURL
-- 问题反馈：GitHub Issues
+### 扩展行情 TdxExHq
 
----
+扩展行情使用通达信 7727 端口，适合期货、港股、外盘等市场。
 
-**Happy Coding!** 🎉
+| 接口 | 说明 | 示例 |
+| --- | --- | --- |
+| `GET /api/exhq/markets` | 扩展市场代码表 | `/api/exhq/markets` |
+| `GET /api/exhq/count` | 扩展品种数量 | `/api/exhq/count` |
+| `GET /api/exhq/instruments` | 扩展品种列表分页 | `/api/exhq/instruments?start=0&count=100` |
+| `GET /api/exhq/quote` | 单品种五档行情 | `/api/exhq/quote?market=31&code=HK00700` |
+| `GET /api/exhq/bars` | 扩展 K 线 | `/api/exhq/bars?market=31&code=HK00700&category=9&start=0&count=100` |
+| `GET /api/exhq/trade` | 扩展分笔成交 | `/api/exhq/trade?market=31&code=HK00700&start=0&count=200` |
 
+`category` 使用通达信 K 线类型值，例如 `9` 为日线，`5` 为周线，`6` 为月线，`7` 为 1 分钟。
+
+## 维护说明
+
+- API 测试可使用 Postman、cURL 或 `scripts/run_api_checks.py`。
+- 旧的阶段性 API 总结和集成说明已合并到本文件，历史去向见 [HISTORY.md](HISTORY.md)。
