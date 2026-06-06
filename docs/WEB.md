@@ -46,15 +46,39 @@ CROSS(MA(C,5),MA(C,20));
 
 命中的股票会写入选股结果中心，不需要再从运行记录的 JSON 里翻结果。
 
+选股任务会按 `batch_size` 分批执行，默认 50 只一批；`continue_on_error=true` 时，单批失败会降级为逐只执行并记录失败股票，不会轻易中断整个任务。
+
 ## 系统任务
 
 自动化页面提供系统任务模板：
 
 - 早盘基础同步：同步代码库和交易日。
 - 晚盘日 K 同步：同步日 K 数据。
-- 晚盘行情与日 K 同步：先同步基础数据，再同步日 K。
+- 晚盘完整同步：同步基础数据、日 K、除权、板块、行业、统计、新股申购，并按 `max_codes` 抓取财务快照。
 
 模板默认不启用，创建后可以检查 Cron 和 payload，再手动启用。
+
+系统同步支持的常用 `scope`：
+
+```text
+basic, codes, workday, kline, gbbq, finance, f10, block, industry, stat, stat2, xgsg, all
+```
+
+`finance`、`f10`、`block`、`industry`、`stat`、`stat2`、`xgsg` 会写入 `data/database/snapshots/` 下的 JSON 快照。
+
+自定义任务支持：
+
+```json
+{"action":"noop","data":{"note":"仅记录一次运行"}}
+```
+
+```json
+{"action":"system_sync","sync":{"scope":"block","block_files":["gn"],"with_index":true}}
+```
+
+```json
+{"action":"http_request","method":"POST","url":"http://127.0.0.1:8080/api/health","body":{}}
+```
 
 ## Webhook
 

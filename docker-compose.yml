@@ -6,6 +6,8 @@ services:
     container_name: tdx-stock-web
     ports:
       - "8080:8080"
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
@@ -24,4 +26,3 @@ services:
 networks:
   stock-network:
     driver: bridge
-

@@ -322,7 +322,7 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			Type:        "system_sync",
 			Cron:        "0 0 8 * * 1-5",
 			Enabled:     false,
-			PayloadJSON: `{"scope":"all"}`,
+			PayloadJSON: `{"scope":"basic"}`,
 			WebhookIDs:  "[]",
 		}, nil
 	case "evening_kline":
@@ -336,11 +336,11 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 		}, nil
 	case "evening_full":
 		return AutomationTask{
-			Name:        "晚盘行情与日K同步",
+			Name:        "晚盘完整数据同步",
 			Type:        "system_sync",
 			Cron:        "0 0 21 * * 1-5",
 			Enabled:     false,
-			PayloadJSON: `{"scope":"all","tables":["day"],"limit":4}`,
+			PayloadJSON: `{"scope":"all","tables":["day"],"limit":4,"max_codes":200,"block_files":["gn","fg","zs","hy","block"],"with_index":true,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
 	default:

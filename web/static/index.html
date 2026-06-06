@@ -246,10 +246,18 @@
                     <div id="poolList" class="data-list"></div>
                 </div>
                 <div class="card">
-                    <h3>选股任务</h3>
+                    <h3>自动化任务</h3>
                     <input id="automationName" type="text" placeholder="任务名称">
-                    <select id="automationFormula"></select>
-                    <select id="automationPool"></select>
+                    <select id="automationType" onchange="updateAutomationPayloadMode()">
+                        <option value="stock_selection">选股任务</option>
+                        <option value="system_sync">系统同步</option>
+                        <option value="custom">自定义任务</option>
+                    </select>
+                    <div id="stockSelectionFields">
+                        <select id="automationFormula"></select>
+                        <select id="automationPool"></select>
+                    </div>
+                    <textarea id="automationPayload" rows="7" placeholder='任务 Payload JSON，例如 {"scope":"all"}'></textarea>
                     <input id="automationCron" type="text" placeholder="Cron，例如 0 30 21 * * *" value="0 30 21 * * *">
                     <select id="automationWebhook" multiple size="3"></select>
                     <label class="check-line"><input id="automationEnabled" type="checkbox"> 启用定时</label>
@@ -261,7 +269,7 @@
                 <div class="item-actions">
                     <button class="primary" onclick="createSystemTemplate('morning_sync')">早盘基础同步</button>
                     <button class="primary" onclick="createSystemTemplate('evening_kline')">晚盘日K同步</button>
-                    <button class="primary" onclick="createSystemTemplate('evening_full')">晚盘行情与日K同步</button>
+                    <button class="primary" onclick="createSystemTemplate('evening_full')">晚盘完整同步</button>
                 </div>
             </div>
             <div class="panel-grid two">

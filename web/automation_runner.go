@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/injoyai/tdx"
 	"github.com/injoyai/tdx/extend"
+	"github.com/injoyai/tdx/protocol"
 	"github.com/robfig/cron/v3"
 )
 
@@ -25,21 +29,39 @@ type AutomationRunner struct {
 }
 
 type StockSelectionPayload struct {
-	FormulaID string   `json:"formula_id"`
-	PoolID    string   `json:"pool_id"`
-	Symbols   []string `json:"symbols"`
-	Period    string   `json:"period"`
-	Right     int      `json:"right"`
-	OutCount  int      `json:"out_count"`
-	CalcCount int      `json:"calc_count"`
+	FormulaID       string   `json:"formula_id"`
+	PoolID          string   `json:"pool_id"`
+	Symbols         []string `json:"symbols"`
+	Period          string   `json:"period"`
+	Right           int      `json:"right"`
+	OutCount        int      `json:"out_count"`
+	CalcCount       int      `json:"calc_count"`
+	BatchSize       int      `json:"batch_size"`
+	ContinueOnError bool     `json:"continue_on_error"`
 }
 
 type SystemSyncPayload struct {
-	Scope     string   `json:"scope"`
-	Codes     []string `json:"codes"`
-	Tables    []string `json:"tables"`
-	Limit     int      `json:"limit"`
-	StartDate string   `json:"start_date"`
+	Scope           string   `json:"scope"`
+	Codes           []string `json:"codes"`
+	Tables          []string `json:"tables"`
+	BlockFiles      []string `json:"block_files"`
+	Limit           int      `json:"limit"`
+	MaxCodes        int      `json:"max_codes"`
+	StartDate       string   `json:"start_date"`
+	WithIndex       bool     `json:"with_index"`
+	IncludeF10      bool     `json:"include_f10"`
+	F10Length       uint32   `json:"f10_length"`
+	ContinueOnError bool     `json:"continue_on_error"`
+}
+
+type CustomTaskPayload struct {
+	Action  string                 `json:"action"`
+	Method  string                 `json:"method"`
+	URL     string                 `json:"url"`
+	Headers map[string]string      `json:"headers"`
+	Body    interface{}            `json:"body"`
+	Sync    SystemSyncPayload      `json:"sync"`
+	Data    map[string]interface{} `json:"data"`
 }
 
 func NewAutomationRunner(store *AppStore, worker *FormulaWorkerClient) *AutomationRunner {
@@ -132,6 +154,8 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 		matchedCount = len(matchedSymbols)
 	case "system_sync":
 		result, matchedCount, err = r.runSystemSync(ctx, task)
+	case "custom":
+		result, matchedCount, err = r.runCustomTask(ctx, task)
 	default:
 		err = fmt.Errorf("暂不支持的任务类型: %s", task.Type)
 	}
@@ -223,20 +247,57 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 	if calcCount == 0 {
 		calcCount = 240
 	}
-
-	resp, err := r.worker.Run(ctx, FormulaRunRequest{
-		Symbols:   symbols,
-		Script:    formula.Script,
-		Args:      json.RawMessage(formula.ArgsJSON),
-		Period:    period,
-		Right:     right,
-		OutCount:  outCount,
-		CalcCount: calcCount,
-	})
-	if err != nil {
-		return nil, nil, err
+	batchSize := payload.BatchSize
+	if batchSize <= 0 {
+		batchSize = 50
 	}
-	items := extractSelectionResults(resp.Data)
+	if batchSize > 200 {
+		batchSize = 200
+	}
+	continueOnError := payload.ContinueOnError
+
+	allData := map[string]interface{}{}
+	errorsBySymbol := map[string]string{}
+	batches := chunkSymbols(symbols, batchSize)
+	for _, batch := range batches {
+		resp, err := r.worker.Run(ctx, FormulaRunRequest{
+			Symbols:   batch,
+			Script:    formula.Script,
+			Args:      json.RawMessage(formula.ArgsJSON),
+			Period:    period,
+			Right:     right,
+			OutCount:  outCount,
+			CalcCount: calcCount,
+		})
+		if err == nil {
+			mergeFormulaData(allData, resp.Data)
+			continue
+		}
+		if !continueOnError {
+			return nil, nil, err
+		}
+		for _, symbol := range batch {
+			singleResp, singleErr := r.worker.Run(ctx, FormulaRunRequest{
+				Symbols:   []string{symbol},
+				Script:    formula.Script,
+				Args:      json.RawMessage(formula.ArgsJSON),
+				Period:    period,
+				Right:     right,
+				OutCount:  outCount,
+				CalcCount: calcCount,
+			})
+			if singleErr != nil {
+				errorsBySymbol[symbol] = singleErr.Error()
+				continue
+			}
+			mergeFormulaData(allData, singleResp.Data)
+		}
+	}
+	if len(allData) == 0 && len(errorsBySymbol) > 0 {
+		return nil, nil, fmt.Errorf("选股任务全部失败: %s", mustJSON(errorsBySymbol))
+	}
+
+	items := extractSelectionResults(allData)
 	if err := r.store.SaveSelectionResults(run, formula, items); err != nil {
 		return nil, nil, err
 	}
@@ -247,8 +308,12 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 	result := map[string]interface{}{
 		"formula":         formula,
 		"symbols":         symbols,
+		"batch_size":      batchSize,
 		"matched_symbols": matchedSymbols,
-		"response":        resp,
+		"errors":          errorsBySymbol,
+		"response": map[string]interface{}{
+			"data": allData,
+		},
 	}
 	return result, matchedSymbols, nil
 }
@@ -258,7 +323,18 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 	if strings.TrimSpace(task.PayloadJSON) != "" {
 		_ = json.Unmarshal([]byte(task.PayloadJSON), &payload)
 	}
-	switch payload.Scope {
+	switch strings.ToLower(strings.TrimSpace(payload.Scope)) {
+	case "basic", "base":
+		if manager == nil {
+			return nil, 0, errors.New("数据管理器未初始化")
+		}
+		if err := manager.Codes.Update(); err != nil {
+			return nil, 0, err
+		}
+		if err := manager.Workday.Update(); err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "basic", "codes": "success", "workday": "success"}, 2, nil
 	case "", "codes":
 		if manager == nil {
 			return nil, 0, errors.New("数据管理器未初始化")
@@ -271,6 +347,20 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 		}
 		err := manager.Workday.Update()
 		return map[string]interface{}{"scope": "workday"}, 0, err
+	case "gbbq", "xrxd":
+		if manager == nil {
+			return nil, 0, errors.New("数据管理器未初始化")
+		}
+		gbbq, err := tdx.NewGbbq(tdx.WithGbbqClient(client))
+		if err != nil {
+			return nil, 0, err
+		}
+		manager.Gbbq = gbbq
+		if err := gbbq.Update(); err != nil {
+			return nil, 0, err
+		}
+		all := gbbq.All()
+		return map[string]interface{}{"scope": "gbbq", "codes": len(all)}, len(all), nil
 	case "kline":
 		if manager == nil {
 			return nil, 0, errors.New("数据管理器未初始化")
@@ -316,6 +406,95 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 			"codes":  codes,
 			"limit":  limit,
 		}, len(codes), nil
+	case "finance":
+		codes := limitedSyncCodes(payload)
+		if len(codes) == 0 {
+			return nil, 0, errors.New("finance 同步需要 codes 或 max_codes")
+		}
+		rows, failures := syncFinanceSnapshots(codes, payload.ContinueOnError)
+		path, err := writeAutomationSnapshot("finance", rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "finance", "path": path, "count": len(rows), "failures": failures}, len(rows), nil
+	case "f10", "company":
+		codes := limitedSyncCodes(payload)
+		if len(codes) == 0 {
+			return nil, 0, errors.New("f10 同步需要 codes 或 max_codes")
+		}
+		rows, failures := syncF10Snapshots(codes, payload.F10Length, payload.ContinueOnError)
+		path, err := writeAutomationSnapshot("f10", rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "f10", "path": path, "count": len(rows), "failures": failures}, len(rows), nil
+	case "block", "blocks":
+		files := payload.BlockFiles
+		if len(files) == 0 {
+			files = []string{"gn", "fg", "zs", "hy", "block"}
+		}
+		rows := map[string]interface{}{}
+		for _, file := range files {
+			resolved := resolveBlockFile(file)
+			if payload.WithIndex {
+				resp, err := client.GetBlockDataWithIndex(resolved)
+				if err != nil {
+					return nil, 0, err
+				}
+				rows[resolved] = resp
+			} else {
+				resp, err := client.GetBlockData(resolved)
+				if err != nil {
+					return nil, 0, err
+				}
+				rows[resolved] = resp
+			}
+		}
+		path, err := writeAutomationSnapshot("blocks", rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "block", "path": path, "files": files}, len(files), nil
+	case "industry", "tdx_hy":
+		resp, err := client.GetTdxHy()
+		if err != nil {
+			return nil, 0, err
+		}
+		path, err := writeAutomationSnapshot("tdx_hy", resp)
+		if err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "industry", "path": path, "count": len(resp)}, len(resp), nil
+	case "stat":
+		resp, err := client.GetTdxStat()
+		if err != nil {
+			return nil, 0, err
+		}
+		path, err := writeAutomationSnapshot("tdx_stat", resp)
+		if err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "stat", "path": path, "count": len(resp)}, len(resp), nil
+	case "stat2":
+		resp, err := client.GetTdxStat2()
+		if err != nil {
+			return nil, 0, err
+		}
+		path, err := writeAutomationSnapshot("tdx_stat2", resp)
+		if err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "stat2", "path": path, "count": len(resp)}, len(resp), nil
+	case "xgsg":
+		resp, err := client.GetXgsg()
+		if err != nil {
+			return nil, 0, err
+		}
+		path, err := writeAutomationSnapshot("xgsg", resp)
+		if err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{"scope": "xgsg", "path": path, "count": len(resp)}, len(resp), nil
 	case "all":
 		results := map[string]interface{}{}
 		if manager == nil {
@@ -329,6 +508,18 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 			return nil, 0, err
 		}
 		results["workday"] = "success"
+		total := 0
+		for _, scope := range []string{"gbbq", "block", "industry", "stat", "stat2", "xgsg"} {
+			payload.Scope = scope
+			raw, _ := json.Marshal(payload)
+			task.PayloadJSON = string(raw)
+			itemResult, count, err := r.runSystemSync(ctx, task)
+			if err != nil {
+				return nil, 0, err
+			}
+			results[scope] = itemResult
+			total += count
+		}
 		if len(payload.Tables) > 0 || len(payload.Codes) > 0 {
 			payload.Scope = "kline"
 			raw, _ := json.Marshal(payload)
@@ -338,12 +529,240 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 				return nil, 0, err
 			}
 			results["kline"] = klineResult
-			return results, count, nil
+			total += count
 		}
-		return results, 0, nil
+		if payload.MaxCodes > 0 || len(payload.Codes) > 0 {
+			payload.Scope = "finance"
+			raw, _ := json.Marshal(payload)
+			task.PayloadJSON = string(raw)
+			itemResult, count, err := r.runSystemSync(ctx, task)
+			if err != nil {
+				return nil, 0, err
+			}
+			results["finance"] = itemResult
+			total += count
+			if payload.IncludeF10 {
+				payload.Scope = "f10"
+				raw, _ := json.Marshal(payload)
+				task.PayloadJSON = string(raw)
+				itemResult, count, err := r.runSystemSync(ctx, task)
+				if err != nil {
+					return nil, 0, err
+				}
+				results["f10"] = itemResult
+				total += count
+			}
+		}
+		return results, total, nil
 	default:
 		return nil, 0, fmt.Errorf("未知系统同步scope: %s", payload.Scope)
 	}
+}
+
+func (r *AutomationRunner) runCustomTask(ctx context.Context, task AutomationTask) (interface{}, int, error) {
+	var payload CustomTaskPayload
+	if strings.TrimSpace(task.PayloadJSON) != "" {
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+			return nil, 0, err
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(payload.Action)) {
+	case "", "noop":
+		return map[string]interface{}{"action": "noop", "data": payload.Data}, 0, nil
+	case "system_sync":
+		raw, _ := json.Marshal(payload.Sync)
+		return r.runSystemSync(ctx, AutomationTask{PayloadJSON: string(raw)})
+	case "http_request":
+		result, err := runCustomHTTPRequest(ctx, payload)
+		return result, 1, err
+	default:
+		return nil, 0, fmt.Errorf("未知custom action: %s", payload.Action)
+	}
+}
+
+func chunkSymbols(symbols []string, size int) [][]string {
+	if size <= 0 {
+		size = 50
+	}
+	chunks := make([][]string, 0, (len(symbols)+size-1)/size)
+	for start := 0; start < len(symbols); start += size {
+		end := start + size
+		if end > len(symbols) {
+			end = len(symbols)
+		}
+		chunks = append(chunks, symbols[start:end])
+	}
+	return chunks
+}
+
+func mergeFormulaData(target map[string]interface{}, data interface{}) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return
+	}
+	for key, value := range decoded {
+		target[key] = value
+	}
+}
+
+func limitedSyncCodes(payload SystemSyncPayload) []string {
+	codes := normalizeSymbols(payload.Codes)
+	if len(codes) == 0 && payload.MaxCodes > 0 && tdx.DefaultCodes != nil {
+		codes = normalizeSymbols(tdx.DefaultCodes.GetStocks(payload.MaxCodes))
+	}
+	if payload.MaxCodes > 0 && len(codes) > payload.MaxCodes {
+		codes = codes[:payload.MaxCodes]
+	}
+	return codes
+}
+
+func writeAutomationSnapshot(name string, data interface{}) (string, error) {
+	dir := filepath.Join(tdx.DefaultDatabaseDir, "snapshots", name)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	filename := time.Now().Format("20060102-150405") + ".json"
+	path := filepath.Join(dir, filename)
+	raw, err := json.MarshalIndent(map[string]interface{}{
+		"created_at": nowText(),
+		"name":       name,
+		"data":       data,
+	}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, raw, 0644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func syncFinanceSnapshots(codes []string, continueOnError bool) ([]map[string]interface{}, map[string]string) {
+	rows := make([]map[string]interface{}, 0, len(codes))
+	failures := map[string]string{}
+	for _, code := range codes {
+		exchange, number, err := protocol.DecodeCode(protocol.AddPrefix(code))
+		if err == nil {
+			var resp interface{}
+			resp, err = client.GetFinanceInfo(exchange, number)
+			if err == nil {
+				rows = append(rows, map[string]interface{}{
+					"code": code,
+					"data": resp,
+				})
+				continue
+			}
+		}
+		failures[code] = err.Error()
+		if !continueOnError {
+			break
+		}
+	}
+	return rows, failures
+}
+
+func syncF10Snapshots(codes []string, contentLength uint32, continueOnError bool) ([]map[string]interface{}, map[string]string) {
+	if contentLength == 0 {
+		contentLength = 4096
+	}
+	rows := make([]map[string]interface{}, 0, len(codes))
+	failures := map[string]string{}
+	for _, code := range codes {
+		exchange, number, err := protocol.DecodeCode(protocol.AddPrefix(code))
+		if err != nil {
+			failures[code] = err.Error()
+			if !continueOnError {
+				break
+			}
+			continue
+		}
+		categories, err := client.GetCompanyCategory(exchange, number)
+		if err != nil {
+			failures[code] = err.Error()
+			if !continueOnError {
+				break
+			}
+			continue
+		}
+		item := map[string]interface{}{
+			"code":       code,
+			"categories": categories,
+		}
+		contents := map[string]string{}
+		for _, category := range categories {
+			if strings.TrimSpace(category.Filename) == "" {
+				continue
+			}
+			content, err := client.GetCompanyContent(exchange, number, category.Filename, 0, contentLength)
+			if err != nil {
+				failures[code+":"+category.Filename] = err.Error()
+				if !continueOnError {
+					break
+				}
+				continue
+			}
+			contents[category.Filename] = content
+		}
+		item["contents"] = contents
+		rows = append(rows, item)
+		if !continueOnError && len(failures) > 0 {
+			break
+		}
+	}
+	return rows, failures
+}
+
+func runCustomHTTPRequest(ctx context.Context, payload CustomTaskPayload) (map[string]interface{}, error) {
+	method := strings.ToUpper(strings.TrimSpace(payload.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+	if strings.TrimSpace(payload.URL) == "" {
+		return nil, errors.New("custom http_request 缺少 url")
+	}
+	var bodyReader *bytes.Reader
+	if payload.Body == nil {
+		bodyReader = bytes.NewReader(nil)
+	} else {
+		raw, err := json.Marshal(payload.Body)
+		if err != nil {
+			return nil, err
+		}
+		bodyReader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, payload.URL, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+	if payload.Body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for key, value := range payload.Headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	buf := new(bytes.Buffer)
+	_, _ = buf.ReadFrom(resp.Body)
+	result := map[string]interface{}{
+		"action":      "http_request",
+		"method":      method,
+		"url":         payload.URL,
+		"status_code": resp.StatusCode,
+		"status":      resp.Status,
+		"body":        buf.String(),
+	}
+	if resp.StatusCode >= 300 {
+		return result, fmt.Errorf("custom http_request 返回状态: %s", resp.Status)
+	}
+	return result, nil
 }
 
 func parseLocalDate(value string) (time.Time, error) {

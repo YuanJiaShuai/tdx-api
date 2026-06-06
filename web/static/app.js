@@ -821,6 +821,7 @@ async function deletePool(id) {
 
 async function loadAutomationData() {
     await Promise.all([loadFormulaList(), loadPools(), loadWebhooks(), loadAutomations(), loadRuns(), loadSelectionResults()]);
+    updateAutomationPayloadMode();
 }
 
 async function loadAutomations() {
@@ -845,32 +846,57 @@ function fillAutomation(id) {
     const payload = JSON.parse(t.payload_json || '{}');
     document.getElementById('automationName').dataset.id = t.id;
     document.getElementById('automationName').value = t.name;
+    document.getElementById('automationType').value = t.type || 'stock_selection';
     document.getElementById('automationFormula').value = payload.formula_id || '';
     document.getElementById('automationPool').value = payload.pool_id || '';
+    document.getElementById('automationPayload').value = JSON.stringify(payload, null, 2);
     document.getElementById('automationCron').value = t.cron;
     document.getElementById('automationEnabled').checked = !!t.enabled;
     const ids = JSON.parse(t.webhook_ids || '[]');
     Array.from(document.getElementById('automationWebhook').options).forEach(opt => {
         opt.selected = ids.includes(opt.value);
     });
+    updateAutomationPayloadMode();
+}
+
+function updateAutomationPayloadMode() {
+    const type = document.getElementById('automationType')?.value || 'stock_selection';
+    const stockFields = document.getElementById('stockSelectionFields');
+    const payloadBox = document.getElementById('automationPayload');
+    if (stockFields) stockFields.style.display = type === 'stock_selection' ? 'block' : 'none';
+    if (!payloadBox) return;
+    payloadBox.style.display = type === 'stock_selection' ? 'none' : 'block';
+    if (!payloadBox.value.trim()) {
+        payloadBox.value = type === 'system_sync'
+            ? JSON.stringify({ scope: 'all', tables: ['day'], limit: 4, max_codes: 200, continue_on_error: true }, null, 2)
+            : JSON.stringify({ action: 'noop', data: {} }, null, 2);
+    }
 }
 
 async function saveAutomation() {
     try {
         const id = document.getElementById('automationName').dataset.id || '';
+        const type = document.getElementById('automationType').value || 'stock_selection';
         const webhookIds = Array.from(document.getElementById('automationWebhook').selectedOptions).map(opt => opt.value);
-        const payload = {
-            formula_id: document.getElementById('automationFormula').value,
-            pool_id: document.getElementById('automationPool').value,
-            calc_count: 240,
-            out_count: 1
-        };
+        let payload;
+        if (type === 'stock_selection') {
+            payload = {
+                formula_id: document.getElementById('automationFormula').value,
+                pool_id: document.getElementById('automationPool').value,
+                calc_count: 240,
+                out_count: 1,
+                batch_size: 50,
+                continue_on_error: true
+            };
+        } else {
+            payload = JSON.parse(document.getElementById('automationPayload').value || '{}');
+        }
         await apiFetch(id ? `/api/automations/${id}` : '/api/automations', {
             method: id ? 'PUT' : 'POST',
             body: JSON.stringify({
                 id,
                 name: document.getElementById('automationName').value,
-                type: 'stock_selection',
+                type,
                 cron: document.getElementById('automationCron').value,
                 enabled: document.getElementById('automationEnabled').checked,
                 payload_json: JSON.stringify(payload),

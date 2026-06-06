@@ -1252,6 +1252,36 @@ curl -s http://localhost:8080/api/formula/run \
 
 响应中的 `engine` 表示本次实际使用的执行器；如果 HQChartPy2 执行失败并回退，`fallback_error` 会包含原始错误。
 
+自动化任务 `type` 支持：
+
+| type | 说明 |
+| --- | --- |
+| `stock_selection` | 股票池 + 公式选股，payload 支持 `formula_id`、`pool_id`、`symbols`、`batch_size`、`continue_on_error` |
+| `system_sync` | 系统同步任务，payload 使用 `scope` 控制同步范围 |
+| `custom` | 自定义任务，支持 `noop`、`system_sync`、`http_request` |
+
+`system_sync` 常用 payload：
+
+```json
+{"scope":"basic"}
+```
+
+```json
+{"scope":"kline","tables":["day"],"limit":4}
+```
+
+```json
+{"scope":"all","tables":["day"],"limit":4,"max_codes":200,"with_index":true,"continue_on_error":true}
+```
+
+可用 `scope` 包括 `basic`、`codes`、`workday`、`kline`、`gbbq`、`finance`、`f10`、`block`、`industry`、`stat`、`stat2`、`xgsg`、`all`。快照型同步会把 JSON 写入 `data/database/snapshots/`。
+
+`custom` 示例：
+
+```json
+{"action":"system_sync","sync":{"scope":"block","block_files":["gn"],"with_index":true}}
+```
+
 `/api/hqchart/history` 返回的 `data` 为 HQChart K 线数组：
 
 ```text
