@@ -33,11 +33,13 @@ type FormulaRunRequest struct {
 }
 
 type FormulaRunResponse struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data"`
-	Engine  string      `json:"engine"`
-	TickMS  int64       `json:"tick_ms"`
+	Code                int         `json:"code"`
+	Message             string      `json:"message"`
+	Data                interface{} `json:"data"`
+	Engine              string      `json:"engine"`
+	HQChartPy2Available bool        `json:"hqchartpy2_available"`
+	FallbackError       string      `json:"fallback_error,omitempty"`
+	TickMS              int64       `json:"tick_ms"`
 }
 
 type FormulaKline struct {

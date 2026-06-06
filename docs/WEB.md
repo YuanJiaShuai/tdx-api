@@ -26,13 +26,15 @@ Web 页面入口：`http://localhost:8080`。
 | K 线图 | 蜡烛图、成交量、多周期切换 |
 | 分时图 | 当日或指定日期分时走势 |
 | 分时成交 | 最近或指定日期逐笔成交 |
-| 专业行情 | `/api/hqchart/kline` 适配后的 K 线数据 |
+| 专业行情 | `/api/hqchart/kline` 适配后的页面数据，以及 `/api/hqchart/history` 返回的 HQChart 原生 K 线数组 |
 | 公式管理 | `formulas` 表，保存名称、类型、脚本、周期、复权参数 |
 | 自动化任务 | `automation_tasks` 表，保存 Cron、任务类型、payload、Webhook 关联 |
 
 ## 公式和选股
 
-第一版内置公式 worker 优先保证本地闭环，支持常见函数：`MA`、`EMA`、`SMA`、`REF`、`LLV`、`HHV`、`CROSS`、`SUM`、`STD`、`IF`、`MAX`、`MIN`。
+Docker 镜像会从随项目包含的 hqchartPy2 源码编译 `HQChartPy2` 扩展。公式 worker 启动后会优先使用 HQChartPy2 的 C++ 引擎执行公式；如果模块不可用或单次执行失败，会回退到内置 Python 执行器，继续保证本地闭环。
+
+内置 fallback 执行器支持常见函数：`MA`、`EMA`、`SMA`、`REF`、`LLV`、`HHV`、`CROSS`、`SUM`、`STD`、`IF`、`MAX`、`MIN`。
 
 示例公式：
 
@@ -72,6 +74,7 @@ Webhook 使用 `POST` JSON：
 
 - 日/周/月 K 线默认使用同花顺前复权数据。
 - Docker 模式会自动启动公式 worker；源码模式需要先运行 `python3 formula-worker/worker.py`。
+- 可通过 `/api/formula/health` 查看当前公式引擎，`engine=hqchartpy2` 表示已经使用 HQChartPy2。
 - 原始通达信 K 线可调用 `/api/kline-all/tdx`。
 - 如果遇到分时为空，先确认查询日期是否为交易日。
 - 浏览器控制台报错时，先刷新页面并确认服务仍在运行。

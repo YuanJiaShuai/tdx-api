@@ -12,9 +12,7 @@ WORKDIR /app
 ENV GO111MODULE=on \
     GOPROXY=https://goproxy.cn,https://mirrors.aliyun.com/goproxy/,direct \
     GOTOOLCHAIN=auto \
-    CGO_ENABLED=0 \
-    GOOS=linux \
-    GOARCH=amd64
+    CGO_ENABLED=0
 
 # 复制 Go 模块文件
 COPY go.mod go.sum ./
@@ -31,7 +29,7 @@ FROM docker.1ms.run/library/alpine:latest
 
 # 替换Alpine镜像源为阿里云，安装必要的运行时依赖
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk --no-cache add ca-certificates tzdata wget python3 py3-pip
+    apk --no-cache add ca-certificates tzdata wget python3 py3-pip libstdc++
 
 # 设置时区为上海
 ENV TZ=Asia/Shanghai
@@ -57,6 +55,10 @@ COPY --from=builder /app/web/static ./static
 
 COPY --from=builder /app/formula-worker ./formula-worker
 COPY --from=builder /app/docker-entrypoint.sh ./docker-entrypoint.sh
+
+RUN apk --no-cache add --virtual .hqchart-build g++ python3-dev zlib-dev linux-headers && \
+    python3 /app/formula-worker/install_hqchartpy2.py && \
+    apk del .hqchart-build
 
 # 更改文件所有者
 RUN chmod +x /app/docker-entrypoint.sh /app/formula-worker/worker.py && \

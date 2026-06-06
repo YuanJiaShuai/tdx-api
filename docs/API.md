@@ -1224,6 +1224,40 @@ curl -X POST http://localhost:8080/api/batch-quote \
 
 `category` 使用通达信 K 线类型值，例如 `9` 为日线，`5` 为周线，`6` 为月线，`7` 为 1 分钟。
 
+### 公式、选股与 HQChart
+
+| 接口 | 说明 | 示例 |
+| --- | --- | --- |
+| `GET /api/formula/health` | 查看公式 worker 和当前公式引擎状态 | `/api/formula/health` |
+| `POST /api/formula/run` | 直接执行公式脚本 | `{"symbol":"000001","script":"T:MA(C,5);","out_count":3}` |
+| `GET /api/formulas` | 公式列表 | `/api/formulas` |
+| `POST /api/formulas/{id}/test` | 使用已保存公式测试单只股票 | `{"symbol":"000001","calc_count":80}` |
+| `GET /api/stock-pools` | 股票池列表 | `/api/stock-pools` |
+| `GET /api/automations` | 自动化任务列表 | `/api/automations` |
+| `POST /api/automations/{id}/run` | 手动运行自动化任务 | `{}` |
+| `GET /api/selection-results` | 查看选股命中结果 | `/api/selection-results?limit=100` |
+| `GET /api/webhooks` | Webhook 通知配置列表 | `/api/webhooks` |
+| `GET /api/hqchart/kline` | Web 页面使用的专业行情 K 线对象 | `/api/hqchart/kline?symbol=000001&period=day&limit=500` |
+| `GET /api/hqchart/history` | HQChart 原生历史 K 线数组适配 | `/api/hqchart/history?symbol=000001&period=day&limit=800` |
+
+`/api/formula/health` 在 Docker 模式下正常会返回 `engine=hqchartpy2` 和 `hqchartpy2_available=true`。如果 HQChartPy2 不可用，worker 会继续使用内置 fallback 执行器。
+
+公式运行示例：
+
+```bash
+curl -s http://localhost:8080/api/formula/run \
+  -H 'Content-Type: application/json' \
+  -d '{"symbol":"000001","script":"T:MA(C,5);","period":"day","right":1,"out_count":3,"calc_count":80}'
+```
+
+响应中的 `engine` 表示本次实际使用的执行器；如果 HQChartPy2 执行失败并回退，`fallback_error` 会包含原始错误。
+
+`/api/hqchart/history` 返回的 `data` 为 HQChart K 线数组：
+
+```text
+[date, yclose, open, high, low, close, vol, amount, time]
+```
+
 ## 维护说明
 
 - API 测试可使用 Postman、cURL 或 `scripts/run_api_checks.py`。

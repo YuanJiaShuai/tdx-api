@@ -85,7 +85,10 @@ go run .
 | `POST /api/automations/{id}/run` | 手动运行任务 | `{}` |
 | `GET /api/selection-results` | 选股命中结果 | `/api/selection-results?limit=100` |
 | `GET /api/webhooks` | Webhook 列表 | `/api/webhooks` |
-| `GET /api/hqchart/kline` | 专业行情 K 线适配 | `/api/hqchart/kline?symbol=000001&period=day` |
+| `GET /api/formula/health` | 公式 worker 状态 | `/api/formula/health` |
+| `POST /api/formula/run` | 直接执行公式 | `{"symbol":"000001","script":"T:MA(C,5);"}` |
+| `GET /api/hqchart/kline` | Web 专业行情 K 线适配 | `/api/hqchart/kline?symbol=000001&period=day` |
+| `GET /api/hqchart/history` | HQChart 原生历史 K 线适配 | `/api/hqchart/history?symbol=000001&period=day` |
 
 完整接口说明见 [docs/API.md](docs/API.md)。
 
