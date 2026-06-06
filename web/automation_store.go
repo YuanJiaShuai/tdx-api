@@ -72,6 +72,19 @@ type AutomationRun struct {
 	MatchedCount int    `json:"matched_count"`
 }
 
+type SelectionResult struct {
+	ID          string  `json:"id"`
+	RunID       string  `json:"run_id"`
+	TaskID      string  `json:"task_id"`
+	TaskName    string  `json:"task_name"`
+	FormulaID   string  `json:"formula_id"`
+	FormulaName string  `json:"formula_name"`
+	Symbol      string  `json:"symbol"`
+	Latest      float64 `json:"latest"`
+	DetailJSON  string  `json:"detail_json"`
+	CreatedAt   string  `json:"created_at"`
+}
+
 type Webhook struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -165,6 +178,21 @@ func (s *AppStore) migrate() error {
 			result_json TEXT NOT NULL DEFAULT '{}',
 			matched_count INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS selection_results (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			task_name TEXT NOT NULL,
+			formula_id TEXT NOT NULL,
+			formula_name TEXT NOT NULL,
+			symbol TEXT NOT NULL,
+			latest REAL NOT NULL DEFAULT 0,
+			detail_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_created_at ON selection_results(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
 		`CREATE TABLE IF NOT EXISTS webhooks (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -271,6 +299,9 @@ func (s *AppStore) ListFormulas() ([]Formula, error) {
 		f.Enabled = intBool(enabled)
 		list = append(list, f)
 	}
+	if list == nil {
+		list = []Formula{}
+	}
 	return list, rows.Err()
 }
 
@@ -338,6 +369,9 @@ func (s *AppStore) ListStockPools() ([]StockPool, error) {
 		}
 		_ = json.Unmarshal([]byte(symbols), &pool.Symbols)
 		list = append(list, pool)
+	}
+	if list == nil {
+		list = []StockPool{}
 	}
 	return list, rows.Err()
 }
@@ -441,6 +475,9 @@ func (s *AppStore) ListAutomationTasks() ([]AutomationTask, error) {
 		t.Enabled = intBool(enabled)
 		list = append(list, t)
 	}
+	if list == nil {
+		list = []AutomationTask{}
+	}
 	return list, rows.Err()
 }
 
@@ -520,6 +557,44 @@ func (s *AppStore) FinishAutomationRun(runID, status, logText, resultJSON string
 	return err
 }
 
+func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, items []SelectionResult) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM selection_results WHERE run_id=?`, run.ID); err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.ID == "" {
+			item.ID = uuid.NewString()
+		}
+		item.RunID = run.ID
+		item.TaskID = run.TaskID
+		item.TaskName = run.TaskName
+		item.FormulaID = formula.ID
+		item.FormulaName = formula.Name
+		if item.CreatedAt == "" {
+			item.CreatedAt = nowText()
+		}
+		if strings.TrimSpace(item.DetailJSON) == "" {
+			item.DetailJSON = "{}"
+		}
+		if _, err := tx.Exec(`INSERT INTO selection_results
+			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			item.ID, item.RunID, item.TaskID, item.TaskName, item.FormulaID, item.FormulaName, item.Symbol, item.Latest, item.DetailJSON, item.CreatedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *AppStore) GetAutomationRun(runID string) (AutomationRun, error) {
 	var run AutomationRun
 	err := s.db.QueryRow(`SELECT id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count FROM automation_runs WHERE id=?`, runID).
@@ -565,6 +640,57 @@ func (s *AppStore) ListAutomationRuns(taskID string, limit int) ([]AutomationRun
 		}
 		list = append(list, run)
 	}
+	if list == nil {
+		list = []AutomationRun{}
+	}
+	return list, rows.Err()
+}
+
+func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLatest bool, limit int) ([]SelectionResult, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results`
+	args := []interface{}{}
+	conds := []string{}
+	if taskID != "" {
+		conds = append(conds, "task_id=?")
+		args = append(args, taskID)
+	}
+	if formulaID != "" {
+		conds = append(conds, "formula_id=?")
+		args = append(args, formulaID)
+	}
+	if symbol != "" {
+		conds = append(conds, "symbol=?")
+		args = append(args, strings.ToUpper(symbol))
+	}
+	if onlyLatest {
+		conds = append(conds, `run_id=(SELECT run_id FROM selection_results ORDER BY created_at DESC LIMIT 1)`)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []SelectionResult
+	for rows.Next() {
+		var item SelectionResult
+		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, item)
+	}
+	if list == nil {
+		list = []SelectionResult{}
+	}
 	return list, rows.Err()
 }
 
@@ -600,6 +726,9 @@ func (s *AppStore) ListWebhooks() ([]Webhook, error) {
 		}
 		h.Enabled = intBool(enabled)
 		list = append(list, h)
+	}
+	if list == nil {
+		list = []Webhook{}
 	}
 	return list, rows.Err()
 }

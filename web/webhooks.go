@@ -11,16 +11,17 @@ import (
 )
 
 type WebhookEvent struct {
-	Event        string      `json:"event"`
-	TaskID       string      `json:"task_id,omitempty"`
-	TaskName     string      `json:"task_name,omitempty"`
-	TaskType     string      `json:"task_type,omitempty"`
-	RunID        string      `json:"run_id,omitempty"`
-	Status       string      `json:"status,omitempty"`
-	Message      string      `json:"message,omitempty"`
-	MatchedCount int         `json:"matched_count,omitempty"`
-	Result       interface{} `json:"result,omitempty"`
-	RunAt        string      `json:"run_at"`
+	Event          string      `json:"event"`
+	TaskID         string      `json:"task_id,omitempty"`
+	TaskName       string      `json:"task_name,omitempty"`
+	TaskType       string      `json:"task_type,omitempty"`
+	RunID          string      `json:"run_id,omitempty"`
+	Status         string      `json:"status,omitempty"`
+	Message        string      `json:"message,omitempty"`
+	MatchedCount   int         `json:"matched_count,omitempty"`
+	MatchedSymbols []string    `json:"matched_symbols,omitempty"`
+	Result         interface{} `json:"result,omitempty"`
+	RunAt          string      `json:"run_at"`
 }
 
 func sendWebhooks(ctx context.Context, hooks []Webhook, event WebhookEvent) []string {

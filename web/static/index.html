@@ -31,6 +31,7 @@
             <button class="workspace-tab active" onclick="switchWorkspace('market', this)">行情</button>
             <button class="workspace-tab" onclick="switchWorkspace('proChart', this)">专业行情</button>
             <button class="workspace-tab" onclick="switchWorkspace('formulas', this)">公式</button>
+            <button class="workspace-tab" onclick="switchWorkspace('selectionResults', this)">选股结果</button>
             <button class="workspace-tab" onclick="switchWorkspace('automations', this)">自动化</button>
             <button class="workspace-tab" onclick="switchWorkspace('webhooks', this)">Webhook</button>
         </div>
@@ -255,6 +256,14 @@
                     <button class="btn-primary" onclick="saveAutomation()">保存任务</button>
                 </div>
             </div>
+            <div class="card">
+                <h3>系统任务模板</h3>
+                <div class="item-actions">
+                    <button class="primary" onclick="createSystemTemplate('morning_sync')">早盘基础同步</button>
+                    <button class="primary" onclick="createSystemTemplate('evening_kline')">晚盘日K同步</button>
+                    <button class="primary" onclick="createSystemTemplate('evening_full')">晚盘行情与日K同步</button>
+                </div>
+            </div>
             <div class="panel-grid two">
                 <div class="card">
                     <h3>任务列表</h3>
@@ -264,6 +273,25 @@
                     <h3>运行记录</h3>
                     <div id="runList" class="data-list"></div>
                 </div>
+            </div>
+        </section>
+
+        <section id="selectionResultsWorkspace" class="workspace">
+            <div class="card">
+                <div class="card-header">
+                    <h3>选股结果中心</h3>
+                    <button class="btn-secondary" onclick="loadSelectionResults()">刷新</button>
+                </div>
+                <div class="form-row">
+                    <select id="resultFormulaFilter"></select>
+                    <input id="resultSymbolFilter" type="text" placeholder="按股票代码筛选">
+                    <select id="resultLatestFilter">
+                        <option value="">全部结果</option>
+                        <option value="1">最近一次运行</option>
+                    </select>
+                    <button class="btn-primary compact" onclick="loadSelectionResults()">查询</button>
+                </div>
+                <div id="selectionResultList" class="data-list result-grid"></div>
             </div>
         </section>
 
@@ -292,6 +320,9 @@
         </div>
     </div>
 
+    <script src="chart-shim.js"></script>
+    <script src="chartlib/umychart.min.js"></script>
+    <script src="chart-adapter.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

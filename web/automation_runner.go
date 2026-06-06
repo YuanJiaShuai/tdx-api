@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/injoyai/tdx"
+	"github.com/injoyai/tdx/extend"
 	"github.com/robfig/cron/v3"
 )
 
@@ -121,10 +124,12 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	resultJSON := "{}"
 	matchedCount := 0
 	var result interface{}
+	var matchedSymbols []string
 
 	switch task.Type {
 	case "stock_selection":
-		result, matchedCount, err = r.runStockSelection(ctx, task)
+		result, matchedSymbols, err = r.runStockSelection(ctx, task, run)
+		matchedCount = len(matchedSymbols)
 	case "system_sync":
 		result, matchedCount, err = r.runSystemSync(ctx, task)
 	default:
@@ -156,15 +161,16 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 		eventName = "automation.failed"
 	}
 	hookLogs := sendWebhooks(ctx, hooks, WebhookEvent{
-		Event:        eventName,
-		TaskID:       task.ID,
-		TaskName:     task.Name,
-		TaskType:     task.Type,
-		RunID:        run.ID,
-		Status:       status,
-		Message:      message,
-		MatchedCount: matchedCount,
-		Result:       result,
+		Event:          eventName,
+		TaskID:         task.ID,
+		TaskName:       task.Name,
+		TaskType:       task.Type,
+		RunID:          run.ID,
+		Status:         status,
+		Message:        message,
+		MatchedCount:   matchedCount,
+		Result:         result,
+		MatchedSymbols: matchedSymbols,
 	})
 	if len(hookLogs) > 0 {
 		log.Printf("Webhook通知: %s", strings.Join(hookLogs, "; "))
@@ -176,30 +182,30 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	return run, err
 }
 
-func (r *AutomationRunner) runStockSelection(ctx context.Context, task AutomationTask) (interface{}, int, error) {
+func (r *AutomationRunner) runStockSelection(ctx context.Context, task AutomationTask, run AutomationRun) (interface{}, []string, error) {
 	var payload StockSelectionPayload
 	if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	if payload.FormulaID == "" {
-		return nil, 0, errors.New("选股任务缺少formula_id")
+		return nil, nil, errors.New("选股任务缺少formula_id")
 	}
 	formula, err := r.store.GetFormula(payload.FormulaID)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	symbols := payload.Symbols
 	if len(symbols) == 0 && payload.PoolID != "" {
 		pool, err := r.store.GetStockPool(payload.PoolID)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		symbols = pool.Symbols
 	}
 	symbols = normalizeSymbols(symbols)
 	if len(symbols) == 0 {
-		return nil, 0, errors.New("选股任务股票池为空")
+		return nil, nil, errors.New("选股任务股票池为空")
 	}
 	period := payload.Period
 	if period == "" {
@@ -228,15 +234,23 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 		CalcCount: calcCount,
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
-	matched := countFormulaMatches(resp.Data)
+	items := extractSelectionResults(resp.Data)
+	if err := r.store.SaveSelectionResults(run, formula, items); err != nil {
+		return nil, nil, err
+	}
+	matchedSymbols := make([]string, 0, len(items))
+	for _, item := range items {
+		matchedSymbols = append(matchedSymbols, item.Symbol)
+	}
 	result := map[string]interface{}{
-		"formula":  formula,
-		"symbols":  symbols,
-		"response": resp,
+		"formula":         formula,
+		"symbols":         symbols,
+		"matched_symbols": matchedSymbols,
+		"response":        resp,
 	}
-	return result, matched, nil
+	return result, matchedSymbols, nil
 }
 
 func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTask) (interface{}, int, error) {
@@ -264,25 +278,81 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 		if len(payload.Tables) == 0 {
 			payload.Tables = []string{"day"}
 		}
-		if payload.Limit == 0 {
-			payload.Limit = 800
+		validTables := make([]string, 0, len(payload.Tables))
+		for _, table := range payload.Tables {
+			if _, ok := extend.KlineTableMap[table]; ok {
+				validTables = append(validTables, table)
+			}
 		}
-		req := struct {
-			Codes     []string `json:"codes"`
-			Tables    []string `json:"tables"`
-			Dir       string   `json:"dir"`
-			Limit     int      `json:"limit"`
-			StartDate string   `json:"start_date"`
-		}{
-			Codes:     payload.Codes,
-			Tables:    payload.Tables,
-			Limit:     payload.Limit,
-			StartDate: payload.StartDate,
+		if len(validTables) == 0 {
+			return nil, 0, errors.New("系统K线同步tables无有效值")
 		}
-		return map[string]interface{}{"scope": "kline", "config": req}, 0, errors.New("系统K线同步已预留，第一版请使用任务页的拉取K线或选股前自动取数")
+		limit := payload.Limit
+		if limit <= 0 {
+			limit = 4
+		}
+		startAt := time.Unix(0, 0)
+		if payload.StartDate != "" {
+			parsed, err := parseLocalDate(payload.StartDate)
+			if err != nil {
+				return nil, 0, err
+			}
+			startAt = parsed
+		}
+		codes := normalizeSymbols(payload.Codes)
+		puller := extend.NewPullKline(extend.PullKlineConfig{
+			Codes:   codes,
+			Tables:  validTables,
+			Dir:     filepath.Join(tdx.DefaultDatabaseDir, "kline"),
+			Limit:   limit,
+			StartAt: startAt,
+		})
+		if err := puller.Run(ctx, manager); err != nil {
+			return nil, 0, err
+		}
+		return map[string]interface{}{
+			"scope":  "kline",
+			"tables": validTables,
+			"codes":  codes,
+			"limit":  limit,
+		}, len(codes), nil
+	case "all":
+		results := map[string]interface{}{}
+		if manager == nil {
+			return nil, 0, errors.New("数据管理器未初始化")
+		}
+		if err := manager.Codes.Update(); err != nil {
+			return nil, 0, err
+		}
+		results["codes"] = "success"
+		if err := manager.Workday.Update(); err != nil {
+			return nil, 0, err
+		}
+		results["workday"] = "success"
+		if len(payload.Tables) > 0 || len(payload.Codes) > 0 {
+			payload.Scope = "kline"
+			raw, _ := json.Marshal(payload)
+			task.PayloadJSON = string(raw)
+			klineResult, count, err := r.runSystemSync(ctx, task)
+			if err != nil {
+				return nil, 0, err
+			}
+			results["kline"] = klineResult
+			return results, count, nil
+		}
+		return results, 0, nil
 	default:
 		return nil, 0, fmt.Errorf("未知系统同步scope: %s", payload.Scope)
 	}
+}
+
+func parseLocalDate(value string) (time.Time, error) {
+	for _, layout := range []string{"2006-01-02", "20060102"} {
+		if t, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("日期格式错误: %s", value)
 }
 
 func countFormulaMatches(data interface{}) int {
@@ -295,6 +365,59 @@ func countFormulaMatches(data interface{}) int {
 		return 0
 	}
 	return countTruthyLeaves(decoded)
+}
+
+func extractSelectionResults(data interface{}) []SelectionResult {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil
+	}
+	results := []SelectionResult{}
+	for symbol, detail := range decoded {
+		latest, hit := formulaDetailHit(detail)
+		if !hit {
+			continue
+		}
+		results = append(results, SelectionResult{
+			Symbol:     strings.ToUpper(symbol),
+			Latest:     latest,
+			DetailJSON: mustJSON(detail),
+			CreatedAt:  nowText(),
+		})
+	}
+	return results
+}
+
+func formulaDetailHit(detail interface{}) (float64, bool) {
+	switch v := detail.(type) {
+	case map[string]interface{}:
+		if hit, ok := v["hit"].(bool); ok {
+			latest := 0.0
+			if n, ok := v["latest"].(float64); ok {
+				latest = n
+			}
+			return latest, hit
+		}
+		if matched, ok := v["matched"].(bool); ok {
+			latest := 0.0
+			if n, ok := v["latest"].(float64); ok {
+				latest = n
+			}
+			return latest, matched
+		}
+		if n, ok := v["latest"].(float64); ok {
+			return n, n > 0
+		}
+	case bool:
+		return 0, v
+	case float64:
+		return v, v > 0
+	}
+	return 0, false
 }
 
 func countTruthyLeaves(v interface{}) int {

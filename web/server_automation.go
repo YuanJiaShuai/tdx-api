@@ -34,16 +34,17 @@ func initAutomationServices() error {
 func handleFormulaHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	err := formulaWorker.Health(ctx)
-	successResponse(w, map[string]interface{}{
-		"ok": err == nil,
-		"error": func() string {
-			if err != nil {
-				return err.Error()
-			}
-			return ""
-		}(),
-	})
+	info, err := formulaWorker.HealthInfo(ctx)
+	if info == nil {
+		info = map[string]interface{}{}
+	}
+	info["ok"] = err == nil
+	if err != nil {
+		info["error"] = err.Error()
+	} else {
+		info["error"] = ""
+	}
+	successResponse(w, info)
 }
 
 func handleFormulas(w http.ResponseWriter, r *http.Request) {
@@ -284,6 +285,69 @@ func handleAutomationTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleAutomationTemplates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "只支持POST请求")
+		return
+	}
+	var req struct {
+		Template string `json:"template"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+	task, err := buildAutomationTemplate(req.Template)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	item, err := appStore.UpsertAutomationTask(task)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	if err := automationRunner.Reload(); err != nil {
+		errorResponse(w, "模板已保存，但调度重载失败: "+err.Error())
+		return
+	}
+	successResponse(w, item)
+}
+
+func buildAutomationTemplate(name string) (AutomationTask, error) {
+	switch name {
+	case "morning_sync":
+		return AutomationTask{
+			Name:        "早盘基础数据同步",
+			Type:        "system_sync",
+			Cron:        "0 0 8 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"all"}`,
+			WebhookIDs:  "[]",
+		}, nil
+	case "evening_kline":
+		return AutomationTask{
+			Name:        "晚盘日K同步",
+			Type:        "system_sync",
+			Cron:        "0 30 18 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"kline","tables":["day"],"limit":4}`,
+			WebhookIDs:  "[]",
+		}, nil
+	case "evening_full":
+		return AutomationTask{
+			Name:        "晚盘行情与日K同步",
+			Type:        "system_sync",
+			Cron:        "0 0 21 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"all","tables":["day"],"limit":4}`,
+			WebhookIDs:  "[]",
+		}, nil
+	default:
+		return AutomationTask{}, fmt.Errorf("未知任务模板: %s", name)
+	}
+}
+
 func handleAutomationOperations(w http.ResponseWriter, r *http.Request) {
 	parts := pathParts(r.URL.Path, "/api/automations/")
 	if len(parts) == 0 {
@@ -356,6 +420,33 @@ func handleAutomationRuns(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errorResponse(w, err.Error())
 		return
+	}
+	if items == nil {
+		items = []AutomationRun{}
+	}
+	successResponse(w, items)
+}
+
+func handleSelectionResults(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "只支持GET请求")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	onlyLatest := r.URL.Query().Get("latest") == "true" || r.URL.Query().Get("latest") == "1"
+	items, err := appStore.ListSelectionResults(
+		r.URL.Query().Get("task_id"),
+		r.URL.Query().Get("formula_id"),
+		r.URL.Query().Get("symbol"),
+		onlyLatest,
+		limit,
+	)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	if items == nil {
+		items = []SelectionResult{}
 	}
 	successResponse(w, items)
 }
@@ -445,9 +536,9 @@ func handleWebhookOperations(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHQChartKline(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("symbol")
+	code := normalizeStockCode(r.URL.Query().Get("symbol"))
 	if code == "" {
-		code = r.URL.Query().Get("code")
+		code = normalizeStockCode(r.URL.Query().Get("code"))
 	}
 	if code == "" {
 		errorResponse(w, "symbol不能为空")
@@ -468,6 +559,77 @@ func handleHQChartKline(w http.ResponseWriter, r *http.Request) {
 		"period": formulaPeriodToKlineType(period),
 		"data":   data,
 	})
+}
+
+func handleHQChartHistory(w http.ResponseWriter, r *http.Request) {
+	code := normalizeStockCode(r.URL.Query().Get("symbol"))
+	if code == "" {
+		code = normalizeStockCode(r.URL.Query().Get("code"))
+	}
+	if code == "" {
+		errorResponse(w, "symbol不能为空")
+		return
+	}
+	period := r.URL.Query().Get("period")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit == 0 {
+		limit = 800
+	}
+	rows, err := loadFormulaKline(code, period, limit)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+
+	chartRows := make([][]interface{}, 0, len(rows))
+	for _, item := range rows {
+		row := []interface{}{
+			item.Date,
+			item.YClose,
+			item.Open,
+			item.High,
+			item.Low,
+			item.Close,
+			item.Vol,
+			item.Amount,
+		}
+		if item.Time > 0 {
+			row = append(row, item.Time)
+		}
+		chartRows = append(chartRows, row)
+	}
+
+	symbol := toHQChartSymbol(code)
+	successResponse(w, map[string]interface{}{
+		"symbol": symbol,
+		"name":   symbol,
+		"period": formulaPeriodToKlineType(period),
+		"data":   chartRows,
+		"ver":    2,
+	})
+}
+
+func normalizeStockCode(symbol string) string {
+	s := strings.TrimSpace(strings.ToLower(symbol))
+	if s == "" {
+		return ""
+	}
+	if idx := strings.Index(s, "."); idx >= 0 {
+		s = s[:idx]
+	}
+	return strings.TrimLeft(s, " ")
+}
+
+func toHQChartSymbol(code string) string {
+	c := normalizeStockCode(code)
+	if c == "" {
+		return ""
+	}
+	market := "sz"
+	if strings.HasPrefix(c, "6") || strings.HasPrefix(c, "9") {
+		market = "sh"
+	}
+	return c + "." + market
 }
 
 func pathParts(path, prefix string) []string {

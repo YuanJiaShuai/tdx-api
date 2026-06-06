@@ -66,19 +66,26 @@ func NewFormulaWorkerClient() *FormulaWorkerClient {
 }
 
 func (c *FormulaWorkerClient) Health(ctx context.Context) error {
+	_, err := c.HealthInfo(ctx)
+	return err
+}
+
+func (c *FormulaWorkerClient) HealthInfo(ctx context.Context) (map[string]interface{}, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
+	info := map[string]interface{}{}
+	_ = json.NewDecoder(resp.Body).Decode(&info)
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("formula worker health status: %s", resp.Status)
+		return info, fmt.Errorf("formula worker health status: %s", resp.Status)
 	}
-	return nil
+	return info, nil
 }
 
 func (c *FormulaWorkerClient) Run(ctx context.Context, reqData FormulaRunRequest) (FormulaRunResponse, error) {

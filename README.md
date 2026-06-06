@@ -4,6 +4,10 @@
 
 感谢原项目 [oficcejo/tdx-api](https://github.com/oficcejo/tdx-api) 和上游协议库 [injoyai/tdx](https://github.com/injoyai/tdx)。
 
+本项目的专业行情展示和公式计算方向参考/集成 [jones2000/HQChart](https://github.com/jones2000/HQChart) 及其公式计算相关项目 [jones2000/hqchartPy2](https://github.com/jones2000/hqchartPy2)。HQChart 用于专业 K 线、指标和图表展示能力，hqchartPy2 用于后续接入通达信/麦语法风格公式解析与批量选股。相关组件的版权与许可证归原作者及对应开源项目所有。
+
+当前 Docker 内置公式 worker 会自动检测 `HQChartPy2` 模块：检测到时会报告 `engine=hqchartpy2`，未安装时使用内置 fallback 公式执行器保障本地闭环。
+
 ## 功能概览
 
 | 模块 | 能力 |
@@ -12,8 +16,8 @@
 | 扩展数据 | 集合竞价、股本变迁、财务/F10、板块、行业归属、统计、新股申购 |
 | 数据源 | 通达信原始数据、同花顺前复权日线、扩展行情 TdxExHq |
 | Web 界面 | 股票搜索、行情卡片、K 线图、分时图、成交明细、专业行情页 |
-| 公式与选股 | 自定义公式、公式测试、股票池、选股任务、运行记录 |
-| 自动化 | 系统任务/选股任务模型、Cron 调度、Webhook 通知 |
+| 公式与选股 | 自定义公式、公式测试、股票池、选股任务、运行记录、选股结果中心 |
+| 自动化 | 系统同步任务、选股任务、Cron 调度、任务模板、Webhook 通知 |
 | 部署 | Docker Compose 单服务、本地源码运行、Windows/macOS/Linux 脚本 |
 
 ## 快速开始
@@ -77,7 +81,9 @@ go run .
 | `POST /api/formulas/{id}/test` | 公式测试 | `{"symbol":"000001"}` |
 | `GET /api/stock-pools` | 股票池列表 | `/api/stock-pools` |
 | `GET /api/automations` | 自动化任务列表 | `/api/automations` |
+| `POST /api/automations/templates` | 创建系统任务模板 | `{"template":"evening_kline"}` |
 | `POST /api/automations/{id}/run` | 手动运行任务 | `{}` |
+| `GET /api/selection-results` | 选股命中结果 | `/api/selection-results?limit=100` |
 | `GET /api/webhooks` | Webhook 列表 | `/api/webhooks` |
 | `GET /api/hqchart/kline` | 专业行情 K 线适配 | `/api/hqchart/kline?symbol=000001&period=day` |
 

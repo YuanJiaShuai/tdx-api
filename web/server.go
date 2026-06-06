@@ -779,11 +779,14 @@ func main() {
 	http.HandleFunc("/api/stock-pools", handleStockPools)
 	http.HandleFunc("/api/stock-pools/", handleStockPoolOperations)
 	http.HandleFunc("/api/automations", handleAutomationTasks)
+	http.HandleFunc("/api/automations/templates", handleAutomationTemplates)
 	http.HandleFunc("/api/automations/runs", handleAutomationRuns)
+	http.HandleFunc("/api/selection-results", handleSelectionResults)
 	http.HandleFunc("/api/automations/", handleAutomationOperations)
 	http.HandleFunc("/api/webhooks", handleWebhooks)
 	http.HandleFunc("/api/webhooks/", handleWebhookOperations)
 	http.HandleFunc("/api/hqchart/kline", handleHQChartKline)
+	http.HandleFunc("/api/hqchart/history", handleHQChartHistory)
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -136,6 +136,22 @@ textarea {
     overflow: auto;
 }
 
+.result-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    align-items: start;
+}
+
+.result-symbol {
+    font-size: 1.35em;
+    font-weight: 800;
+}
+
+.result-latest {
+    color: var(--danger-color);
+    font-weight: 700;
+}
+
 .data-item {
     border: 1px solid var(--border-color);
     border-radius: 8px;

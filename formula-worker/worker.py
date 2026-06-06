@@ -6,6 +6,22 @@ import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+ENGINE_STATUS = {
+    "engine": "fallback",
+    "hqchartpy2_available": False,
+    "message": "HQChartPy2 not installed; using fallback evaluator",
+}
+
+try:
+    import HQChartPy2  # noqa: F401
+    ENGINE_STATUS = {
+        "engine": "hqchartpy2",
+        "hqchartpy2_available": True,
+        "message": "HQChartPy2 module detected; adapter hook is ready",
+    }
+except Exception:
+    pass
+
 
 class Series:
     def __init__(self, values):
@@ -310,7 +326,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._send({"code": 0, "message": "ok", "engine": "fallback"})
+            self._send({"code": 0, "message": "ok", **ENGINE_STATUS})
             return
         self._send({"code": -1, "message": "not found"}, 404)
 
@@ -337,7 +353,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
             self._send({
                 "code": 0,
                 "message": "success",
-                "engine": "fallback",
+                "engine": ENGINE_STATUS["engine"],
+                "hqchartpy2_available": ENGINE_STATUS["hqchartpy2_available"],
                 "tick_ms": int((time.time() - start) * 1000),
                 "data": result,
             })
@@ -345,7 +362,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
             self._send({
                 "code": -1,
                 "message": str(exc),
-                "engine": "fallback",
+                "engine": ENGINE_STATUS["engine"],
+                "hqchartpy2_available": ENGINE_STATUS["hqchartpy2_available"],
                 "tick_ms": int((time.time() - start) * 1000),
                 "data": None,
             }, 400)
@@ -359,7 +377,7 @@ def main():
     host = os.getenv("FORMULA_WORKER_HOST", "127.0.0.1")
     port = int(os.getenv("FORMULA_WORKER_PORT", "8712"))
     server = ThreadingHTTPServer((host, port), WorkerHandler)
-    print(f"formula-worker listening on http://{host}:{port}", flush=True)
+    print(f"formula-worker listening on http://{host}:{port} engine={ENGINE_STATUS['engine']}", flush=True)
     server.serve_forever()
 
 

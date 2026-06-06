@@ -7,6 +7,7 @@ let formulas = [];
 let pools = [];
 let automations = [];
 let webhooks = [];
+let selectionResults = [];
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -37,10 +38,12 @@ function switchWorkspace(name, button) {
     document.getElementById(name + 'Workspace').classList.add('active');
     if (name === 'proChart') {
         setTimeout(() => {
+            if (window.TDXHQChart) window.TDXHQChart.resize();
             if (hqChart) hqChart.resize();
         }, 50);
     }
     if (name === 'formulas') loadFormulaList();
+    if (name === 'selectionResults') loadSelectionResults();
     if (name === 'automations') loadAutomationData();
     if (name === 'webhooks') loadWebhooks();
 }
@@ -686,6 +689,10 @@ async function loadFormulaList() {
     const formulaOptions = formulas.map(f => `<option value="${f.id}">${escapeHTML(f.name)}</option>`).join('');
     document.getElementById('hqFormulaSelect').innerHTML = formulaOptions;
     document.getElementById('automationFormula').innerHTML = formulaOptions;
+    const resultFilter = document.getElementById('resultFormulaFilter');
+    if (resultFilter) {
+        resultFilter.innerHTML = '<option value="">全部公式</option>' + formulaOptions;
+    }
     document.getElementById('formulaList').innerHTML = formulas.map(f => `
         <div class="data-item">
             <div class="data-item-title">${escapeHTML(f.name)}</div>
@@ -813,11 +820,11 @@ async function deletePool(id) {
 }
 
 async function loadAutomationData() {
-    await Promise.all([loadFormulaList(), loadPools(), loadWebhooks(), loadAutomations(), loadRuns()]);
+    await Promise.all([loadFormulaList(), loadPools(), loadWebhooks(), loadAutomations(), loadRuns(), loadSelectionResults()]);
 }
 
 async function loadAutomations() {
-    automations = await apiFetch('/api/automations');
+    automations = await apiFetch('/api/automations') || [];
     document.getElementById('automationList').innerHTML = automations.map(t => `
         <div class="data-item">
             <div class="data-item-title">${escapeHTML(t.name)}</div>
@@ -881,11 +888,24 @@ async function saveAutomation() {
 async function runAutomation(id) {
     try {
         await apiFetch(`/api/automations/${id}/run`, { method: 'POST' });
-        await Promise.all([loadAutomations(), loadRuns()]);
+        await Promise.all([loadAutomations(), loadRuns(), loadSelectionResults()]);
         alert('任务执行完成');
     } catch (error) {
         alert(error.message);
         await loadRuns();
+    }
+}
+
+async function createSystemTemplate(template) {
+    try {
+        await apiFetch('/api/automations/templates', {
+            method: 'POST',
+            body: JSON.stringify({ template })
+        });
+        await loadAutomations();
+        alert('系统任务模板已创建');
+    } catch (error) {
+        alert(error.message);
     }
 }
 
@@ -896,7 +916,7 @@ async function deleteAutomation(id) {
 }
 
 async function loadRuns() {
-    const runs = await apiFetch('/api/automations/runs?limit=30');
+    const runs = await apiFetch('/api/automations/runs?limit=30') || [];
     document.getElementById('runList').innerHTML = runs.map(r => `
         <div class="data-item">
             <div class="data-item-title">${escapeHTML(r.task_name)} · ${escapeHTML(r.status)}</div>
@@ -906,8 +926,49 @@ async function loadRuns() {
     `).join('') || '<div class="data-item">暂无运行记录</div>';
 }
 
+async function loadSelectionResults() {
+    const list = document.getElementById('selectionResultList');
+    if (!list) return;
+    const formulaID = document.getElementById('resultFormulaFilter')?.value || '';
+    const symbol = document.getElementById('resultSymbolFilter')?.value || '';
+    const latest = document.getElementById('resultLatestFilter')?.value || '';
+    const params = new URLSearchParams({ limit: '200' });
+    if (formulaID) params.set('formula_id', formulaID);
+    if (symbol) params.set('symbol', symbol);
+    if (latest) params.set('latest', latest);
+    selectionResults = await apiFetch(`/api/selection-results?${params.toString()}`) || [];
+    list.innerHTML = selectionResults.map(item => `
+        <div class="data-item">
+            <div class="result-symbol">${escapeHTML(item.symbol)}</div>
+            <div class="data-item-meta">${escapeHTML(item.formula_name)} · ${escapeHTML(item.task_name)}</div>
+            <div class="data-item-meta">${escapeHTML(item.created_at)} · 最新值 <span class="result-latest">${Number(item.latest || 0).toFixed(4)}</span></div>
+            <div class="item-actions">
+                <button class="primary" onclick="openResultChart('${item.symbol}')">打开图表</button>
+                <button onclick="showResultDetail('${item.id}')">详情</button>
+            </div>
+        </div>
+    `).join('') || '<div class="data-item">暂无命中结果</div>';
+}
+
+function openResultChart(symbol) {
+    document.getElementById('hqSymbol').value = symbol;
+    switchWorkspace('proChart', document.querySelectorAll('.workspace-tab')[1]);
+    loadHQChart();
+}
+
+function showResultDetail(id) {
+    const item = selectionResults.find(v => v.id === id);
+    if (!item) return;
+    try {
+        document.getElementById('formulaTestOutput').textContent = prettyJSON(JSON.parse(item.detail_json || '{}'));
+    } catch {
+        document.getElementById('formulaTestOutput').textContent = item.detail_json || '';
+    }
+    openResultChart(item.symbol);
+}
+
 async function loadWebhooks() {
-    webhooks = await apiFetch('/api/webhooks');
+    webhooks = await apiFetch('/api/webhooks') || [];
     const select = document.getElementById('automationWebhook');
     if (select) {
         select.innerHTML = webhooks.map(h => `<option value="${h.id}">${escapeHTML(h.name)}</option>`).join('');
@@ -982,10 +1043,20 @@ async function loadHQChart() {
     try {
         const symbol = document.getElementById('hqSymbol').value || '000001';
         const period = document.getElementById('hqPeriod').value;
+        if (window.TDXHQChart && window.TDXHQChart.renderKLine(document.getElementById('hqChart'), { symbol, period })) {
+            return;
+        }
         const data = await apiFetch(`/api/hqchart/kline?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&limit=500`);
         drawHQChart(data.data || []);
     } catch (error) {
-        alert(error.message);
+        try {
+            const symbol = document.getElementById('hqSymbol').value || '000001';
+            const period = document.getElementById('hqPeriod').value;
+            const data = await apiFetch(`/api/hqchart/kline?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&limit=500`);
+            drawHQChart(data.data || []);
+        } catch (fallbackError) {
+            alert(fallbackError.message || error.message);
+        }
     }
 }
 
@@ -1024,6 +1095,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await Promise.all([loadFormulaList(), loadPools(), loadWebhooks()]);
         await loadAutomations();
         await loadRuns();
+        await loadSelectionResults();
         await loadHQChart();
     } catch (error) {
         console.warn('初始化自动化页面失败:', error);
