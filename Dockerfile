@@ -54,7 +54,7 @@ COPY --from=builder /app/web/static ./static
 # ===================================================================
 
 COPY --from=builder /app/formula-worker ./formula-worker
-COPY --from=builder /app/docker-entrypoint.sh ./docker-entrypoint.sh
+COPY --from=builder /app/deploy/docker-entrypoint.sh ./docker-entrypoint.sh
 
 RUN apk --no-cache add --virtual .hqchart-build g++ python3-dev zlib-dev linux-headers && \
     python3 /app/formula-worker/install_hqchartpy2.py && \

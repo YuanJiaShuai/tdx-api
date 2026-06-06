@@ -34,6 +34,7 @@ reports/
 web/data/
 web/output.log
 web/server.exe
+archives/
 
 # Local editor and environment files
 .idea/

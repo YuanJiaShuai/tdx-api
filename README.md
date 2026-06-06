@@ -112,6 +112,7 @@ tdx-api/
 ├── formula-worker/            # 容器内公式计算服务
 ├── web/                       # REST API 与 Web 静态资源
 ├── scripts/                   # Python 策略、回测、接口检查脚本
+├── deploy/                    # Docker/本地部署辅助脚本
 ├── docs/                      # 长期维护文档
 ├── Dockerfile
 └── docker-compose.yml
