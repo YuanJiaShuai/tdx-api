@@ -179,7 +179,7 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	}
 	_ = r.store.UpdateTaskRunState(task.ID, status, message)
 
-	hooks, _ := r.store.ResolveWebhooks(task.WebhookIDs)
+	hooks := r.resolveTaskWebhooks(task)
 	eventName := "automation.finished"
 	if task.Type == "stock_selection" && status == "success" {
 		eventName = "stock_selection.finished"
@@ -210,6 +210,20 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 		run = latest
 	}
 	return run, err
+}
+
+func (r *AutomationRunner) resolveTaskWebhooks(task AutomationTask) []Webhook {
+	hooks, err := r.store.ResolveWebhooks(task.WebhookIDs)
+	if err == nil && len(hooks) > 0 {
+		return hooks
+	}
+	if isFixedAutomationTaskID(task.ID) {
+		hooks, err = r.store.ListEnabledWebhooks()
+		if err == nil {
+			return hooks
+		}
+	}
+	return nil
 }
 
 func (r *AutomationRunner) runStockSelection(ctx context.Context, task AutomationTask, run AutomationRun) (interface{}, []string, error) {

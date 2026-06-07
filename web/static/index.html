@@ -637,7 +637,8 @@
                     <input id="webhookName" type="text" placeholder="通知名称">
                     <input id="webhookURL" type="text" placeholder="Webhook URL">
                     <textarea id="webhookHeaders" rows="3" placeholder='请求头 JSON，例如 {"Authorization":"Bearer ..."}'>{}</textarea>
-                    <textarea id="webhookEvents" rows="3" placeholder='事件 JSON，例如 ["automation.failed","stock_selection.finished"]'>["automation.failed","stock_selection.finished","webhook.test"]</textarea>
+                    <textarea id="webhookEvents" rows="3" placeholder='事件 JSON，例如 ["automation.finished","automation.failed"]'>["automation.finished","automation.failed","stock_selection.finished","strategy_selection.finished","webhook.test"]</textarea>
+                    <p class="card-subtitle">启用后，固定收盘任务完成也会自动通知已启用 Webhook。</p>
                     <label class="check-line"><input id="webhookEnabled" type="checkbox" checked> 启用</label>
                     <button class="btn-primary" onclick="saveWebhook()">保存 Webhook</button>
                 </div>

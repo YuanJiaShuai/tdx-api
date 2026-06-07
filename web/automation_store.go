@@ -1116,7 +1116,7 @@ func normalizeWebhook(h Webhook) Webhook {
 		h.HeadersJSON = "{}"
 	}
 	if strings.TrimSpace(h.Events) == "" {
-		h.Events = `["automation.failed","stock_selection.finished"]`
+		h.Events = `["automation.failed","automation.finished","stock_selection.finished","strategy_selection.finished"]`
 	}
 	return h
 }
@@ -1142,6 +1142,20 @@ func (s *AppStore) ListWebhooks() ([]Webhook, error) {
 		list = []Webhook{}
 	}
 	return list, rows.Err()
+}
+
+func (s *AppStore) ListEnabledWebhooks() ([]Webhook, error) {
+	items, err := s.ListWebhooks()
+	if err != nil {
+		return nil, err
+	}
+	enabled := make([]Webhook, 0, len(items))
+	for _, item := range items {
+		if item.Enabled {
+			enabled = append(enabled, item)
+		}
+	}
+	return enabled, nil
 }
 
 func (s *AppStore) GetWebhook(id string) (Webhook, error) {
