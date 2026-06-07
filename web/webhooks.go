@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -29,7 +30,6 @@ func sendWebhooks(ctx context.Context, hooks []Webhook, event WebhookEvent) []st
 		return nil
 	}
 	event.RunAt = nowText()
-	raw, _ := json.Marshal(event)
 	client := &http.Client{Timeout: 20 * time.Second}
 	logs := make([]string, 0, len(hooks))
 
@@ -40,6 +40,11 @@ func sendWebhooks(ctx context.Context, hooks []Webhook, event WebhookEvent) []st
 		method := strings.ToUpper(hook.Method)
 		if method == "" {
 			method = http.MethodPost
+		}
+		raw, err := buildWebhookPayload(hook, event)
+		if err != nil {
+			logs = append(logs, fmt.Sprintf("%s 构建消息失败: %v", hook.Name, err))
+			continue
 		}
 		req, err := http.NewRequestWithContext(ctx, method, hook.URL, bytes.NewReader(raw))
 		if err != nil {
@@ -58,14 +63,103 @@ func sendWebhooks(ctx context.Context, hooks []Webhook, event WebhookEvent) []st
 			logs = append(logs, fmt.Sprintf("%s 发送失败: %v", hook.Name, err))
 			continue
 		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
 		if resp.StatusCode >= 300 {
-			logs = append(logs, fmt.Sprintf("%s 返回状态: %s", hook.Name, resp.Status))
+			logs = append(logs, fmt.Sprintf("%s 返回状态: %s %s", hook.Name, resp.Status, strings.TrimSpace(string(body))))
+			continue
+		}
+		if err := validateWebhookResponse(hook, body); err != nil {
+			logs = append(logs, fmt.Sprintf("%s 返回失败: %v", hook.Name, err))
 			continue
 		}
 		logs = append(logs, fmt.Sprintf("%s 已发送", hook.Name))
 	}
 	return logs
+}
+
+func buildWebhookPayload(hook Webhook, event WebhookEvent) ([]byte, error) {
+	if isFeishuWebhook(hook.URL) {
+		return json.Marshal(map[string]interface{}{
+			"msg_type": "text",
+			"content": map[string]string{
+				"text": renderWebhookText(event),
+			},
+		})
+	}
+	return json.Marshal(event)
+}
+
+func isFeishuWebhook(url string) bool {
+	url = strings.ToLower(strings.TrimSpace(url))
+	return strings.Contains(url, "open.feishu.cn/open-apis/bot/v2/hook/") ||
+		strings.Contains(url, "open.larksuite.com/open-apis/bot/v2/hook/")
+}
+
+func renderWebhookText(event WebhookEvent) string {
+	lines := []string{"TDX 股票数据终端通知"}
+	if event.Message != "" {
+		lines = append(lines, event.Message)
+	}
+	if event.Event != "" {
+		lines = append(lines, "事件: "+event.Event)
+	}
+	if event.TaskName != "" {
+		lines = append(lines, "任务: "+event.TaskName)
+	}
+	if event.Status != "" {
+		lines = append(lines, "状态: "+event.Status)
+	}
+	if event.MatchedCount > 0 {
+		lines = append(lines, fmt.Sprintf("命中数量: %d", event.MatchedCount))
+	}
+	if len(event.MatchedSymbols) > 0 {
+		symbols := event.MatchedSymbols
+		if len(symbols) > 20 {
+			symbols = symbols[:20]
+		}
+		lines = append(lines, "命中股票: "+strings.Join(symbols, ", "))
+	}
+	if event.RunAt != "" {
+		lines = append(lines, "时间: "+event.RunAt)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func validateWebhookResponse(hook Webhook, body []byte) error {
+	text := strings.TrimSpace(string(body))
+	if text == "" || !isFeishuWebhook(hook.URL) {
+		return nil
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil
+	}
+	if code, ok := numericField(resp, "code"); ok && code != 0 {
+		return fmt.Errorf("%s", text)
+	}
+	if code, ok := numericField(resp, "StatusCode"); ok && code != 0 {
+		return fmt.Errorf("%s", text)
+	}
+	return nil
+}
+
+func numericField(m map[string]interface{}, key string) (float64, bool) {
+	v, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int:
+		return float64(x), true
+	case string:
+		if x == "0" {
+			return 0, true
+		}
+	}
+	return 0, false
 }
 
 func webhookAllowsEvent(hook Webhook, event string) bool {

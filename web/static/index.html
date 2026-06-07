@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票数据查询系统</title>
-    <link rel="stylesheet" href="style.css">
-    <!-- 使用国内CDN镜像 -->
-    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+    <link rel="stylesheet" href="style.css?v=automation-fixed-run-20260607">
     <style>
         /* 确保图表容器占满宽度 */
         #klineChart, #minuteChart {
@@ -50,8 +48,8 @@
             <button class="workspace-tab active" onclick="switchWorkspace('market', this)">行情</button>
             <button class="workspace-tab" onclick="switchWorkspace('proChart', this)">专业行情</button>
             <button class="workspace-tab" onclick="switchWorkspace('dataCenter', this)">数据中心</button>
-            <button class="workspace-tab" onclick="switchWorkspace('formulas', this)">公式</button>
             <button class="workspace-tab" onclick="switchWorkspace('selectionResults', this)">选股结果</button>
+            <button class="workspace-tab" onclick="switchWorkspace('dailyReview', this)">每日复盘</button>
             <button class="workspace-tab" onclick="switchWorkspace('automations', this)">自动化</button>
             <button class="workspace-tab" onclick="switchWorkspace('webhooks', this)">Webhook</button>
         </div>
@@ -59,8 +57,8 @@
         <section id="marketWorkspace" class="workspace active">
             <div class="market-hero">
                 <div class="market-hero-main">
-                    <div class="section-kicker">MARKET</div>
-                    <h2>快速定位标的，进入行情分析</h2>
+                    <div class="section-kicker">DECISION DESK</div>
+                    <h2>今日命中、观察池和排除池都放在这里处理</h2>
                     <div class="search-section">
                         <div class="search-box">
                             <input type="text" id="stockCode" placeholder="输入代码或名称，例如 000001 / 平安银行" />
@@ -76,6 +74,91 @@
                         <button onclick="loadQuickStock('600519')">贵州茅台</button>
                         <button onclick="loadQuickStock('601318')">中国平安</button>
                         <button onclick="loadQuickStock('510300')">沪深300ETF</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="decision-grid">
+                <div class="card decision-card">
+                    <div class="card-header">
+                        <div>
+                            <h3>今日选股命中</h3>
+                            <p class="card-subtitle" id="decisionHitSummary">加载中</p>
+                        </div>
+                        <div class="item-actions compact-actions">
+                            <button class="primary" onclick="refreshDecisionDesk()">刷新</button>
+                            <button onclick="switchWorkspace('selectionResults', document.querySelectorAll('.workspace-tab')[3])">全部结果</button>
+                        </div>
+                    </div>
+                    <div id="decisionHits" class="data-list decision-hit-list"></div>
+                </div>
+                <div class="decision-side">
+                    <div class="card decision-card">
+                        <div class="card-header">
+                            <div>
+                                <h3>观察池</h3>
+                                <p class="card-subtitle" id="watchPoolSummary">--</p>
+                            </div>
+                        </div>
+                        <div id="watchPoolList" class="pool-chip-list"></div>
+                    </div>
+                    <div class="card decision-card">
+                        <div class="card-header">
+                            <div>
+                                <h3>排除池</h3>
+                                <p class="card-subtitle" id="excludePoolSummary">--</p>
+                            </div>
+                        </div>
+                        <div id="excludePoolList" class="pool-chip-list"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card decision-detail-card" id="decisionDetailCard">
+                <div class="card-header">
+                    <div>
+                        <h3 id="decisionDetailTitle">命中详情</h3>
+                        <p class="card-subtitle" id="decisionDetailMeta">选择一个命中标的后查看图表和命中原因</p>
+                    </div>
+                    <div class="item-actions compact-actions">
+                        <button class="primary" id="decisionWatchButton" onclick="addDecisionSymbolToPool('watchlist')" disabled>加入观察</button>
+                        <button id="decisionExcludeButton" onclick="addDecisionSymbolToPool('exclude')" disabled>排除</button>
+                        <button id="decisionRemoveButton" onclick="removeDecisionSymbolFromPools()" disabled>移出池</button>
+                    </div>
+                </div>
+                <div class="decision-detail-grid">
+                    <div>
+                        <div id="decisionChart" class="decision-chart"></div>
+                    </div>
+                    <div class="decision-reason-panel">
+                        <div id="decisionScore" class="score-grid"></div>
+                        <div id="decisionTrack" class="track-panel"></div>
+                        <h4>命中原因</h4>
+                        <div id="decisionReason" class="reason-list">
+                            <div class="data-item">暂无选中标的</div>
+                        </div>
+                        <div class="decision-note-form">
+                            <h4>交易计划</h4>
+                            <div class="form-row">
+                                <input id="decisionAddedPrice" type="number" step="0.01" placeholder="加入价">
+                                <input id="decisionPlanBuy" type="number" step="0.01" placeholder="计划买点">
+                                <input id="decisionStopLoss" type="number" step="0.01" placeholder="止损位">
+                            </div>
+                            <textarea id="decisionAddReason" rows="2" placeholder="加入原因"></textarea>
+                            <textarea id="decisionReviewNote" rows="2" placeholder="复盘备注"></textarea>
+                            <div class="form-row">
+                                <select id="decisionExcludeCategory">
+                                    <option value="">排除分类</option>
+                                    <option value="财报风险">财报风险</option>
+                                    <option value="涨幅过高">涨幅过高</option>
+                                    <option value="流动性差">流动性差</option>
+                                    <option value="形态不佳">形态不佳</option>
+                                    <option value="其他">其他</option>
+                                </select>
+                                <input id="decisionExcludeReason" type="text" placeholder="排除原因">
+                            </div>
+                            <button class="btn-primary compact" onclick="saveDecisionNoteFromForm()">保存记录</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -211,8 +294,8 @@
         </section>
 
         <section id="proChartWorkspace" class="workspace">
-            <div class="panel-grid two">
-                <div class="card">
+            <div class="pro-chart-layout">
+                <div class="card pro-chart-card">
                     <h3>专业行情</h3>
                     <div class="form-row">
                         <input id="hqSymbol" type="text" placeholder="股票代码，如 000001" value="000001">
@@ -227,14 +310,85 @@
                     </div>
                     <div id="hqChart" class="stable-chart"></div>
                 </div>
-                <div class="card">
-                    <h3>指标测试</h3>
+                <div class="card pro-formula-card">
+                    <h3>公式叠加</h3>
                     <select id="hqFormulaSelect"></select>
-                    <button class="btn-secondary" onclick="testSelectedFormula()">测试当前股票</button>
+                    <div class="item-actions data-actions">
+                        <button onclick="openFormulaDialog()">公式管理</button>
+                        <button onclick="editSelectedHQFormula()">编辑所选</button>
+                    </div>
+                    <div class="formula-panel">
+                        <div class="form-row formula-control-row">
+                            <select id="hqFormulaApplyMode">
+                                <option value="overlay">叠加指标</option>
+                                <option value="change">切换当前窗口</option>
+                                <option value="new-window">新建副图</option>
+                            </select>
+                            <select id="hqFormulaWindow">
+                                <option value="0">主图</option>
+                                <option value="1">副图1</option>
+                            </select>
+                        </div>
+                        <label class="check-line"><input id="hqFormulaIndependentY" type="checkbox"> 叠加指标使用独立坐标</label>
+                        <label class="check-line"><input id="hqFormulaExcludeY" type="checkbox"> 指标不参与Y轴计算</label>
+                        <div id="hqFormulaArgsSummary" class="formula-empty-note">公式参数：--</div>
+                    </div>
+                    <div class="item-actions data-actions">
+                        <button class="btn-secondary" onclick="testSelectedFormula()">测试当前股票</button>
+                        <button class="primary" onclick="applySelectedFormulaToHQChart()">应用到K线</button>
+                        <button onclick="clearHQFormulaOverlay()">清除叠加</button>
+                    </div>
+                    <div id="hqOverlayStatus" class="status-note">未叠加公式</div>
                     <pre id="formulaTestOutput" class="json-output"></pre>
                 </div>
             </div>
         </section>
+
+        <div id="formulaDialog" class="modal-shell" aria-hidden="true">
+            <div class="modal-backdrop" onclick="closeFormulaDialog()"></div>
+            <div class="modal-panel formula-dialog-panel">
+                <div class="modal-header">
+                    <h3>公式管理</h3>
+                    <button type="button" onclick="closeFormulaDialog()">关闭</button>
+                </div>
+                <div class="formula-dialog-grid">
+                    <div>
+                        <h3>公式编辑</h3>
+                        <input id="formulaName" type="text" placeholder="公式名称">
+                        <select id="formulaType">
+                            <option value="selection">选股公式</option>
+                            <option value="indicator">图表指标</option>
+                        </select>
+                        <div class="form-row">
+                            <select id="formulaPeriod">
+                                <option value="day">日K</option>
+                                <option value="week">周K</option>
+                                <option value="month">月K</option>
+                                <option value="minute5">5分钟</option>
+                                <option value="minute30">30分钟</option>
+                            </select>
+                            <select id="formulaRight">
+                                <option value="1">前复权</option>
+                                <option value="0">不复权</option>
+                                <option value="2">后复权</option>
+                            </select>
+                        </div>
+                        <textarea id="formulaScript" rows="10" placeholder="例如：CROSS(MA(C,5),MA(C,20));"></textarea>
+                        <div class="formula-arg-header">
+                            <span>公式参数</span>
+                            <button class="btn-secondary compact" type="button" onclick="addFormulaArgRow()">新增参数</button>
+                        </div>
+                        <div id="formulaArgsEditor" class="formula-args-editor"></div>
+                        <textarea id="formulaArgs" class="formula-raw-args" rows="2" placeholder='参数 JSON，例如 [{"Name":"M","Value":5}]'>[]</textarea>
+                        <button class="btn-primary" onclick="saveFormula()">保存公式</button>
+                    </div>
+                    <div>
+                        <h3>公式列表</h3>
+                        <div id="formulaList" class="data-list formula-dialog-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <section id="dataCenterWorkspace" class="workspace">
             <div class="data-center-grid">
@@ -333,40 +487,6 @@
             </div>
         </section>
 
-        <section id="formulasWorkspace" class="workspace">
-            <div class="panel-grid two">
-                <div class="card">
-                    <h3>公式管理</h3>
-                    <input id="formulaName" type="text" placeholder="公式名称">
-                    <select id="formulaType">
-                        <option value="selection">选股公式</option>
-                        <option value="indicator">图表指标</option>
-                    </select>
-                    <div class="form-row">
-                        <select id="formulaPeriod">
-                            <option value="day">日K</option>
-                            <option value="week">周K</option>
-                            <option value="month">月K</option>
-                            <option value="minute5">5分钟</option>
-                            <option value="minute30">30分钟</option>
-                        </select>
-                        <select id="formulaRight">
-                            <option value="1">前复权</option>
-                            <option value="0">不复权</option>
-                            <option value="2">后复权</option>
-                        </select>
-                    </div>
-                    <textarea id="formulaScript" rows="8" placeholder="例如：CROSS(MA(C,5),MA(C,20));"></textarea>
-                    <textarea id="formulaArgs" rows="3" placeholder='参数 JSON，例如 [{"Name":"M","Value":5}]'>[]</textarea>
-                    <button class="btn-primary" onclick="saveFormula()">保存公式</button>
-                </div>
-                <div class="card">
-                    <h3>公式列表</h3>
-                    <div id="formulaList" class="data-list"></div>
-                </div>
-            </div>
-        </section>
-
         <section id="automationsWorkspace" class="workspace">
             <div class="panel-grid two">
                 <div class="card">
@@ -434,6 +554,20 @@
             </div>
         </section>
 
+        <section id="dailyReviewWorkspace" class="workspace">
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h3>每日复盘</h3>
+                        <p class="card-subtitle" id="dailyReviewSummary">加载中</p>
+                    </div>
+                    <button class="btn-secondary" onclick="loadDailyReview()">刷新</button>
+                </div>
+                <div id="dailyReviewMetrics" class="metric-grid"></div>
+                <div id="dailyReviewList" class="data-list result-grid"></div>
+            </div>
+        </section>
+
         <section id="webhooksWorkspace" class="workspace">
             <div class="panel-grid two">
                 <div class="card">
@@ -459,9 +593,9 @@
         </div>
     </div>
 
-    <script src="chart-shim.js"></script>
-    <script src="chartlib/umychart.min.js"></script>
-    <script src="chart-adapter.js"></script>
-    <script src="app.js"></script>
+    <script src="chart-shim.js?v=automation-fixed-run-20260607"></script>
+    <script src="chartlib/umychart.min.js?v=automation-fixed-run-20260607"></script>
+    <script src="chart-adapter.js?v=automation-fixed-run-20260607"></script>
+    <script src="app.js?v=automation-fixed-run-20260607"></script>
 </body>
 </html>

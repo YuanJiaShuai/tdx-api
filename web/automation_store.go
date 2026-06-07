@@ -42,6 +42,12 @@ type StockPool struct {
 	UpdatedAt   string   `json:"updated_at"`
 }
 
+const (
+	DecisionWatchPoolID   = "watchlist"
+	DecisionExcludePoolID = "exclude"
+	FixedCloseSyncTaskID  = "fixed-close-sync"
+)
+
 type AutomationTask struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -55,6 +61,8 @@ type AutomationTask struct {
 	LastStatus  string `json:"last_status"`
 	LastMessage string `json:"last_message"`
 	CronEntryID int    `json:"-"`
+	Readonly    bool   `json:"readonly"`
+	System      bool   `json:"system"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -83,6 +91,20 @@ type SelectionResult struct {
 	Latest      float64 `json:"latest"`
 	DetailJSON  string  `json:"detail_json"`
 	CreatedAt   string  `json:"created_at"`
+}
+
+type DecisionNote struct {
+	Symbol          string  `json:"symbol"`
+	Status          string  `json:"status"`
+	AddedPrice      float64 `json:"added_price"`
+	AddReason       string  `json:"add_reason"`
+	PlanBuy         float64 `json:"plan_buy"`
+	StopLoss        float64 `json:"stop_loss"`
+	ReviewNote      string  `json:"review_note"`
+	ExcludeCategory string  `json:"exclude_category"`
+	ExcludeReason   string  `json:"exclude_reason"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 type Webhook struct {
@@ -193,6 +215,20 @@ func (s *AppStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_created_at ON selection_results(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
+		`CREATE TABLE IF NOT EXISTS decision_notes (
+			symbol TEXT PRIMARY KEY,
+			status TEXT NOT NULL DEFAULT '',
+			added_price REAL NOT NULL DEFAULT 0,
+			add_reason TEXT NOT NULL DEFAULT '',
+			plan_buy REAL NOT NULL DEFAULT 0,
+			stop_loss REAL NOT NULL DEFAULT 0,
+			review_note TEXT NOT NULL DEFAULT '',
+			exclude_category TEXT NOT NULL DEFAULT '',
+			exclude_reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_decision_notes_status ON decision_notes(status)`,
 		`CREATE TABLE IF NOT EXISTS webhooks (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -231,6 +267,15 @@ func (s *AppStore) seedDefaults() error {
 			return err
 		}
 	}
+	now := nowText()
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO formulas
+		(id,name,type,script,args_json,period,right,enabled,description,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		"default-ma-overlay", "MA均线叠加", "indicator",
+		"MA5:MA(C,5);\nMA10:MA(C,10);\nMA20:MA(C,20);", "[]", "day", 1, 1,
+		"默认图表指标：在专业行情K线上叠加5/10/20日均线。", now, now); err != nil {
+		return err
+	}
 
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM stock_pools`).Scan(&count); err != nil {
 		return err
@@ -241,8 +286,76 @@ func (s *AppStore) seedDefaults() error {
 			Symbols:     []string{"000001", "600000", "000858", "002202"},
 			Description: "第一版内置的小股票池，可在页面里改成你的自选列表。",
 		}
-		_, err := s.UpsertStockPool(pool)
+		if _, err := s.UpsertStockPool(pool); err != nil {
+			return err
+		}
+	}
+
+	if err := s.ensureDecisionPools(); err != nil {
 		return err
+	}
+	return s.ensureFixedAutomationTasks()
+}
+
+func fixedCloseSyncAutomationTask() AutomationTask {
+	return AutomationTask{
+		ID:          FixedCloseSyncTaskID,
+		Name:        "收盘作业：更新当天行情",
+		Type:        "system_sync",
+		Cron:        "0 0 16 * * 1-5",
+		Enabled:     false,
+		PayloadJSON: `{"scope":"kline","tables":["day"],"limit":4,"continue_on_error":true}`,
+		WebhookIDs:  "[]",
+		Readonly:    true,
+		System:      true,
+	}
+}
+
+func isFixedAutomationTaskID(id string) bool {
+	return id == FixedCloseSyncTaskID
+}
+
+func decorateAutomationTask(t AutomationTask) AutomationTask {
+	if isFixedAutomationTaskID(t.ID) {
+		t.Readonly = true
+		t.System = true
+	}
+	return t
+}
+
+func (s *AppStore) ensureFixedAutomationTasks() error {
+	task := fixedCloseSyncAutomationTask()
+	now := nowText()
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
+		(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
+		"", "", "", "", now, now)
+	return err
+}
+
+func (s *AppStore) ensureDecisionPools() error {
+	defaults := []StockPool{
+		{
+			ID:          DecisionWatchPoolID,
+			Name:        "观察池",
+			Description: "首页决策工作台使用的观察列表，适合放入今日命中后准备继续跟踪的股票。",
+		},
+		{
+			ID:          DecisionExcludePoolID,
+			Name:        "排除池",
+			Description: "首页决策工作台使用的排除列表，适合放入暂时不想再处理的股票。",
+		},
+	}
+	for _, pool := range defaults {
+		now := nowText()
+		_, err := s.db.Exec(`INSERT OR IGNORE INTO stock_pools
+			(id,name,symbols_json,description,created_at,updated_at)
+			VALUES (?,?,?,?,?,?)`,
+			pool.ID, pool.Name, "[]", pool.Description, now, now)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -420,8 +533,133 @@ func (s *AppStore) UpsertStockPool(pool StockPool) (StockPool, error) {
 }
 
 func (s *AppStore) DeleteStockPool(id string) error {
+	if id == DecisionWatchPoolID || id == DecisionExcludePoolID {
+		return errors.New("系统股票池不能删除")
+	}
 	_, err := s.db.Exec(`DELETE FROM stock_pools WHERE id=?`, id)
 	return err
+}
+
+func (s *AppStore) AddStockPoolSymbol(id, symbol string) (StockPool, error) {
+	pool, err := s.GetStockPool(id)
+	if err != nil {
+		return pool, err
+	}
+	symbols := append(pool.Symbols, symbol)
+	pool.Symbols = normalizeSymbols(symbols)
+	return s.UpsertStockPool(pool)
+}
+
+func (s *AppStore) RemoveStockPoolSymbol(id, symbol string) (StockPool, error) {
+	pool, err := s.GetStockPool(id)
+	if err != nil {
+		return pool, err
+	}
+	targets := normalizeSymbols([]string{symbol})
+	if len(targets) == 0 {
+		return pool, errors.New("股票代码不能为空")
+	}
+	target := targets[0]
+	next := make([]string, 0, len(pool.Symbols))
+	for _, item := range normalizeSymbols(pool.Symbols) {
+		if item != target {
+			next = append(next, item)
+		}
+	}
+	pool.Symbols = next
+	return s.UpsertStockPool(pool)
+}
+
+func (s *AppStore) GetDecisionNote(symbol string) (DecisionNote, error) {
+	symbols := normalizeSymbols([]string{symbol})
+	if len(symbols) == 0 {
+		return DecisionNote{}, errors.New("股票代码不能为空")
+	}
+	var note DecisionNote
+	err := s.db.QueryRow(`SELECT symbol,status,added_price,add_reason,plan_buy,stop_loss,review_note,exclude_category,exclude_reason,created_at,updated_at
+		FROM decision_notes WHERE symbol=?`, symbols[0]).
+		Scan(&note.Symbol, &note.Status, &note.AddedPrice, &note.AddReason, &note.PlanBuy, &note.StopLoss, &note.ReviewNote, &note.ExcludeCategory, &note.ExcludeReason, &note.CreatedAt, &note.UpdatedAt)
+	return note, err
+}
+
+func (s *AppStore) UpsertDecisionNote(note DecisionNote) (DecisionNote, error) {
+	symbols := normalizeSymbols([]string{note.Symbol})
+	if len(symbols) == 0 {
+		return note, errors.New("股票代码不能为空")
+	}
+	note.Symbol = symbols[0]
+	note.Status = strings.TrimSpace(note.Status)
+	note.AddReason = strings.TrimSpace(note.AddReason)
+	note.ReviewNote = strings.TrimSpace(note.ReviewNote)
+	note.ExcludeCategory = strings.TrimSpace(note.ExcludeCategory)
+	note.ExcludeReason = strings.TrimSpace(note.ExcludeReason)
+	now := nowText()
+	if note.CreatedAt == "" {
+		old, err := s.GetDecisionNote(note.Symbol)
+		if err == nil {
+			note.CreatedAt = old.CreatedAt
+		} else {
+			note.CreatedAt = now
+		}
+	}
+	note.UpdatedAt = now
+	_, err := s.db.Exec(`INSERT INTO decision_notes
+		(symbol,status,added_price,add_reason,plan_buy,stop_loss,review_note,exclude_category,exclude_reason,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(symbol) DO UPDATE SET
+			status=excluded.status,added_price=excluded.added_price,add_reason=excluded.add_reason,
+			plan_buy=excluded.plan_buy,stop_loss=excluded.stop_loss,review_note=excluded.review_note,
+			exclude_category=excluded.exclude_category,exclude_reason=excluded.exclude_reason,updated_at=excluded.updated_at`,
+		note.Symbol, note.Status, note.AddedPrice, note.AddReason, note.PlanBuy, note.StopLoss, note.ReviewNote, note.ExcludeCategory, note.ExcludeReason, note.CreatedAt, note.UpdatedAt)
+	return note, err
+}
+
+func (s *AppStore) SetDecisionStatus(symbol, status string) error {
+	symbols := normalizeSymbols([]string{symbol})
+	if len(symbols) == 0 {
+		return errors.New("股票代码不能为空")
+	}
+	note, err := s.GetDecisionNote(symbols[0])
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == sql.ErrNoRows {
+		note = DecisionNote{Symbol: symbols[0]}
+	}
+	note.Status = strings.TrimSpace(status)
+	_, err = s.UpsertDecisionNote(note)
+	return err
+}
+
+func (s *AppStore) ListDecisionNotes(status string, limit int) ([]DecisionNote, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	query := `SELECT symbol,status,added_price,add_reason,plan_buy,stop_loss,review_note,exclude_category,exclude_reason,created_at,updated_at FROM decision_notes`
+	args := []interface{}{}
+	if strings.TrimSpace(status) != "" {
+		query += ` WHERE status=?`
+		args = append(args, strings.TrimSpace(status))
+	}
+	query += ` ORDER BY updated_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []DecisionNote
+	for rows.Next() {
+		var note DecisionNote
+		if err := rows.Scan(&note.Symbol, &note.Status, &note.AddedPrice, &note.AddReason, &note.PlanBuy, &note.StopLoss, &note.ReviewNote, &note.ExcludeCategory, &note.ExcludeReason, &note.CreatedAt, &note.UpdatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, note)
+	}
+	if list == nil {
+		list = []DecisionNote{}
+	}
+	return list, rows.Err()
 }
 
 func normalizeSymbols(symbols []string) []string {
@@ -429,7 +667,7 @@ func normalizeSymbols(symbols []string) []string {
 	result := make([]string, 0, len(symbols))
 	for _, symbol := range symbols {
 		s := strings.TrimSpace(strings.ToUpper(symbol))
-		s = strings.TrimSuffix(strings.TrimSuffix(s, ".SH"), ".SZ")
+		s = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(s, ".SH"), ".SZ"), ".BJ")
 		if s == "" {
 			continue
 		}
@@ -473,6 +711,7 @@ func (s *AppStore) ListAutomationTasks() ([]AutomationTask, error) {
 			return nil, err
 		}
 		t.Enabled = intBool(enabled)
+		t = decorateAutomationTask(t)
 		list = append(list, t)
 	}
 	if list == nil {
@@ -487,7 +726,7 @@ func (s *AppStore) GetAutomationTask(id string) (AutomationTask, error) {
 	err := s.db.QueryRow(`SELECT id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at FROM automation_tasks WHERE id=?`, id).
 		Scan(&t.ID, &t.Name, &t.Type, &t.Cron, &enabled, &t.PayloadJSON, &t.WebhookIDs, &t.LastRunAt, &t.NextRunAt, &t.LastStatus, &t.LastMessage, &t.CreatedAt, &t.UpdatedAt)
 	t.Enabled = intBool(enabled)
-	return t, err
+	return decorateAutomationTask(t), err
 }
 
 func (s *AppStore) UpsertAutomationTask(t AutomationTask) (AutomationTask, error) {
@@ -524,6 +763,25 @@ func (s *AppStore) UpsertAutomationTask(t AutomationTask) (AutomationTask, error
 			webhook_ids=excluded.webhook_ids,next_run_at=excluded.next_run_at,updated_at=excluded.updated_at`,
 		t.ID, t.Name, t.Type, t.Cron, boolInt(t.Enabled), t.PayloadJSON, t.WebhookIDs, t.LastRunAt, t.NextRunAt, t.LastStatus, t.LastMessage, t.CreatedAt, t.UpdatedAt)
 	return t, err
+}
+
+func (s *AppStore) SetAutomationTaskEnabled(id string, enabled bool) (AutomationTask, error) {
+	now := nowText()
+	nextRun := ""
+	if enabled {
+		current, err := s.GetAutomationTask(id)
+		if err == nil {
+			nextRun = current.NextRunAt
+		}
+	}
+	result, err := s.db.Exec(`UPDATE automation_tasks SET enabled=?, next_run_at=?, updated_at=? WHERE id=?`, boolInt(enabled), nextRun, now, id)
+	if err != nil {
+		return AutomationTask{}, err
+	}
+	if count, err := result.RowsAffected(); err == nil && count == 0 {
+		return AutomationTask{}, sql.ErrNoRows
+	}
+	return s.GetAutomationTask(id)
 }
 
 func (s *AppStore) DeleteAutomationTask(id string) error {

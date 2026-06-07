@@ -1,13 +1,17 @@
 // 全局变量
 let currentStock = '';
-let klineChart = null;
-let minuteChart = null;
-let hqChart = null;
 let formulas = [];
 let pools = [];
 let automations = [];
 let webhooks = [];
 let selectionResults = [];
+let decisionResults = [];
+let dailyReview = null;
+let reviewItems = [];
+let currentHQOverlay = null;
+let selectedDecisionResult = null;
+let selectedReviewItem = null;
+let decisionShowingToday = false;
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -65,13 +69,15 @@ function switchWorkspace(name, button) {
     document.getElementById(name + 'Workspace').classList.add('active');
     if (name === 'proChart') {
         setTimeout(() => {
+            loadFormulaList();
+            loadHQChart();
             if (window.TDXHQChart) window.TDXHQChart.resize();
-            if (hqChart) hqChart.resize();
         }, 50);
     }
-    if (name === 'formulas') loadFormulaList();
+    if (name === 'market') refreshDecisionDesk();
     if (name === 'dataCenter') loadDataCenter();
     if (name === 'selectionResults') loadSelectionResults();
+    if (name === 'dailyReview') loadDailyReview();
     if (name === 'automations') loadAutomationData();
     if (name === 'webhooks') loadWebhooks();
 }
@@ -114,6 +120,10 @@ function escapeHTML(value) {
     }[ch]));
 }
 
+function escapeJSString(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
+}
+
 function compactValue(value) {
     if (value === null || value === undefined || value === '') return '--';
     if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/\.?0+$/, '');
@@ -121,6 +131,45 @@ function compactValue(value) {
     if (Array.isArray(value)) return value.length > 6 ? `${value.slice(0, 6).join(', ')} ...` : value.join(', ');
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
+}
+
+function normalizeSymbol(symbol) {
+    return String(symbol || '').trim().toUpperCase().replace(/\.(SH|SZ|BJ)$/i, '');
+}
+
+function renderHQKLine(containerId, symbol, period = 'day', options = {}) {
+    const container = document.getElementById(containerId);
+    if (!container) return false;
+    if (!window.TDXHQChart || !window.TDXHQChart.isAvailable()) {
+        container.innerHTML = '<div class="data-item">HQChart 未加载，无法显示图表</div>';
+        return false;
+    }
+    const ok = window.TDXHQChart.renderKLine(container, {
+        symbol: normalizeSymbol(symbol),
+        period,
+        ...options
+    });
+    if (!ok) {
+        container.innerHTML = '<div class="data-item">HQChart 初始化失败</div>';
+    }
+    return ok;
+}
+
+function poolByID(id) {
+    return pools.find(pool => pool.id === id);
+}
+
+function symbolInPool(symbol, poolID) {
+    const pool = poolByID(poolID);
+    const normalized = normalizeSymbol(symbol);
+    return !!pool && (pool.symbols || []).map(normalizeSymbol).includes(normalized);
+}
+
+function localDateString(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function setLoadingText(containerId, text = '加载中...') {
@@ -373,12 +422,7 @@ async function loadKline(type, buttonElement) {
     
     showLoading();
     try {
-        const response = await fetch(`/api/kline?code=${currentStock}&type=${type}`);
-        const result = await response.json();
-        
-        if (result.code === 0 && result.data) {
-            displayKline(result.data, type);
-        }
+        renderHQKLine('klineChart', currentStock, type, { count: 800, pageSize: 80 });
         
         // 更新按钮状态
         document.querySelectorAll('.btn-control').forEach(btn => {
@@ -416,288 +460,24 @@ function getKlineTypeName(type) {
     return typeMap[type] || '日K';
 }
 
-// 显示K线图
-function displayKline(data, type) {
-    if (!data.List || data.List.length === 0) {
-        return;
-    }
-    
-    const chartDom = document.getElementById('klineChart');
-    if (!klineChart) {
-        klineChart = echarts.init(chartDom);
-    }
-    if (!chartDom.offsetWidth || !chartDom.offsetHeight) {
-        // 容器尚未正确展示时强制设置默认尺寸
-        chartDom.style.width = '100%';
-        chartDom.style.height = '600px';
-        klineChart.resize();
-    }
-    
-    // 准备数据
-    const dates = [];
-    const klineData = [];
-    const volumes = [];
-    
-    data.List.forEach(item => {
-        const date = new Date(item.Time);
-        const dateStr = date.getFullYear() + '-' + 
-                       String(date.getMonth() + 1).padStart(2, '0') + '-' + 
-                       String(date.getDate()).padStart(2, '0') + ' ' +
-                       String(date.getHours()).padStart(2, '0') + ':' +
-                       String(date.getMinutes()).padStart(2, '0');
-        dates.push(dateStr);
-        
-        const open = parseFloat(item.Open) / 1000;
-        const close = parseFloat(item.Close) / 1000;
-        const low = parseFloat(item.Low) / 1000;
-        const high = parseFloat(item.High) / 1000;
-        
-        klineData.push([open, close, low, high]);
-        volumes.push([dates.length - 1, item.Volume, close >= open ? 1 : -1]);
-    });
-    
-    const option = {
-        backgroundColor: '#fff',
-        animation: false,
-        legend: {
-            data: ['K线', '成交量'],
-            top: 10
-        },
-        tooltip: {
-            trigger: 'axis',
-            axisPointer: {
-                type: 'cross'
-            }
-        },
-        grid: [
-            {
-                left: '8%',
-                right: '3%',
-                top: '10%',
-                height: '60%'
-            },
-            {
-                left: '8%',
-                right: '3%',
-                top: '75%',
-                height: '15%'
-            }
-        ],
-        xAxis: [
-            {
-                type: 'category',
-                data: dates,
-                scale: true,
-                boundaryGap: true,
-                axisLine: { onZero: false },
-                splitLine: { show: false },
-                min: 'dataMin',
-                max: 'dataMax'
-            },
-            {
-                type: 'category',
-                gridIndex: 1,
-                data: dates,
-                scale: true,
-                boundaryGap: true,
-                axisLine: { onZero: false },
-                axisTick: { show: false },
-                splitLine: { show: false },
-                axisLabel: { show: false },
-                min: 'dataMin',
-                max: 'dataMax'
-            }
-        ],
-        yAxis: [
-            {
-                scale: true,
-                splitArea: {
-                    show: true
-                }
-            },
-            {
-                scale: true,
-                gridIndex: 1,
-                splitNumber: 2,
-                axisLabel: { show: false },
-                axisLine: { show: false },
-                axisTick: { show: false },
-                splitLine: { show: false }
-            }
-        ],
-        dataZoom: [
-            {
-                type: 'inside',
-                xAxisIndex: [0, 1],
-                start: 0,
-                end: 100
-            },
-            {
-                show: true,
-                xAxisIndex: [0, 1],
-                type: 'slider',
-                top: '93%',
-                start: 0,
-                end: 100
-            }
-        ],
-        series: [
-            {
-                name: 'K线',
-                type: 'candlestick',
-                data: klineData,
-                itemStyle: {
-                    color: '#ef232a',
-                    color0: '#14b143',
-                    borderColor: '#ef232a',
-                    borderColor0: '#14b143'
-                }
-            },
-            {
-                name: '成交量',
-                type: 'bar',
-                xAxisIndex: 1,
-                yAxisIndex: 1,
-                data: volumes.map(item => item[1]),
-                itemStyle: {
-                    color: function(params) {
-                        return volumes[params.dataIndex][2] > 0 ? '#ef232a' : '#14b143';
-                    }
-                }
-            }
-        ]
-    };
-    
-    klineChart.setOption(option);
-    klineChart.resize();
+function getActiveKlineType() {
+    const active = document.querySelector('.btn-control.active');
+    const label = active?.textContent || '日K';
+    if (label.includes('周')) return 'week';
+    if (label.includes('月')) return 'month';
+    if (label.includes('30')) return 'minute30';
+    if (label.includes('15')) return 'minute15';
+    if (label.includes('5')) return 'minute5';
+    return 'day';
 }
 
 // 加载分时数据
 async function loadMinute(code) {
     try {
-        const response = await fetch(`/api/minute?code=${code}`);
-        const result = await response.json();
-        
-        if (result.code === 0 && result.data) {
-            displayMinute(result.data);
-        }
+        renderHQKLine('minuteChart', code, 'minute1', { count: 240, pageSize: 80, dataWidth: 8 });
     } catch (error) {
         console.error('加载分时数据失败:', error);
     }
-}
-
-// 显示分时图
-function displayMinute(data) {
-    if (!data.List || data.List.length === 0) {
-        return;
-    }
-    
-    const chartDom = document.getElementById('minuteChart');
-    if (!minuteChart) {
-        minuteChart = echarts.init(chartDom);
-    }
-    
-    const times = [];
-    const prices = [];
-    const volumes = [];
-    
-    data.List.forEach(item => {
-        times.push(item.Time);
-        prices.push((parseFloat(item.Price) / 1000).toFixed(2));
-        volumes.push(item.Number);
-    });
-    
-    const option = {
-        backgroundColor: '#fff',
-        tooltip: {
-            trigger: 'axis',
-            axisPointer: {
-                type: 'cross'
-            }
-        },
-        grid: [
-            {
-                left: '8%',
-                right: '3%',
-                top: '10%',
-                height: '60%'
-            },
-            {
-                left: '8%',
-                right: '3%',
-                top: '75%',
-                height: '15%'
-            }
-        ],
-        xAxis: [
-            {
-                type: 'category',
-                data: times,
-                boundaryGap: false,
-                axisLine: { onZero: false },
-                splitLine: { show: false }
-            },
-            {
-                type: 'category',
-                gridIndex: 1,
-                data: times,
-                boundaryGap: false,
-                axisLine: { onZero: false },
-                axisTick: { show: false },
-                splitLine: { show: false },
-                axisLabel: { show: false }
-            }
-        ],
-        yAxis: [
-            {
-                scale: true,
-                splitArea: {
-                    show: true
-                }
-            },
-            {
-                scale: true,
-                gridIndex: 1,
-                splitNumber: 2,
-                axisLabel: { show: false },
-                axisLine: { show: false },
-                axisTick: { show: false },
-                splitLine: { show: false }
-            }
-        ],
-        series: [
-            {
-                name: '价格',
-                type: 'line',
-                data: prices,
-                smooth: true,
-                symbol: 'none',
-                lineStyle: {
-                    color: '#1890ff',
-                    width: 2
-                },
-                areaStyle: {
-                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: 'rgba(24, 144, 255, 0.3)' },
-                        { offset: 1, color: 'rgba(24, 144, 255, 0.05)' }
-                    ])
-                }
-            },
-            {
-                name: '成交量',
-                type: 'bar',
-                xAxisIndex: 1,
-                yAxisIndex: 1,
-                data: volumes,
-                itemStyle: {
-                    color: '#1890ff'
-                }
-            }
-        ]
-    };
-    
-    minuteChart.setOption(option);
-    minuteChart.resize();
 }
 
 // 加载分时成交
@@ -769,11 +549,17 @@ function switchTab(evt, tabName) {
 
     // 切换到图表时触发自适应，解决在隐藏容器中初始化导致的宽度问题
     requestAnimationFrame(() => {
-        if (tabName === 'kline' && klineChart) {
-            setTimeout(() => klineChart.resize(), 50);
+        if (tabName === 'kline' && window.TDXHQChart) {
+            setTimeout(() => {
+                if (currentStock) renderHQKLine('klineChart', currentStock, getActiveKlineType(), { count: 800, pageSize: 80 });
+                window.TDXHQChart.resize(document.getElementById('klineChart'));
+            }, 50);
         }
-        if (tabName === 'minute' && minuteChart) {
-            setTimeout(() => minuteChart.resize(), 50);
+        if (tabName === 'minute' && window.TDXHQChart) {
+            setTimeout(() => {
+                if (currentStock) renderHQKLine('minuteChart', currentStock, 'minute1', { count: 240, pageSize: 80, dataWidth: 8 });
+                window.TDXHQChart.resize(document.getElementById('minuteChart'));
+            }, 50);
         }
     });
 }
@@ -791,32 +577,33 @@ window.addEventListener('resize', function() {
     // 防抖优化，避免频繁调用
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function() {
-        if (klineChart) {
-            klineChart.resize();
-        }
-        if (minuteChart) {
-            minuteChart.resize();
-        }
-        if (hqChart) {
-            hqChart.resize();
-        }
+        if (window.TDXHQChart) window.TDXHQChart.resize();
     }, 100);
 });
 
 async function loadFormulaList() {
     formulas = await apiFetch('/api/formulas');
     const formulaOptions = formulas.map(f => `<option value="${f.id}">${escapeHTML(f.name)}</option>`).join('');
-    document.getElementById('hqFormulaSelect').innerHTML = formulaOptions;
+    const hqFormulaSelect = document.getElementById('hqFormulaSelect');
+    if (hqFormulaSelect) {
+        hqFormulaSelect.innerHTML = formulaOptions;
+        hqFormulaSelect.onchange = renderHQFormulaArgsSummary;
+        renderHQFormulaArgsSummary();
+    }
+    renderFormulaArgsEditor(parseHQFormulaArgs({ args_json: document.getElementById('formulaArgs')?.value || '[]' }));
     document.getElementById('automationFormula').innerHTML = formulaOptions;
     const resultFilter = document.getElementById('resultFormulaFilter');
     if (resultFilter) {
         resultFilter.innerHTML = '<option value="">全部公式</option>' + formulaOptions;
     }
     document.getElementById('formulaList').innerHTML = formulas.map(f => `
-        <div class="data-item">
-            <div class="data-item-title">${escapeHTML(f.name)}</div>
-            <div class="data-item-meta">${escapeHTML(f.type)} · ${escapeHTML(f.period)} · ${f.enabled ? '启用' : '停用'}</div>
-            <div class="data-item-meta">${escapeHTML(f.script)}</div>
+        <div class="data-item formula-list-item">
+            <div class="formula-list-head">
+                <strong title="${escapeHTML(f.name)}">${escapeHTML(f.name)}</strong>
+                <span>${f.enabled ? '启用' : '停用'}</span>
+            </div>
+            <div class="formula-list-meta">${escapeHTML(f.type)} · ${escapeHTML(f.period)} · 参数：${escapeHTML(formatFormulaArgs(f))}</div>
+            <div class="formula-script-preview" title="${escapeHTML(f.script)}">${escapeHTML(compactFormulaScript(f.script))}</div>
             <div class="item-actions">
                 <button onclick="fillFormula('${f.id}')">编辑</button>
                 <button class="primary" onclick="quickTestFormula('${f.id}')">测试</button>
@@ -836,12 +623,78 @@ function fillFormula(id) {
     document.getElementById('formulaRight').value = String(f.right);
     document.getElementById('formulaScript').value = f.script;
     document.getElementById('formulaArgs').value = f.args_json || '[]';
+    renderFormulaArgsEditor(parseHQFormulaArgs(f));
+}
+
+function formatFormulaArgs(formula) {
+    const args = parseHQFormulaArgs(formula);
+    return args.length ? args.map(item => `${item.Name}=${item.Value}`).join('，') : '无';
+}
+
+function compactFormulaScript(script) {
+    return String(script || '').replace(/\s+/g, ' ').trim() || '暂无脚本';
+}
+
+function appendFormulaArgRow(arg = {}) {
+    const editor = document.getElementById('formulaArgsEditor');
+    if (!editor) return;
+    const emptyNode = editor.querySelector('.formula-empty-note');
+    if (emptyNode) emptyNode.remove();
+    const row = document.createElement('div');
+    row.className = 'formula-arg-row';
+    row.innerHTML = `
+        <input class="formula-arg-name" value="${escapeHTML(arg.Name || '')}" placeholder="参数名">
+        <input class="formula-arg-value" value="${escapeHTML(arg.Value ?? '')}" placeholder="参数值">
+        <button type="button" onclick="removeFormulaArgRow(this)">删除</button>
+    `;
+    editor.appendChild(row);
+}
+
+function renderFormulaArgsEditor(args = []) {
+    const editor = document.getElementById('formulaArgsEditor');
+    if (!editor) return;
+    editor.innerHTML = '';
+    if (!args.length) {
+        editor.innerHTML = '<div class="formula-empty-note">暂无参数，可新增</div>';
+        return;
+    }
+    args.forEach(arg => appendFormulaArgRow(arg));
+}
+
+function addFormulaArgRow() {
+    appendFormulaArgRow();
+}
+
+function removeFormulaArgRow(target) {
+    target?.closest('.formula-arg-row')?.remove();
+    const editor = document.getElementById('formulaArgsEditor');
+    if (editor && !editor.querySelector('.formula-arg-row')) {
+        editor.innerHTML = '<div class="formula-empty-note">暂无参数，可新增</div>';
+    }
+    syncFormulaArgsJSON();
+}
+
+function getFormulaArgsFromEditor() {
+    const editor = document.getElementById('formulaArgsEditor');
+    if (!editor) return [];
+    return Array.from(editor.querySelectorAll('.formula-arg-row')).map(row => ({
+        Name: row.querySelector('.formula-arg-name')?.value.trim() || '',
+        Value: normalizeHQArgValue(row.querySelector('.formula-arg-value')?.value || '')
+    })).filter(item => item.Name && item.Value !== '');
+}
+
+function syncFormulaArgsJSON() {
+    const value = JSON.stringify(getFormulaArgsFromEditor());
+    const node = document.getElementById('formulaArgs');
+    if (node) node.value = value;
+    return value;
 }
 
 async function saveFormula() {
     try {
         const id = document.getElementById('formulaName').dataset.id || '';
-        JSON.parse(document.getElementById('formulaArgs').value || '[]');
+        const argsJSON = syncFormulaArgsJSON();
+        JSON.parse(argsJSON || '[]');
         await apiFetch(id ? `/api/formulas/${id}` : '/api/formulas', {
             method: id ? 'PUT' : 'POST',
             body: JSON.stringify({
@@ -851,12 +704,13 @@ async function saveFormula() {
                 period: document.getElementById('formulaPeriod').value,
                 right: Number(document.getElementById('formulaRight').value),
                 script: document.getElementById('formulaScript').value,
-                args_json: document.getElementById('formulaArgs').value || '[]',
+                args_json: argsJSON || '[]',
                 enabled: true
             })
         });
         document.getElementById('formulaName').dataset.id = '';
         await loadFormulaList();
+        renderHQFormulaArgsSummary();
         alert('公式已保存');
     } catch (error) {
         alert(error.message);
@@ -875,22 +729,96 @@ async function quickTestFormula(id) {
     switchWorkspace('proChart', document.querySelectorAll('.workspace-tab')[1]);
 }
 
+function editSelectedHQFormula() {
+    const id = document.getElementById('hqFormulaSelect')?.value;
+    if (!id) {
+        alert('请先选择一个公式');
+        return;
+    }
+    openFormulaDialog();
+    fillFormula(id);
+}
+
+function openFormulaDialog() {
+    const dialog = document.getElementById('formulaDialog');
+    if (!dialog) return;
+    dialog.classList.add('open');
+    dialog.setAttribute('aria-hidden', 'false');
+    loadFormulaList();
+}
+
+function closeFormulaDialog() {
+    const dialog = document.getElementById('formulaDialog');
+    if (!dialog) return;
+    dialog.classList.remove('open');
+    dialog.setAttribute('aria-hidden', 'true');
+}
+
 async function testSelectedFormula() {
     const id = document.getElementById('hqFormulaSelect').value;
     const symbol = document.getElementById('hqSymbol').value || currentStock || '000001';
     await runFormulaTest(id, symbol);
 }
 
-async function runFormulaTest(id, symbol) {
+async function runFormulaTest(id, symbol, options = {}) {
     try {
         const data = await apiFetch(`/api/formulas/${id}/test`, {
             method: 'POST',
-            body: JSON.stringify({ symbol, calc_count: 240, out_count: 5 })
+            body: JSON.stringify({
+                symbol,
+                calc_count: 240,
+                out_count: 5,
+                ...(options.args ? { args: options.args } : {})
+            })
         });
         document.getElementById('formulaTestOutput').textContent = prettyJSON(data);
     } catch (error) {
         document.getElementById('formulaTestOutput').textContent = error.message;
     }
+}
+
+function selectedHQFormula() {
+    const id = document.getElementById('hqFormulaSelect')?.value;
+    return formulas.find(item => item.id === id) || null;
+}
+
+function normalizeHQArgValue(value) {
+    const text = String(value ?? '').trim();
+    if (text === '') return '';
+    const numberValue = Number(text);
+    return Number.isFinite(numberValue) ? numberValue : text;
+}
+
+function normalizeHQFormulaArgs(args) {
+    if (!Array.isArray(args)) return [];
+    return args.map(item => {
+        const name = item?.Name ?? item?.name ?? '';
+        const value = item?.Value ?? item?.value ?? '';
+        return { Name: String(name).trim(), Value: normalizeHQArgValue(value) };
+    }).filter(item => item.Name && item.Value !== '');
+}
+
+function parseHQFormulaArgs(formula) {
+    const raw = formula?.args_json ?? formula?.args ?? [];
+    if (Array.isArray(raw)) return normalizeHQFormulaArgs(raw);
+    if (!String(raw || '').trim()) return [];
+    try {
+        return normalizeHQFormulaArgs(JSON.parse(raw));
+    } catch (error) {
+        updateHQOverlayStatus(`参数JSON解析失败：${error.message}`);
+        return [];
+    }
+}
+
+function renderHQFormulaArgsSummary() {
+    const node = document.getElementById('hqFormulaArgsSummary');
+    if (!node) return;
+    const args = parseHQFormulaArgs(selectedHQFormula());
+    if (!args.length) {
+        node.textContent = '公式参数：无';
+        return;
+    }
+    node.textContent = `公式参数：${args.map(item => `${item.Name}=${item.Value}`).join('，')}`;
 }
 
 async function loadPools() {
@@ -947,21 +875,36 @@ async function loadAutomations() {
     automations = await apiFetch('/api/automations') || [];
     document.getElementById('automationList').innerHTML = automations.map(t => `
         <div class="data-item">
-            <div class="data-item-title">${escapeHTML(t.name)}</div>
-            <div class="data-item-meta">${escapeHTML(t.type)} · ${escapeHTML(t.cron)} · ${t.enabled ? '启用' : '停用'}</div>
+            <div class="data-item-title">${escapeHTML(t.name)}${t.readonly ? ' <span class="tag">系统固定</span>' : ''}</div>
+            <div class="data-item-meta">${escapeHTML(t.type)} · ${escapeHTML(t.cron)} · ${t.enabled ? '启用' : '停用'}${t.next_run_at ? ` · 下次：${escapeHTML(t.next_run_at)}` : ''}</div>
             <div class="data-item-meta">上次：${escapeHTML(t.last_status || '--')} ${escapeHTML(t.last_message || '')}</div>
-            <div class="item-actions">
-                <button onclick="fillAutomation('${t.id}')">编辑</button>
-                <button class="primary" onclick="runAutomation('${t.id}')">立即运行</button>
-                <button onclick="deleteAutomation('${t.id}')">删除</button>
-            </div>
+            <div class="item-actions">${automationTaskActions(t)}</div>
         </div>
     `).join('') || '<div class="data-item">暂无任务</div>';
+}
+
+function automationTaskActions(task) {
+    const id = escapeJSString(task.id);
+    if (task.readonly) {
+        return `
+            <button class="${task.enabled ? '' : 'primary'}" onclick="toggleAutomation('${id}', ${task.enabled ? 'false' : 'true'})">${task.enabled ? '关闭' : '开启'}</button>
+            <button onclick="runAutomation('${id}')">立即执行一次</button>
+        `;
+    }
+    return `
+        <button onclick="fillAutomation('${id}')">编辑</button>
+        <button class="primary" onclick="runAutomation('${id}')">立即运行</button>
+        <button onclick="deleteAutomation('${id}')">删除</button>
+    `;
 }
 
 function fillAutomation(id) {
     const t = automations.find(item => item.id === id);
     if (!t) return;
+    if (t.readonly) {
+        alert('固定任务只能开启或关闭，不能编辑');
+        return;
+    }
     const payload = JSON.parse(t.payload_json || '{}');
     document.getElementById('automationName').dataset.id = t.id;
     document.getElementById('automationName').value = t.name;
@@ -1041,6 +984,18 @@ async function runAutomation(id) {
     }
 }
 
+async function toggleAutomation(id, enabled) {
+    try {
+        await apiFetch(`/api/automations/${id}/enabled`, {
+            method: 'PUT',
+            body: JSON.stringify({ enabled })
+        });
+        await loadAutomations();
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
 async function createSystemTemplate(template) {
     try {
         await apiFetch('/api/automations/templates', {
@@ -1090,9 +1045,479 @@ async function loadSelectionResults() {
             <div class="item-actions">
                 <button class="primary" onclick="openResultChart('${item.symbol}')">打开图表</button>
                 <button onclick="showResultDetail('${item.id}')">详情</button>
+                <button onclick="addSymbolToPool('watchlist', '${item.symbol}')">观察</button>
+                <button onclick="addSymbolToPool('exclude', '${item.symbol}')">排除</button>
             </div>
         </div>
     `).join('') || '<div class="data-item">暂无命中结果</div>';
+}
+
+async function refreshDecisionDesk() {
+    const hitSummary = document.getElementById('decisionHitSummary');
+    const hitList = document.getElementById('decisionHits');
+    if (hitSummary) hitSummary.textContent = '加载中';
+    if (hitList) hitList.innerHTML = '<div class="data-item">正在加载命中结果...</div>';
+    try {
+        if (!pools.length) {
+            await loadPools();
+        }
+        await loadDecisionResults();
+        renderDecisionPools();
+        if (!selectedDecisionResult && decisionResults.length > 0) {
+            await selectDecisionResult(decisionResults[0].id);
+        } else {
+            updateDecisionActionState();
+        }
+    } catch (error) {
+        if (hitSummary) hitSummary.textContent = '加载失败';
+        if (hitList) hitList.innerHTML = `<div class="data-item">${escapeHTML(error.message || error)}</div>`;
+    }
+}
+
+async function loadDecisionResults() {
+    const today = localDateString();
+    dailyReview = await apiFetch('/api/daily-review?limit=200') || {};
+    reviewItems = dailyReview.items || [];
+    const allResults = reviewItems.map(item => item.result).filter(Boolean);
+    const todayItems = allResults.filter(item => String(item.created_at || '').startsWith(today));
+    decisionResults = todayItems.length ? todayItems : allResults;
+    decisionShowingToday = todayItems.length > 0;
+    if (selectedDecisionResult) {
+        selectedReviewItem = reviewItemBySymbol(selectedDecisionResult.symbol);
+        const latestSelected = decisionResults.find(item => normalizeSymbol(item.symbol) === normalizeSymbol(selectedDecisionResult.symbol));
+        if (latestSelected) selectedDecisionResult = latestSelected;
+    }
+    renderDecisionHits(todayItems.length > 0, allResults.length);
+}
+
+function renderDecisionHits(isToday, latestCount) {
+    const summary = document.getElementById('decisionHitSummary');
+    const list = document.getElementById('decisionHits');
+    if (!list) return;
+    if (summary) {
+        if (decisionResults.length === 0) {
+            summary.textContent = '暂无选股命中，去自动化页运行一次选股任务';
+        } else {
+            summary.textContent = isToday
+                ? `今日命中 ${decisionResults.length} 只`
+                : `今日暂无命中，显示最近一次运行的 ${latestCount} 只`;
+        }
+    }
+    list.innerHTML = decisionResults.map(item => {
+        const review = reviewItemBySymbol(item.symbol);
+        const statusInfo = decisionStatusInfo(item.symbol, review);
+        const total = review?.score?.total || 0;
+        const track = review?.track?.summary || '待跟踪';
+        return `
+            <button class="decision-hit ${selectedDecisionResult?.id === item.id ? 'active' : ''}" onclick="selectDecisionResult('${item.id}')">
+                <span class="decision-hit-top">
+                    <span class="decision-symbol">${escapeHTML(item.symbol)}</span>
+                    <span class="score-total">${total ? total + '分' : '--'}</span>
+                </span>
+                <span class="decision-hit-meta">${escapeHTML(item.formula_name)} · ${escapeHTML(item.task_name || '--')}</span>
+                <span class="decision-hit-foot">
+                    <span>${escapeHTML(formatDecisionTime(item.created_at))}</span>
+                    <strong>${Number(item.latest || 0).toFixed(4)}</strong>
+                    <em class="${statusInfo.className}">${statusInfo.label}</em>
+                </span>
+                <span class="decision-hit-meta">${escapeHTML(track)}</span>
+            </button>
+        `;
+    }).join('') || '<div class="data-item">暂无命中结果</div>';
+}
+
+function renderDecisionPools() {
+    renderPoolChips('watchlist', 'watchPoolList', 'watchPoolSummary');
+    renderPoolChips('exclude', 'excludePoolList', 'excludePoolSummary');
+}
+
+function renderPoolChips(poolID, listID, summaryID) {
+    const pool = poolByID(poolID);
+    const list = document.getElementById(listID);
+    const summary = document.getElementById(summaryID);
+    const symbols = pool?.symbols || [];
+    if (summary) summary.textContent = `${symbols.length} 只`;
+    if (!list) return;
+    list.innerHTML = symbols.slice(0, 80).map(symbol => `
+        <button class="pool-chip" onclick="openDecisionSymbol('${normalizeSymbol(symbol)}')">
+            ${escapeHTML(symbol)}
+        </button>
+    `).join('') || '<div class="data-item compact-empty">暂无股票</div>';
+}
+
+async function selectDecisionResult(id) {
+    const item = decisionResults.find(v => v.id === id);
+    if (!item) return;
+    selectedDecisionResult = item;
+    selectedReviewItem = reviewItems.find(v => v.result?.id === id) || reviewItemBySymbol(item.symbol);
+    currentStock = item.symbol;
+    const input = document.getElementById('stockCode');
+    if (input) input.value = item.symbol;
+    renderDecisionHits(decisionShowingToday, decisionResults.length);
+    renderDecisionDetail(item);
+    await loadDecisionChart(item.symbol);
+}
+
+async function openDecisionSymbol(symbol) {
+    const normalized = normalizeSymbol(symbol);
+    const existing = decisionResults.find(item => normalizeSymbol(item.symbol) === normalized);
+    if (existing) {
+        await selectDecisionResult(existing.id);
+        return;
+    }
+    selectedDecisionResult = { id: '', symbol: normalized, detail_json: '{}', formula_name: '手动查看', task_name: '股票池' };
+    selectedReviewItem = reviewItemBySymbol(normalized) || { result: selectedDecisionResult, note: {}, score: {}, track: {} };
+    currentStock = normalized;
+    renderDecisionDetail(selectedDecisionResult);
+    await loadDecisionChart(normalized);
+}
+
+function renderDecisionDetail(item) {
+    const symbol = normalizeSymbol(item.symbol);
+    const review = selectedReviewItem || reviewItemBySymbol(symbol) || {};
+    document.getElementById('decisionDetailTitle').textContent = `${symbol} 命中详情`;
+    document.getElementById('decisionDetailMeta').textContent = `${item.formula_name || '--'} · ${item.task_name || '--'} · ${formatDecisionTime(item.created_at)}`;
+    document.getElementById('decisionScore').innerHTML = renderScoreGrid(review.score);
+    document.getElementById('decisionTrack').innerHTML = renderTrackPanel(review.track);
+    document.getElementById('decisionReason').innerHTML = renderDecisionReason(item);
+    fillDecisionNoteForm(review.note || { symbol });
+    updateDecisionActionState();
+}
+
+function renderDecisionReason(item) {
+    let detail = {};
+    try {
+        detail = JSON.parse(item.detail_json || '{}');
+    } catch {
+        return `<pre class="json-output">${escapeHTML(item.detail_json || '')}</pre>`;
+    }
+    const rows = extractReasonRows(detail);
+    if (!rows.length) {
+        return `<pre class="json-output">${escapeHTML(prettyJSON(detail))}</pre>`;
+    }
+    return rows.map(row => `
+        <div class="reason-item">
+            <span>${escapeHTML(row.label)}</span>
+            <strong>${escapeHTML(compactValue(row.value))}</strong>
+        </div>
+    `).join('');
+}
+
+function extractReasonRows(detail) {
+    const rows = [];
+    const push = (label, value) => {
+        if (value !== undefined && value !== null && value !== '') rows.push({ label, value });
+    };
+    push('最新输出', detail.latest ?? detail.Latest ?? detail.value ?? detail.Value);
+    push('是否命中', detail.hit ?? detail.Hit ?? detail.signal ?? detail.Signal);
+    push('公式引擎', detail.engine ?? detail.Engine);
+    push('耗时', detail.tick_ms !== undefined ? `${detail.tick_ms} ms` : undefined);
+    const data = detail.data ?? detail.Data;
+    if (Array.isArray(data)) {
+        data.slice(-6).forEach((value, index) => push(`输出 ${data.length - 6 + index + 1}`, value));
+    } else if (data && typeof data === 'object') {
+        Object.entries(data).slice(0, 16).forEach(([key, value]) => push(key, value));
+    }
+    Object.entries(detail).forEach(([key, value]) => {
+        if (rows.length >= 18) return;
+        if (['latest', 'Latest', 'value', 'Value', 'hit', 'Hit', 'signal', 'Signal', 'data', 'Data'].includes(key)) return;
+        if (typeof value !== 'object') push(key, value);
+    });
+    return rows;
+}
+
+async function loadDecisionChart(symbol) {
+    const chartDom = document.getElementById('decisionChart');
+    if (!chartDom) return;
+    chartDom.innerHTML = '';
+    try {
+        renderHQKLine('decisionChart', symbol, 'day', {
+            count: 260,
+            pageSize: 80,
+            windows: [
+                { Index: 'MA' },
+                { Index: 'VOL' }
+            ]
+        });
+    } catch (error) {
+        chartDom.innerHTML = `<div class="data-item">${escapeHTML(error.message || error)}</div>`;
+    }
+}
+
+async function addDecisionSymbolToPool(poolID) {
+    if (!selectedDecisionResult?.symbol) return;
+    await addSymbolToPool(poolID, selectedDecisionResult.symbol);
+}
+
+async function removeDecisionSymbolFromPools() {
+    if (!selectedDecisionResult?.symbol) return;
+    await Promise.allSettled([
+        removeSymbolFromPool('watchlist', selectedDecisionResult.symbol, false),
+        removeSymbolFromPool('exclude', selectedDecisionResult.symbol, false)
+    ]);
+    await upsertDecisionNote({ symbol: selectedDecisionResult.symbol, status: '' });
+    await loadPools();
+    await loadDecisionResults();
+    renderDecisionPools();
+    renderDecisionHits(decisionShowingToday, decisionResults.length);
+    if (selectedDecisionResult) {
+        selectedReviewItem = reviewItemBySymbol(selectedDecisionResult.symbol);
+        renderDecisionDetail(selectedDecisionResult);
+    }
+    updateDecisionActionState();
+}
+
+async function addSymbolToPool(poolID, symbol) {
+    const normalized = normalizeSymbol(symbol);
+    if (!normalized) return;
+    const opposite = poolID === 'watchlist' ? 'exclude' : 'watchlist';
+    await removeSymbolFromPool(opposite, normalized, false);
+    await apiFetch(`/api/stock-pools/${poolID}/symbols/${encodeURIComponent(normalized)}`, { method: 'POST' });
+    await loadPools();
+    await loadDecisionResults();
+    renderDecisionPools();
+    renderDecisionHits(decisionShowingToday, decisionResults.length);
+    if (selectedDecisionResult && normalizeSymbol(selectedDecisionResult.symbol) === normalized) {
+        selectedReviewItem = reviewItemBySymbol(normalized);
+        renderDecisionDetail(selectedDecisionResult);
+    }
+    updateDecisionActionState();
+}
+
+async function removeSymbolFromPool(poolID, symbol, refresh = true) {
+    const normalized = normalizeSymbol(symbol);
+    if (!normalized) return;
+    await apiFetch(`/api/stock-pools/${poolID}/symbols/${encodeURIComponent(normalized)}`, { method: 'DELETE' });
+    if (refresh) {
+        await loadPools();
+        await loadDecisionResults();
+        renderDecisionPools();
+        renderDecisionHits(decisionShowingToday, decisionResults.length);
+        updateDecisionActionState();
+    }
+}
+
+function updateDecisionActionState() {
+    const symbol = selectedDecisionResult?.symbol || '';
+    const watchButton = document.getElementById('decisionWatchButton');
+    const excludeButton = document.getElementById('decisionExcludeButton');
+    const removeButton = document.getElementById('decisionRemoveButton');
+    const inWatch = symbolInPool(symbol, 'watchlist');
+    const inExclude = symbolInPool(symbol, 'exclude');
+    if (watchButton) {
+        watchButton.disabled = !symbol || inWatch;
+        watchButton.textContent = inWatch ? '已在观察' : '加入观察';
+    }
+    if (excludeButton) {
+        excludeButton.disabled = !symbol || inExclude;
+        excludeButton.textContent = inExclude ? '已排除' : '排除';
+    }
+    if (removeButton) {
+        removeButton.disabled = !symbol || (!inWatch && !inExclude);
+    }
+}
+
+function reviewItemBySymbol(symbol) {
+    const normalized = normalizeSymbol(symbol);
+    return reviewItems.find(item => normalizeSymbol(item.result?.symbol || item.note?.symbol) === normalized);
+}
+
+function decisionStatusInfo(symbol, review) {
+    const status = review?.status || review?.note?.status || '';
+    const inWatch = review?.watch || symbolInPool(symbol, 'watchlist') || status === 'watch';
+    const inExclude = review?.excluded || symbolInPool(symbol, 'exclude') || status === 'exclude';
+    if (inExclude) return { label: '已排除', className: 'excluded' };
+    if (inWatch) return { label: '观察中', className: 'watched' };
+    return { label: '待处理', className: 'pending' };
+}
+
+function renderScoreGrid(score = {}) {
+    const items = [
+        ['总分', score.total],
+        ['趋势', score.trend],
+        ['量能', score.volume],
+        ['位置', score.place],
+        ['风险', score.risk]
+    ];
+    return items.map(([label, value]) => `
+        <div class="score-item ${label === '总分' ? 'score-item-total' : ''}">
+            <span>${escapeHTML(label)}</span>
+            <strong>${value ? escapeHTML(value) : '--'}</strong>
+        </div>
+    `).join('');
+}
+
+function renderTrackPanel(track = {}) {
+    if (!track || !track.available) {
+        return `<div class="track-empty">${escapeHTML(track?.summary || '暂无次日跟踪')}</div>`;
+    }
+    const rows = [
+        ['日期', track.date],
+        ['开盘', formatPercent(track.open_change)],
+        ['最高', formatPercent(track.max_gain)],
+        ['回撤', formatPercent(track.drawdown)],
+        ['收盘', formatPercent(track.close_change)]
+    ];
+    return `
+        <div class="track-title">${escapeHTML(track.summary || '次日跟踪')}</div>
+        <div class="track-grid">
+            ${rows.map(([label, value]) => `
+                <div>
+                    <span>${escapeHTML(label)}</span>
+                    <strong>${escapeHTML(value)}</strong>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function fillDecisionNoteForm(note = {}) {
+    const fields = {
+        decisionAddedPrice: note.added_price,
+        decisionPlanBuy: note.plan_buy,
+        decisionStopLoss: note.stop_loss,
+        decisionAddReason: note.add_reason || '',
+        decisionReviewNote: note.review_note || '',
+        decisionExcludeCategory: note.exclude_category || '',
+        decisionExcludeReason: note.exclude_reason || ''
+    };
+    Object.entries(fields).forEach(([id, value]) => {
+        const node = document.getElementById(id);
+        if (!node) return;
+        node.value = value && value !== 0 ? value : '';
+    });
+}
+
+function numberInputValue(id) {
+    const value = document.getElementById(id)?.value;
+    if (value === undefined || value === null || value === '') return 0;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+}
+
+async function upsertDecisionNote(notePatch) {
+    const symbol = normalizeSymbol(notePatch.symbol);
+    if (!symbol) return null;
+    const current = reviewItemBySymbol(symbol)?.note || selectedReviewItem?.note || {};
+    const payload = {
+        ...current,
+        ...notePatch,
+        symbol
+    };
+    return apiFetch(`/api/decision-notes/${encodeURIComponent(symbol)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+    });
+}
+
+async function saveDecisionNoteFromForm() {
+    if (!selectedDecisionResult?.symbol) return;
+    try {
+        const symbol = normalizeSymbol(selectedDecisionResult.symbol);
+        const statusInfo = decisionStatusInfo(symbol, selectedReviewItem);
+        const status = statusInfo.className === 'watched' ? 'watch' : (statusInfo.className === 'excluded' ? 'exclude' : (selectedReviewItem?.note?.status || ''));
+        await upsertDecisionNote({
+            symbol,
+            status,
+            added_price: numberInputValue('decisionAddedPrice'),
+            plan_buy: numberInputValue('decisionPlanBuy'),
+            stop_loss: numberInputValue('decisionStopLoss'),
+            add_reason: document.getElementById('decisionAddReason')?.value || '',
+            review_note: document.getElementById('decisionReviewNote')?.value || '',
+            exclude_category: document.getElementById('decisionExcludeCategory')?.value || '',
+            exclude_reason: document.getElementById('decisionExcludeReason')?.value || ''
+        });
+        await loadDecisionResults();
+        selectedReviewItem = reviewItemBySymbol(symbol);
+        renderDecisionDetail(selectedDecisionResult);
+        renderDecisionHits(decisionShowingToday, decisionResults.length);
+        renderDailyReview(dailyReview);
+        alert('记录已保存');
+    } catch (error) {
+        alert(error.message || error);
+    }
+}
+
+async function loadDailyReview() {
+    const summary = document.getElementById('dailyReviewSummary');
+    if (summary) summary.textContent = '加载中';
+    setLoadingText('dailyReviewList', '正在加载复盘数据...');
+    try {
+        if (!pools.length) await loadPools();
+        dailyReview = await apiFetch('/api/daily-review?limit=200') || {};
+        reviewItems = dailyReview.items || [];
+        renderDailyReview(dailyReview);
+    } catch (error) {
+        if (summary) summary.textContent = '加载失败';
+        setErrorText('dailyReviewList', error);
+    }
+}
+
+function renderDailyReview(data = {}) {
+    const summary = document.getElementById('dailyReviewSummary');
+    const list = document.getElementById('dailyReviewList');
+    if (!list) return;
+    const items = data.items || [];
+    const info = data.summary || {};
+    if (summary) {
+        summary.textContent = `${escapeHTML(data.date || localDateString())} · 命中 ${info.hits || 0} 只 · 已处理 ${info.handled_count || 0} 只`;
+    }
+    renderMetricCards('dailyReviewMetrics', [
+        { label: '今日命中', value: info.hits || 0, note: '最近一次选股结果' },
+        { label: '已处理', value: info.handled_count || 0, note: '观察、排除或已记录' },
+        { label: '观察池', value: info.watch_count || 0, note: '当前跟踪标的' },
+        { label: '排除池', value: info.exclude_count || 0, note: '今日不再跟踪' },
+        { label: '平均评分', value: info.avg_score || '--', note: '趋势/量能/位置/风险' },
+        { label: '次日胜率', value: info.tracked_count ? formatPercent(info.win_rate) : '--', note: `${info.tracked_count || 0} 只已跟踪` },
+        { label: '平均收盘', value: info.tracked_count ? formatPercent(info.avg_close_change) : '--', note: '次日收盘表现' }
+    ]);
+    list.innerHTML = items.map(item => renderReviewCard(item)).join('') || '<div class="data-item">暂无复盘数据</div>';
+}
+
+function renderReviewCard(item) {
+    const result = item.result || {};
+    const statusInfo = decisionStatusInfo(result.symbol, item);
+    const note = item.note || {};
+    const reason = note.exclude_reason || note.add_reason || note.review_note || '暂无记录';
+    return `
+        <div class="data-item daily-review-card">
+            <div class="review-card-head">
+                <div>
+                    <div class="result-symbol">${escapeHTML(result.symbol || '--')}</div>
+                    <div class="data-item-meta">${escapeHTML(result.formula_name || '--')} · ${escapeHTML(result.task_name || '--')}</div>
+                </div>
+                <span class="review-status ${statusInfo.className}">${escapeHTML(statusInfo.label)}</span>
+            </div>
+            <div class="score-grid">${renderScoreGrid(item.score)}</div>
+            <div class="track-panel">${renderTrackPanel(item.track)}</div>
+            <div class="data-item-meta">记录：${escapeHTML(reason)}</div>
+            <div class="item-actions">
+                <button class="primary" onclick="selectReviewItem('${escapeJSString(result.id || '')}')">查看</button>
+                <button onclick="addSymbolToPool('watchlist', '${escapeJSString(result.symbol || '')}')">观察</button>
+                <button onclick="addSymbolToPool('exclude', '${escapeJSString(result.symbol || '')}')">排除</button>
+            </div>
+        </div>
+    `;
+}
+
+async function selectReviewItem(id) {
+    const review = reviewItems.find(item => item.result?.id === id);
+    if (!review?.result) return;
+    switchWorkspace('market', document.querySelectorAll('.workspace-tab')[0]);
+    await selectDecisionResult(review.result.id);
+}
+
+function formatPercent(value) {
+    if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '--';
+    const num = Number(value);
+    return `${num > 0 ? '+' : ''}${num.toFixed(2)}%`;
+}
+
+function formatDecisionTime(value) {
+    if (!value) return '--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString('zh-CN', { hour12: false });
 }
 
 function openResultChart(symbol) {
@@ -1414,51 +1839,156 @@ async function loadHQChart() {
     try {
         const symbol = document.getElementById('hqSymbol').value || '000001';
         const period = document.getElementById('hqPeriod').value;
-        if (window.TDXHQChart && window.TDXHQChart.renderKLine(document.getElementById('hqChart'), { symbol, period })) {
-            return;
-        }
-        const data = await apiFetch(`/api/hqchart/kline?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&limit=500`);
-        drawHQChart(data.data || []);
+        currentHQOverlay = null;
+        updateHQOverlayStatus('未叠加公式');
+        renderHQKLine('hqChart', symbol, period, { count: 800, pageSize: 80 });
+        refreshHQFormulaWindowOptions();
     } catch (error) {
-        try {
-            const symbol = document.getElementById('hqSymbol').value || '000001';
-            const period = document.getElementById('hqPeriod').value;
-            const data = await apiFetch(`/api/hqchart/kline?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}&limit=500`);
-            drawHQChart(data.data || []);
-        } catch (fallbackError) {
-            alert(fallbackError.message || error.message);
-        }
+        alert(error.message || error);
     }
 }
 
-function drawHQChart(rows) {
-    const chartDom = document.getElementById('hqChart');
-    if (!hqChart) hqChart = echarts.init(chartDom);
-    const dates = rows.map(r => String(r.date));
-    const candles = rows.map(r => [r.open, r.close, r.low, r.high]);
-    const volume = rows.map(r => r.vol);
-    hqChart.setOption({
-        animation: false,
-        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-        grid: [
-            { left: '8%', right: '3%', top: '5%', height: '62%' },
-            { left: '8%', right: '3%', top: '76%', height: '14%' }
-        ],
-        xAxis: [
-            { type: 'category', data: dates, scale: true, boundaryGap: true },
-            { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false } }
-        ],
-        yAxis: [{ scale: true }, { scale: true, gridIndex: 1, axisLabel: { show: false } }],
-        dataZoom: [
-            { type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 },
-            { type: 'slider', xAxisIndex: [0, 1], top: '93%', start: 50, end: 100 }
-        ],
-        series: [
-            { name: 'K线', type: 'candlestick', data: candles, itemStyle: { color: '#d93026', color0: '#188038', borderColor: '#d93026', borderColor0: '#188038' } },
-            { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volume, itemStyle: { color: '#64748b' } }
-        ]
-    });
-    hqChart.resize();
+function updateHQOverlayStatus(text) {
+    const node = document.getElementById('hqOverlayStatus');
+    if (node) node.textContent = text;
+}
+
+window.updateHQOverlayStatus = updateHQOverlayStatus;
+
+function formulaResultForSymbol(resp, symbol) {
+    const data = resp?.data || {};
+    const normalized = normalizeSymbol(symbol);
+    return data[normalized] || data[normalized.toUpperCase()] || Object.values(data)[0] || {};
+}
+
+function getHQChartInstance() {
+    const container = document.getElementById('hqChart');
+    if (!window.TDXHQChart || !container) return null;
+    return window.TDXHQChart.getChart ? window.TDXHQChart.getChart(container) : null;
+}
+
+function getHQChartFrameCount(chart) {
+    return chart?.JSChartContainer?.Frame?.SubFrame?.length
+        || chart?.Frame?.SubFrame?.length
+        || 2;
+}
+
+function refreshHQFormulaWindowOptions() {
+    const select = document.getElementById('hqFormulaWindow');
+    if (!select) return;
+    const currentValue = select.value || '0';
+    const chart = getHQChartInstance();
+    const frameCount = getHQChartFrameCount(chart);
+    const count = Math.max(2, frameCount);
+    select.innerHTML = Array.from({ length: count }, (_, index) => {
+        const label = index === 0 ? '主图' : `副图${index}`;
+        return `<option value="${index}">${label}</option>`;
+    }).join('');
+    select.value = Number(currentValue) < count ? currentValue : '0';
+}
+
+function buildHQFormulaIndexInfo(formula) {
+    if (!formula?.script) {
+        throw new Error('公式脚本为空，无法应用');
+    }
+    return {
+        Name: formula.name || '自定义公式',
+        Script: formula.script,
+        Args: parseHQFormulaArgs(formula),
+        YAxis: {
+            ExcludeValue: !!document.getElementById('hqFormulaExcludeY')?.checked
+        }
+    };
+}
+
+function currentHQSymbolPeriod() {
+    const symbol = document.getElementById('hqSymbol').value || '000001';
+    const period = document.getElementById('hqPeriod').value;
+    return { symbol, period };
+}
+
+async function applySelectedFormulaToHQChart() {
+    const formula = selectedHQFormula();
+    if (!formula) {
+        alert('请先选择一个公式');
+        return;
+    }
+    try {
+        updateHQOverlayStatus('正在应用 HQChart 公式...');
+        const { symbol, period } = currentHQSymbolPeriod();
+        let chart = getHQChartInstance();
+        if (!chart) {
+            renderHQKLine('hqChart', symbol, period, { count: 800, pageSize: 80 });
+            refreshHQFormulaWindowOptions();
+            chart = getHQChartInstance();
+        }
+        if (!chart) throw new Error('HQChart 图表实例未就绪');
+
+        const mode = document.getElementById('hqFormulaApplyMode')?.value || 'overlay';
+        const windowIndex = Number(document.getElementById('hqFormulaWindow')?.value || 0);
+        const indexInfo = buildHQFormulaIndexInfo(formula);
+        const args = indexInfo.Args || [];
+        let appliedWindowIndex = windowIndex;
+
+        if (mode === 'change') {
+            if (typeof chart.ChangeScriptIndex !== 'function') throw new Error('当前 HQChart 版本不支持 ChangeScriptIndex');
+            chart.ChangeScriptIndex(windowIndex, indexInfo);
+        } else if (mode === 'new-window') {
+            if (typeof chart.AddScriptIndexWindow !== 'function') throw new Error('当前 HQChart 版本不支持 AddScriptIndexWindow');
+            chart.AddScriptIndexWindow(indexInfo, { Draw: true });
+            refreshHQFormulaWindowOptions();
+            appliedWindowIndex = Math.max(1, getHQChartFrameCount(chart) - 1);
+        } else {
+            if (typeof chart.AddOverlayIndex !== 'function') throw new Error('当前 HQChart 版本不支持 AddOverlayIndex');
+            const independentY = !!document.getElementById('hqFormulaIndependentY')?.checked;
+            const option = {
+                Script: indexInfo.Script,
+                WindowIndex: windowIndex,
+                Name: indexInfo.Name,
+                Args: args,
+                IsShareY: !independentY
+            };
+            if (option.IsShareY) option.YAxis = indexInfo.YAxis;
+            chart.AddOverlayIndex(option);
+        }
+
+        const resp = await apiFetch(`/api/formulas/${formula.id}/test`, {
+            method: 'POST',
+            body: JSON.stringify({
+                symbol,
+                period,
+                calc_count: 500,
+                out_count: 120
+            })
+        });
+        const result = formulaResultForSymbol(resp, symbol);
+        currentHQOverlay = {
+            formulaID: formula.id,
+            name: formula?.name || '公式',
+            mode,
+            windowIndex: appliedWindowIndex,
+            engine: resp.engine || '',
+            tickMS: resp.tick_ms || 0
+        };
+        document.getElementById('formulaTestOutput').textContent = prettyJSON(resp);
+        const modeLabel = mode === 'change' ? '切换窗口' : (mode === 'new-window' ? '新建副图' : '叠加指标');
+        const windowLabel = appliedWindowIndex === 0 ? '主图' : `副图${appliedWindowIndex}`;
+        updateHQOverlayStatus(`已用 HQChart ${modeLabel}：${currentHQOverlay.name} · ${windowLabel} · ${result.hit ? '命中' : '未命中'} · ${currentHQOverlay.engine || 'engine'} ${currentHQOverlay.tickMS}ms`);
+    } catch (error) {
+        updateHQOverlayStatus(`应用失败：${error.message || error}`);
+        alert(error.message || error);
+    }
+}
+
+async function overlaySelectedFormulaOnHQChart() {
+    await applySelectedFormulaToHQChart();
+}
+
+function clearHQFormulaOverlay() {
+    currentHQOverlay = null;
+    const { symbol, period } = currentHQSymbolPeriod();
+    renderHQKLine('hqChart', symbol, period, { count: 800, pageSize: 80 });
+    updateHQOverlayStatus('未叠加公式');
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1472,6 +2002,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadAutomations();
         await loadRuns();
         await loadSelectionResults();
+        await refreshDecisionDesk();
         await loadHQChart();
     } catch (error) {
         console.warn('初始化自动化页面失败:', error);
