@@ -899,11 +899,23 @@ async function loadFactors() {
             <div class="data-item-title">${escapeHTML(factor.name)} <span class="tag">${escapeHTML(factor.kind)}</span></div>
             <div class="data-item-meta">${escapeHTML(factor.id)} · ${escapeHTML(factor.description)}</div>
             <div class="factor-param-list">${(factor.params || []).map(p => `<span>${escapeHTML(p.label)}=${escapeHTML(compactValue(p.default))}</span>`).join('')}</div>
-            <div class="item-actions">
-                <button onclick="appendStrategyFactor('${escapeJSString(factor.id)}')">加入配置</button>
-            </div>
+            <div class="data-item-meta">${escapeHTML(strategyFactorEditHint(factor.id))}</div>
         </div>
     `).join('') || '<div class="data-item">暂无因子</div>';
+}
+
+function strategyFactorEditHint(factorID) {
+    const map = {
+        pool_exclude: '在“硬过滤条件 / 排除股票池”里勾选并选择股票池。',
+        min_amount: '在“硬过滤条件 / 最低成交额”里勾选并输入金额。',
+        price_range: '在“硬过滤条件 / 收盘价区间”里勾选并输入最低价、最高价。',
+        change_range: '在“硬过滤条件 / 涨跌幅区间”里勾选并输入百分比范围。',
+        ma_trend: '在“评分条件 / 均线多头”里勾选并设置均线和权重。',
+        volume_up: '在“评分条件 / 阶段放量”里勾选并设置天数、倍数和权重。',
+        break_high: '在“评分条件 / 突破新高”里勾选并设置回看天数和权重。',
+        formula: '在“评分条件 / 公式因子”里勾选并选择公式。'
+    };
+    return map[factorID] || '在策略编辑区勾选并调整参数。';
 }
 
 function renderStrategyList() {
@@ -958,6 +970,253 @@ function defaultStrategyConfig() {
     };
 }
 
+function strategyRule(cfg, factor) {
+    return [...(cfg.filters || []), ...(cfg.scores || [])].find(rule => rule.factor === factor) || null;
+}
+
+function poolOptionsHTML(selectedID) {
+    return pools.map(pool => `<option value="${escapeHTML(pool.id)}" ${pool.id === selectedID ? 'selected' : ''}>${escapeHTML(pool.name)}（${(pool.symbols || []).length}只）</option>`).join('');
+}
+
+function poolPreviewHTML(poolID) {
+    const pool = pools.find(item => item.id === poolID);
+    if (!pool) return '<div class="strategy-pool-preview">未找到这个股票池</div>';
+    const symbols = pool.symbols || [];
+    return `<div class="strategy-pool-preview">${escapeHTML(pool.name)}：${symbols.length ? escapeHTML(symbols.slice(0, 18).join(', ')) : '暂无股票'}${symbols.length > 18 ? ' ...' : ''}</div>`;
+}
+
+function renderStrategyVisualEditor(cfg = {}) {
+    const box = document.getElementById('strategyVisualEditor');
+    if (!box) return;
+    const exclude = strategyRule(cfg, 'pool_exclude');
+    const minAmount = strategyRule(cfg, 'min_amount');
+    const priceRange = strategyRule(cfg, 'price_range');
+    const changeRange = strategyRule(cfg, 'change_range');
+    const maTrend = strategyRule(cfg, 'ma_trend');
+    const volumeUp = strategyRule(cfg, 'volume_up');
+    const breakHigh = strategyRule(cfg, 'break_high');
+    const formulaRule = strategyRule(cfg, 'formula');
+    const universe = cfg.universe || 'pool';
+    const poolID = cfg.pool_id || 'watchlist';
+    const excludePoolID = exclude?.params?.pool_id || 'exclude';
+    const formulaID = formulaRule?.params?.formula_id || '';
+    const formulaName = formulaRule?.params?.formula_name || '';
+    const selectedFormula = formulas.find(item => item.id === formulaID || item.name === formulaName);
+
+    box.innerHTML = `
+        <div class="strategy-section">
+            <div class="strategy-section-head">
+                <strong>选股范围</strong>
+                <span>先决定从哪些股票里选</span>
+            </div>
+            <div class="strategy-field-grid">
+                <label>范围类型
+                    <select id="strategyUniverse" onchange="handleStrategyUniverseChange()">
+                        <option value="pool" ${universe === 'pool' || universe === '' ? 'selected' : ''}>股票池</option>
+                        <option value="symbols" ${universe === 'symbols' ? 'selected' : ''}>手动输入股票</option>
+                        <option value="all_a" ${universe === 'all_a' || universe === 'all' ? 'selected' : ''}>全市场A股</option>
+                    </select>
+                </label>
+                <label id="strategyPoolField">股票池
+                    <select id="strategyPoolID" onchange="updateStrategyPoolPreviews()">${poolOptionsHTML(poolID)}</select>
+                </label>
+            </div>
+            <textarea id="strategySymbolsInput" rows="3" placeholder="手动输入股票代码，例如 000001, 600000">${escapeHTML((cfg.symbols || []).join('\n'))}</textarea>
+            <div id="strategyUniversePreview">${poolPreviewHTML(poolID)}</div>
+        </div>
+
+        <div class="strategy-section">
+            <div class="strategy-section-head">
+                <strong>硬过滤条件</strong>
+                <span>不满足这些条件的股票直接淘汰</span>
+            </div>
+            ${renderStrategyCheckRow('filterExcludePool', '排除股票池', !!exclude, `
+                <label>排除哪个池
+                    <select id="filterExcludePoolID" onchange="updateStrategyPoolPreviews()">${poolOptionsHTML(excludePoolID)}</select>
+                </label>
+                <div id="strategyExcludePreview">${poolPreviewHTML(excludePoolID)}</div>
+            `)}
+            ${renderStrategyCheckRow('filterMinAmount', '最低成交额', !!minAmount, `
+                <label>成交额不低于
+                    <input id="filterMinAmountValue" type="number" value="${Number(minAmount?.params?.value ?? 100000000)}" min="0" step="1000000">
+                </label>
+            `)}
+            ${renderStrategyCheckRow('filterPriceRange', '收盘价区间', !!priceRange, `
+                <label>最低价<input id="filterPriceMin" type="number" value="${Number(priceRange?.params?.min ?? 0)}" min="0" step="0.01"></label>
+                <label>最高价<input id="filterPriceMax" type="number" value="${Number(priceRange?.params?.max ?? 9999)}" min="0" step="0.01"></label>
+            `)}
+            ${renderStrategyCheckRow('filterChangeRange', '涨跌幅区间', !!changeRange, `
+                <label>最小涨跌幅 %<input id="filterChangeMin" type="number" value="${Number(changeRange?.params?.min ?? -10)}" step="0.1"></label>
+                <label>最大涨跌幅 %<input id="filterChangeMax" type="number" value="${Number(changeRange?.params?.max ?? 10)}" step="0.1"></label>
+            `)}
+        </div>
+
+        <div class="strategy-section">
+            <div class="strategy-section-head">
+                <strong>评分条件</strong>
+                <span>命中条件后按权重加分</span>
+            </div>
+            ${renderStrategyCheckRow('scoreMaTrend', '均线多头', !!maTrend, `
+                ${weightInput('scoreMaTrendWeight', maTrend?.weight ?? 20)}
+                <label>短均线<input id="scoreMaShort" type="number" value="${Number(maTrend?.params?.short ?? 5)}" min="1"></label>
+                <label>中均线<input id="scoreMaMid" type="number" value="${Number(maTrend?.params?.mid ?? 10)}" min="1"></label>
+                <label>长均线<input id="scoreMaLong" type="number" value="${Number(maTrend?.params?.long ?? 20)}" min="1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreVolumeUp', '阶段放量', !!volumeUp, `
+                ${weightInput('scoreVolumeWeight', volumeUp?.weight ?? 15)}
+                <label>对比天数<input id="scoreVolumeDays" type="number" value="${Number(volumeUp?.params?.days ?? 5)}" min="1"></label>
+                <label>放量倍数<input id="scoreVolumeRatio" type="number" value="${Number(volumeUp?.params?.ratio ?? 1.3)}" min="0" step="0.1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreBreakHigh', '突破新高', !!breakHigh, `
+                ${weightInput('scoreBreakWeight', breakHigh?.weight ?? 15)}
+                <label>回看天数<input id="scoreBreakDays" type="number" value="${Number(breakHigh?.params?.days ?? 20)}" min="1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreFormula', '公式因子', !!formulaRule, `
+                ${weightInput('scoreFormulaWeight', formulaRule?.weight ?? 30)}
+                <label>选择公式
+                    <select id="scoreFormulaID">
+                        <option value="">按公式名称匹配：${escapeHTML(formulaName || '未选择')}</option>
+                        ${formulas.map(item => `<option value="${item.id}" ${selectedFormula?.id === item.id ? 'selected' : ''}>${escapeHTML(item.name)}</option>`).join('')}
+                    </select>
+                </label>
+            `)}
+        </div>
+
+        <div class="strategy-section">
+            <div class="strategy-section-head">
+                <strong>通过规则</strong>
+                <span>最后按总分筛选</span>
+            </div>
+            <div class="strategy-field-grid">
+                <label>最低分
+                    <input id="strategyMinScore" type="number" value="${Number(cfg.pass?.min_score ?? 60)}" min="0" step="1">
+                </label>
+                <label>最多保留
+                    <input id="strategyTopN" type="number" value="${Number(cfg.pass?.top_n ?? 50)}" min="1" step="1">
+                </label>
+                <label>计算K线数量
+                    <input id="strategyCalcCount" type="number" value="${Number(cfg.calc_count ?? 260)}" min="30" step="10">
+                </label>
+            </div>
+        </div>
+    `;
+    handleStrategyUniverseChange();
+}
+
+function renderStrategyCheckRow(id, title, checked, body) {
+    return `
+        <div class="strategy-rule-row">
+            <label class="check-line strategy-rule-toggle"><input id="${id}" type="checkbox" ${checked ? 'checked' : ''}> ${title}</label>
+            <div class="strategy-rule-body">${body}</div>
+        </div>
+    `;
+}
+
+function weightInput(id, value) {
+    return `<label>权重<input id="${id}" type="number" value="${Number(value)}" min="0" step="1"></label>`;
+}
+
+function handleStrategyUniverseChange() {
+    const universe = document.getElementById('strategyUniverse')?.value || 'pool';
+    const poolField = document.getElementById('strategyPoolField');
+    const symbols = document.getElementById('strategySymbolsInput');
+    if (poolField) poolField.style.display = universe === 'pool' ? 'block' : 'none';
+    if (symbols) symbols.style.display = universe === 'symbols' ? 'block' : 'none';
+    updateStrategyPoolPreviews();
+}
+
+function updateStrategyPoolPreviews() {
+    const universePreview = document.getElementById('strategyUniversePreview');
+    const excludePreview = document.getElementById('strategyExcludePreview');
+    const universe = document.getElementById('strategyUniverse')?.value || 'pool';
+    const poolID = document.getElementById('strategyPoolID')?.value || 'watchlist';
+    const excludePoolID = document.getElementById('filterExcludePoolID')?.value || 'exclude';
+    if (universePreview) {
+        if (universe === 'symbols') {
+            const symbols = (document.getElementById('strategySymbolsInput')?.value || '').split(/[\s,，]+/).filter(Boolean);
+            universePreview.innerHTML = `<div class="strategy-pool-preview">手动输入：${symbols.length} 只股票${symbols.length ? `，${escapeHTML(symbols.slice(0, 18).join(', '))}` : ''}</div>`;
+        } else if (universe === 'all_a') {
+            universePreview.innerHTML = '<div class="strategy-pool-preview">全市场A股：首版运行时会限制部分代码，避免一次任务过慢。</div>';
+        } else {
+            universePreview.innerHTML = poolPreviewHTML(poolID);
+        }
+    }
+    if (excludePreview) excludePreview.innerHTML = poolPreviewHTML(excludePoolID);
+}
+
+function renderStrategyVisualFromJSON() {
+    try {
+        renderStrategyVisualEditor(JSON.parse(document.getElementById('strategyConfig').value || '{}'));
+    } catch (error) {
+        alert('配置不是有效JSON：' + error.message);
+    }
+}
+
+function syncStrategyFormToJSON() {
+    const cfg = collectStrategyVisualConfig();
+    document.getElementById('strategyConfig').value = prettyJSON(cfg);
+    return cfg;
+}
+
+function collectStrategyVisualConfig() {
+    const universe = document.getElementById('strategyUniverse')?.value || 'pool';
+    const cfg = {
+        universe,
+        period: 'day',
+        calc_count: numberFromInput('strategyCalcCount', 260),
+        batch_size: 50,
+        continue_on_error: true,
+        filters: [],
+        scores: [],
+        pass: {
+            min_score: numberFromInput('strategyMinScore', 60),
+            top_n: numberFromInput('strategyTopN', 50)
+        }
+    };
+    if (universe === 'pool') {
+        cfg.pool_id = document.getElementById('strategyPoolID')?.value || 'watchlist';
+    }
+    if (universe === 'symbols') {
+        cfg.symbols = (document.getElementById('strategySymbolsInput')?.value || '').split(/[\s,，]+/).filter(Boolean);
+    }
+    if (checked('filterExcludePool')) {
+        cfg.filters.push({ id: 'exclude_pool', factor: 'pool_exclude', params: { pool_id: document.getElementById('filterExcludePoolID')?.value || 'exclude' } });
+    }
+    if (checked('filterMinAmount')) {
+        cfg.filters.push({ id: 'min_amount', factor: 'min_amount', params: { value: numberFromInput('filterMinAmountValue', 100000000) } });
+    }
+    if (checked('filterPriceRange')) {
+        cfg.filters.push({ id: 'price_range', factor: 'price_range', params: { min: numberFromInput('filterPriceMin', 0), max: numberFromInput('filterPriceMax', 9999) } });
+    }
+    if (checked('filterChangeRange')) {
+        cfg.filters.push({ id: 'change_range', factor: 'change_range', params: { min: numberFromInput('filterChangeMin', -10), max: numberFromInput('filterChangeMax', 10) } });
+    }
+    if (checked('scoreMaTrend')) {
+        cfg.scores.push({ id: 'ma_trend', factor: 'ma_trend', weight: numberFromInput('scoreMaTrendWeight', 20), params: { short: numberFromInput('scoreMaShort', 5), mid: numberFromInput('scoreMaMid', 10), long: numberFromInput('scoreMaLong', 20) } });
+    }
+    if (checked('scoreVolumeUp')) {
+        cfg.scores.push({ id: 'volume_up', factor: 'volume_up', weight: numberFromInput('scoreVolumeWeight', 15), params: { days: numberFromInput('scoreVolumeDays', 5), ratio: numberFromInput('scoreVolumeRatio', 1.3) } });
+    }
+    if (checked('scoreBreakHigh')) {
+        cfg.scores.push({ id: 'break_high', factor: 'break_high', weight: numberFromInput('scoreBreakWeight', 15), params: { days: numberFromInput('scoreBreakDays', 20) } });
+    }
+    if (checked('scoreFormula')) {
+        const formulaID = document.getElementById('scoreFormulaID')?.value || '';
+        const formula = formulas.find(item => item.id === formulaID);
+        cfg.scores.push({ id: 'main_formula', factor: 'formula', weight: numberFromInput('scoreFormulaWeight', 30), params: formulaID ? { formula_id: formulaID } : { formula_name: formula?.name || '主力拉升' } });
+    }
+    return cfg;
+}
+
+function checked(id) {
+    return !!document.getElementById(id)?.checked;
+}
+
+function numberFromInput(id, fallback) {
+    const value = Number(document.getElementById(id)?.value);
+    return Number.isFinite(value) ? value : fallback;
+}
+
 function newStrategy() {
     selectedStrategyID = '';
     document.getElementById('strategyName').dataset.id = '';
@@ -966,6 +1225,7 @@ function newStrategy() {
     document.getElementById('strategyDescription').value = '';
     document.getElementById('strategyEnabled').checked = true;
     document.getElementById('strategyConfig').value = prettyJSON(defaultStrategyConfig());
+    renderStrategyVisualEditor(defaultStrategyConfig());
     document.getElementById('strategyEditorHint').textContent = '新策略保存后可用于自动化任务';
     renderStrategyList();
 }
@@ -979,7 +1239,9 @@ function fillStrategy(id) {
     document.getElementById('strategyName').value = item.name || '';
     document.getElementById('strategyDescription').value = item.description || '';
     document.getElementById('strategyEnabled').checked = !!item.enabled;
-    document.getElementById('strategyConfig').value = prettyJSON(parseStrategyConfig(item.config_json));
+    const cfg = parseStrategyConfig(item.config_json);
+    document.getElementById('strategyConfig').value = prettyJSON(cfg);
+    renderStrategyVisualEditor(cfg);
     document.getElementById('strategyEditorHint').textContent = item.readonly ? '内置模板只读，请复制后修改' : '可保存后在自动化任务中选择';
     renderStrategyList();
 }
@@ -987,7 +1249,7 @@ function fillStrategy(id) {
 function currentStrategyPayload() {
     const id = document.getElementById('strategyName').dataset.id || '';
     const readonly = document.getElementById('strategyName').dataset.readonly === 'true';
-    const config = JSON.parse(document.getElementById('strategyConfig').value || '{}');
+    const config = syncStrategyFormToJSON();
     return {
         id,
         name: document.getElementById('strategyName').value,

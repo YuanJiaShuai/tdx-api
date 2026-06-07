@@ -1067,13 +1067,116 @@ textarea::placeholder {
     align-items: start;
 }
 
-.strategy-editor-card textarea#strategyConfig {
-    min-height: 520px;
-}
-
 .strategy-side {
     display: grid;
     gap: 16px;
+}
+
+.strategy-visual-editor {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.strategy-section {
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: #fbfdff;
+}
+
+.strategy-section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.strategy-section-head strong {
+    color: var(--ink);
+    font-size: 15px;
+}
+
+.strategy-section-head span {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.strategy-field-grid,
+.strategy-rule-body {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    align-items: start;
+}
+
+.strategy-section label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.strategy-section label input,
+.strategy-section label select {
+    margin-top: 5px;
+    margin-bottom: 0;
+}
+
+.strategy-rule-row {
+    display: grid;
+    gap: 8px;
+    padding: 10px 0;
+    border-top: 1px solid var(--line-soft);
+}
+
+.strategy-rule-row:first-of-type {
+    border-top: none;
+}
+
+.strategy-rule-toggle {
+    margin-bottom: 0;
+    color: var(--ink);
+    font-size: 14px;
+}
+
+.strategy-pool-preview {
+    grid-column: 1 / -1;
+    min-height: 36px;
+    padding: 8px 10px;
+    border: 1px dashed #cbd5e1;
+    border-radius: var(--radius);
+    background: #ffffff;
+    color: var(--text-secondary);
+    font-size: 12px;
+    word-break: break-word;
+}
+
+.advanced-json-panel {
+    margin-bottom: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: var(--panel-muted);
+}
+
+.advanced-json-panel summary {
+    padding: 10px 12px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 850;
+}
+
+.advanced-json-panel textarea {
+    min-height: 320px;
+    margin: 0;
+    border-right: none;
+    border-left: none;
+    border-radius: 0;
+}
+
+.advanced-json-panel .item-actions {
+    padding: 10px 12px;
 }
 
 .factor-param-list,

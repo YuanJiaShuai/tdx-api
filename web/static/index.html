@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票数据查询系统</title>
-    <link rel="stylesheet" href="style.css?v=strategy-center-mvp-20260607">
+    <link rel="stylesheet" href="style.css?v=strategy-visual-editor-20260607">
     <style>
         /* 确保图表容器占满宽度 */
         #klineChart, #minuteChart {
@@ -569,9 +569,17 @@
                         <label class="check-line inline-check"><input id="strategyEnabled" type="checkbox" checked> 启用策略</label>
                     </div>
                     <textarea id="strategyDescription" rows="2" placeholder="策略说明"></textarea>
-                    <textarea id="strategyConfig" rows="20" spellcheck="false" placeholder='{"universe":"pool","pool_id":"watchlist","filters":[],"scores":[]}'></textarea>
+                    <div id="strategyVisualEditor" class="strategy-visual-editor"></div>
+                    <details class="advanced-json-panel">
+                        <summary>高级 JSON 配置</summary>
+                        <textarea id="strategyConfig" rows="14" spellcheck="false" placeholder='{"universe":"pool","pool_id":"watchlist","filters":[],"scores":[]}'></textarea>
+                        <div class="item-actions">
+                            <button type="button" onclick="renderStrategyVisualFromJSON()">应用 JSON 到表单</button>
+                            <button type="button" onclick="syncStrategyFormToJSON()">同步表单到 JSON</button>
+                        </div>
+                    </details>
                     <div class="item-actions">
-                        <button class="btn-secondary" onclick="formatStrategyConfig()">格式化配置</button>
+                        <button class="btn-secondary" onclick="formatStrategyConfig()">格式化 JSON</button>
                         <button class="danger-light" onclick="deleteCurrentStrategy()">删除</button>
                     </div>
                 </div>
@@ -647,9 +655,9 @@
         </div>
     </div>
 
-    <script src="chart-shim.js?v=strategy-center-mvp-20260607"></script>
-    <script src="chartlib/umychart.min.js?v=strategy-center-mvp-20260607"></script>
-    <script src="chart-adapter.js?v=strategy-center-mvp-20260607"></script>
-    <script src="app.js?v=strategy-center-mvp-20260607"></script>
+    <script src="chart-shim.js?v=strategy-visual-editor-20260607"></script>
+    <script src="chartlib/umychart.min.js?v=strategy-visual-editor-20260607"></script>
+    <script src="chart-adapter.js?v=strategy-visual-editor-20260607"></script>
+    <script src="app.js?v=strategy-visual-editor-20260607"></script>
 </body>
 </html>
