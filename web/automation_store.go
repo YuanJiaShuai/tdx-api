@@ -38,6 +38,9 @@ type StockPool struct {
 	Name        string   `json:"name"`
 	Symbols     []string `json:"symbols"`
 	Description string   `json:"description"`
+	Category    string   `json:"category"`
+	System      bool     `json:"system"`
+	Readonly    bool     `json:"readonly"`
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
 }
@@ -327,7 +330,7 @@ func defaultStrategyTemplates() []Strategy {
 			ID:          "template-a-share-v3",
 			Name:        "A股V3强势启动",
 			Description: "内置模板：硬过滤成交额/排除池，使用趋势、放量、突破和主力拉升公式进行加权评分。",
-			ConfigJSON:  `{"universe":"pool","pool_id":"watchlist","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}}],"scores":[{"id":"ma_trend","factor":"ma_trend","weight":20,"params":{"short":5,"mid":10,"long":20}},{"id":"volume_up","factor":"volume_up","weight":15,"params":{"days":5,"ratio":1.3}},{"id":"break_high","factor":"break_high","weight":15,"params":{"days":20}},{"id":"main_force","factor":"formula","weight":30,"params":{"formula_name":"主力拉升"}}],"pass":{"min_score":60,"top_n":50}}`,
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}}],"scores":[{"id":"ma_trend","factor":"ma_trend","weight":20,"params":{"short":5,"mid":10,"long":20}},{"id":"volume_up","factor":"volume_up","weight":15,"params":{"days":5,"ratio":1.3}},{"id":"break_high","factor":"break_high","weight":15,"params":{"days":20}},{"id":"main_force","factor":"formula","weight":30,"params":{"formula_name":"主力拉升"}}],"pass":{"min_score":60,"top_n":50}}`,
 			Enabled:     true,
 			Readonly:    true,
 		},
@@ -344,6 +347,13 @@ func (s *AppStore) ensureStrategyTemplates() error {
 			(id,name,description,config_json,enabled,readonly,created_at,updated_at)
 			VALUES (?,?,?,?,?,?,?,?)`,
 			item.ID, item.Name, item.Description, item.ConfigJSON, boolInt(item.Enabled), boolInt(item.Readonly), now, now)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(`UPDATE strategies
+			SET name=?,description=?,config_json=?,enabled=?,readonly=1,updated_at=?
+			WHERE id=? AND readonly=1`,
+			item.Name, item.Description, item.ConfigJSON, boolInt(item.Enabled), now, item.ID)
 		if err != nil {
 			return err
 		}
@@ -521,13 +531,14 @@ func (s *AppStore) DeleteFormula(id string) error {
 }
 
 func (s *AppStore) ListStockPools() ([]StockPool, error) {
+	systemPools := listMarketStockPools()
 	rows, err := s.db.Query(`SELECT id,name,symbols_json,description,created_at,updated_at FROM stock_pools ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var list []StockPool
+	list := append([]StockPool{}, systemPools...)
 	for rows.Next() {
 		var pool StockPool
 		var symbols string
@@ -535,6 +546,11 @@ func (s *AppStore) ListStockPools() ([]StockPool, error) {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(symbols), &pool.Symbols)
+		pool.Category = "custom"
+		if pool.ID == DecisionWatchPoolID || pool.ID == DecisionExcludePoolID {
+			pool.Category = "decision"
+			pool.System = true
+		}
 		list = append(list, pool)
 	}
 	if list == nil {
@@ -544,15 +560,26 @@ func (s *AppStore) ListStockPools() ([]StockPool, error) {
 }
 
 func (s *AppStore) GetStockPool(id string) (StockPool, error) {
+	if pool, ok := getMarketStockPool(id); ok {
+		return pool, nil
+	}
 	var pool StockPool
 	var symbols string
 	err := s.db.QueryRow(`SELECT id,name,symbols_json,description,created_at,updated_at FROM stock_pools WHERE id=?`, id).
 		Scan(&pool.ID, &pool.Name, &symbols, &pool.Description, &pool.CreatedAt, &pool.UpdatedAt)
 	_ = json.Unmarshal([]byte(symbols), &pool.Symbols)
+	pool.Category = "custom"
+	if pool.ID == DecisionWatchPoolID || pool.ID == DecisionExcludePoolID {
+		pool.Category = "decision"
+		pool.System = true
+	}
 	return pool, err
 }
 
 func (s *AppStore) UpsertStockPool(pool StockPool) (StockPool, error) {
+	if isMarketPoolID(pool.ID) {
+		return pool, errors.New("系统市场分组不能编辑")
+	}
 	pool.Name = strings.TrimSpace(pool.Name)
 	if pool.Name == "" {
 		return pool, errors.New("股票池名称不能为空")
@@ -587,6 +614,9 @@ func (s *AppStore) UpsertStockPool(pool StockPool) (StockPool, error) {
 }
 
 func (s *AppStore) DeleteStockPool(id string) error {
+	if isMarketPoolID(id) {
+		return errors.New("系统市场分组不能删除")
+	}
 	if id == DecisionWatchPoolID || id == DecisionExcludePoolID {
 		return errors.New("系统股票池不能删除")
 	}
@@ -694,6 +724,9 @@ func (s *AppStore) CloneStrategy(id string) (Strategy, error) {
 }
 
 func (s *AppStore) AddStockPoolSymbol(id, symbol string) (StockPool, error) {
+	if isMarketPoolID(id) {
+		return StockPool{}, errors.New("系统市场分组不能手动增删股票")
+	}
 	pool, err := s.GetStockPool(id)
 	if err != nil {
 		return pool, err
@@ -704,6 +737,9 @@ func (s *AppStore) AddStockPoolSymbol(id, symbol string) (StockPool, error) {
 }
 
 func (s *AppStore) RemoveStockPoolSymbol(id, symbol string) (StockPool, error) {
+	if isMarketPoolID(id) {
+		return StockPool{}, errors.New("系统市场分组不能手动增删股票")
+	}
 	pool, err := s.GetStockPool(id)
 	if err != nil {
 		return pool, err

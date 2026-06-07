@@ -170,14 +170,22 @@ func (r *AutomationRunner) strategyUniverse(cfg StrategyConfig) ([]string, error
 	case "symbols":
 		return normalizeSymbols(cfg.Symbols), nil
 	case "all_a", "all":
-		maxCodes := 300
 		if len(cfg.Symbols) > 0 {
 			return normalizeSymbols(cfg.Symbols), nil
 		}
-		if tdxCodes := limitedSyncCodes(SystemSyncPayload{MaxCodes: maxCodes}); len(tdxCodes) > 0 {
-			return tdxCodes, nil
+		if symbols := limitedMarketPoolSymbols("market-all-a", strategyMaxCodes(cfg)); len(symbols) > 0 {
+			return symbols, nil
 		}
 		return nil, errors.New("全市场代码列表不可用")
+	case "market":
+		poolID := cfg.PoolID
+		if poolID == "" {
+			poolID = "market-all-a"
+		}
+		if symbols := limitedMarketPoolSymbols(poolID, strategyMaxCodes(cfg)); len(symbols) > 0 {
+			return symbols, nil
+		}
+		return nil, fmt.Errorf("市场分组代码列表不可用: %s", poolID)
 	case "", "pool":
 		poolID := cfg.PoolID
 		if poolID == "" {
@@ -191,6 +199,14 @@ func (r *AutomationRunner) strategyUniverse(cfg StrategyConfig) ([]string, error
 	default:
 		return nil, fmt.Errorf("未知策略股票范围: %s", cfg.Universe)
 	}
+}
+
+func strategyMaxCodes(cfg StrategyConfig) int {
+	maxCodes := 300
+	if cfg.BatchSize > 0 && cfg.BatchSize > maxCodes {
+		maxCodes = cfg.BatchSize
+	}
+	return maxCodes
 }
 
 func (r *AutomationRunner) prepareStrategyFormulas(ctx context.Context, result *StrategyRunResult, symbols []string) error {

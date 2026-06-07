@@ -829,19 +829,38 @@ function renderHQFormulaArgsSummary() {
 async function loadPools() {
     pools = await apiFetch('/api/stock-pools');
     const automationPool = document.getElementById('automationPool');
-    if (automationPool) automationPool.innerHTML = pools.map(p => `<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
+    if (automationPool) automationPool.innerHTML = customPools().map(p => `<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
     const poolList = document.getElementById('poolList');
     if (!poolList) return;
-    poolList.innerHTML = pools.map(p => `
+    const market = marketPools();
+    const custom = customPools();
+    poolList.innerHTML = `
+        ${market.length ? `<div class="data-list-title">系统市场分组</div>${market.map(renderPoolItem).join('')}` : ''}
+        ${custom.length ? `<div class="data-list-title">自定义股票池</div>${custom.map(renderPoolItem).join('')}` : ''}
+    ` || '<div class="data-item">暂无股票池</div>';
+}
+
+function marketPools() {
+    return pools.filter(pool => pool.category === 'market' || String(pool.id || '').startsWith('market-'));
+}
+
+function customPools() {
+    return pools.filter(pool => !(pool.category === 'market' || String(pool.id || '').startsWith('market-')));
+}
+
+function renderPoolItem(p) {
+    const readonly = p.readonly || p.category === 'market';
+    return `
         <div class="data-item">
-            <div class="data-item-title">${escapeHTML(p.name)}</div>
-            <div class="data-item-meta">${p.symbols.length} 只股票 · ${escapeHTML(p.symbols.join(', '))}</div>
-            <div class="item-actions">
+            <div class="data-item-title">${escapeHTML(p.name)}${readonly ? ' <span class="tag">系统分组</span>' : ''}</div>
+            <div class="data-item-meta">${(p.symbols || []).length} 只股票 · ${escapeHTML((p.symbols || []).slice(0, 24).join(', '))}${(p.symbols || []).length > 24 ? ' ...' : ''}</div>
+            ${p.description ? `<div class="data-item-meta">${escapeHTML(p.description)}</div>` : ''}
+            ${readonly ? '' : `<div class="item-actions">
                 <button onclick="fillPool('${p.id}')">编辑</button>
                 <button onclick="deletePool('${p.id}')">删除</button>
-            </div>
+            </div>`}
         </div>
-    `).join('') || '<div class="data-item">暂无股票池</div>';
+    `;
 }
 
 function fillPool(id) {
@@ -949,6 +968,10 @@ function strategyUniverseLabel(cfg = {}) {
     const universe = cfg.universe || 'pool';
     if (universe === 'symbols') return `自定义标的 ${(cfg.symbols || []).length} 只`;
     if (universe === 'all' || universe === 'all_a') return '全市场A股';
+    if (universe === 'market') {
+        const pool = pools.find(item => item.id === cfg.pool_id);
+        return `市场分组 ${pool?.name || cfg.pool_id || '全部A股'}`;
+    }
     return `股票池 ${cfg.pool_id || 'watchlist'}`;
 }
 
@@ -978,6 +1001,16 @@ function poolOptionsHTML(selectedID) {
     return pools.map(pool => `<option value="${escapeHTML(pool.id)}" ${pool.id === selectedID ? 'selected' : ''}>${escapeHTML(pool.name)}（${(pool.symbols || []).length}只）</option>`).join('');
 }
 
+function marketPoolOptionsHTML(selectedID) {
+    const items = marketPools();
+    return items.map(pool => `<option value="${escapeHTML(pool.id)}" ${pool.id === selectedID ? 'selected' : ''}>${escapeHTML(pool.name)}（${(pool.symbols || []).length}只）</option>`).join('');
+}
+
+function customPoolOptionsHTML(selectedID) {
+    const items = customPools();
+    return items.map(pool => `<option value="${escapeHTML(pool.id)}" ${pool.id === selectedID ? 'selected' : ''}>${escapeHTML(pool.name)}（${(pool.symbols || []).length}只）</option>`).join('');
+}
+
 function poolPreviewHTML(poolID) {
     const pool = pools.find(item => item.id === poolID);
     if (!pool) return '<div class="strategy-pool-preview">未找到这个股票池</div>';
@@ -997,7 +1030,7 @@ function renderStrategyVisualEditor(cfg = {}) {
     const breakHigh = strategyRule(cfg, 'break_high');
     const formulaRule = strategyRule(cfg, 'formula');
     const universe = cfg.universe || 'pool';
-    const poolID = cfg.pool_id || 'watchlist';
+    const poolID = cfg.pool_id || (universe === 'market' ? 'market-all-a' : 'watchlist');
     const excludePoolID = exclude?.params?.pool_id || 'exclude';
     const formulaID = formulaRule?.params?.formula_id || '';
     const formulaName = formulaRule?.params?.formula_name || '';
@@ -1013,12 +1046,16 @@ function renderStrategyVisualEditor(cfg = {}) {
                 <label>范围类型
                     <select id="strategyUniverse" onchange="handleStrategyUniverseChange()">
                         <option value="pool" ${universe === 'pool' || universe === '' ? 'selected' : ''}>股票池</option>
+                        <option value="market" ${universe === 'market' ? 'selected' : ''}>市场分组</option>
                         <option value="symbols" ${universe === 'symbols' ? 'selected' : ''}>手动输入股票</option>
                         <option value="all_a" ${universe === 'all_a' || universe === 'all' ? 'selected' : ''}>全市场A股</option>
                     </select>
                 </label>
-                <label id="strategyPoolField">股票池
-                    <select id="strategyPoolID" onchange="updateStrategyPoolPreviews()">${poolOptionsHTML(poolID)}</select>
+                <label id="strategyPoolField">自定义股票池
+                    <select id="strategyPoolID" onchange="updateStrategyPoolPreviews()">${customPoolOptionsHTML(poolID)}</select>
+                </label>
+                <label id="strategyMarketField">市场分组
+                    <select id="strategyMarketPoolID" onchange="updateStrategyPoolPreviews()">${marketPoolOptionsHTML(poolID)}</select>
                 </label>
             </div>
             <textarea id="strategySymbolsInput" rows="3" placeholder="手动输入股票代码，例如 000001, 600000">${escapeHTML((cfg.symbols || []).join('\n'))}</textarea>
@@ -1119,8 +1156,10 @@ function weightInput(id, value) {
 function handleStrategyUniverseChange() {
     const universe = document.getElementById('strategyUniverse')?.value || 'pool';
     const poolField = document.getElementById('strategyPoolField');
+    const marketField = document.getElementById('strategyMarketField');
     const symbols = document.getElementById('strategySymbolsInput');
     if (poolField) poolField.style.display = universe === 'pool' ? 'block' : 'none';
+    if (marketField) marketField.style.display = universe === 'market' ? 'block' : 'none';
     if (symbols) symbols.style.display = universe === 'symbols' ? 'block' : 'none';
     updateStrategyPoolPreviews();
 }
@@ -1130,11 +1169,14 @@ function updateStrategyPoolPreviews() {
     const excludePreview = document.getElementById('strategyExcludePreview');
     const universe = document.getElementById('strategyUniverse')?.value || 'pool';
     const poolID = document.getElementById('strategyPoolID')?.value || 'watchlist';
+    const marketPoolID = document.getElementById('strategyMarketPoolID')?.value || 'market-all-a';
     const excludePoolID = document.getElementById('filterExcludePoolID')?.value || 'exclude';
     if (universePreview) {
         if (universe === 'symbols') {
             const symbols = (document.getElementById('strategySymbolsInput')?.value || '').split(/[\s,，]+/).filter(Boolean);
             universePreview.innerHTML = `<div class="strategy-pool-preview">手动输入：${symbols.length} 只股票${symbols.length ? `，${escapeHTML(symbols.slice(0, 18).join(', '))}` : ''}</div>`;
+        } else if (universe === 'market') {
+            universePreview.innerHTML = poolPreviewHTML(marketPoolID);
         } else if (universe === 'all_a') {
             universePreview.innerHTML = '<div class="strategy-pool-preview">全市场A股：首版运行时会限制部分代码，避免一次任务过慢。</div>';
         } else {
@@ -1175,6 +1217,9 @@ function collectStrategyVisualConfig() {
     };
     if (universe === 'pool') {
         cfg.pool_id = document.getElementById('strategyPoolID')?.value || 'watchlist';
+    }
+    if (universe === 'market') {
+        cfg.pool_id = document.getElementById('strategyMarketPoolID')?.value || 'market-all-a';
     }
     if (universe === 'symbols') {
         cfg.symbols = (document.getElementById('strategySymbolsInput')?.value || '').split(/[\s,，]+/).filter(Boolean);

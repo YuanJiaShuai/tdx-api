@@ -1032,6 +1032,19 @@ textarea::placeholder {
     overflow: auto;
 }
 
+.data-list-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 7px 8px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: var(--panel-muted);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 850;
+}
+
 .result-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
