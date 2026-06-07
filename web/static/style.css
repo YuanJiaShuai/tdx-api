@@ -1073,6 +1073,49 @@ textarea::placeholder {
     background: #f8fbff;
 }
 
+.strategy-run-mini {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.strategy-run-mini.running {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 10px;
+    color: var(--accent-strong);
+    font-weight: 800;
+}
+
+.mini-progress,
+.strategy-progress-bar {
+    grid-column: 1 / -1;
+    height: 7px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e5edf8;
+}
+
+.mini-progress i,
+.strategy-progress-bar i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), #22c55e);
+    transition: width 0.24s ease;
+}
+
+.strategy-editor-card.locked {
+    position: relative;
+}
+
+.strategy-editor-card.locked input,
+.strategy-editor-card.locked select,
+.strategy-editor-card.locked textarea,
+.strategy-editor-card.locked button {
+    cursor: not-allowed;
+}
+
 .strategy-form-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 140px;
@@ -1083,6 +1126,62 @@ textarea::placeholder {
 .strategy-side {
     display: grid;
     gap: 16px;
+}
+
+.strategy-run-summary {
+    border-left-color: var(--accent);
+}
+
+.strategy-run-summary.failed {
+    border-left-color: var(--danger-color);
+    background: var(--danger-soft);
+    color: var(--danger-color);
+}
+
+.strategy-run-summary.success {
+    border-left-color: var(--success-color);
+    background: var(--success-soft);
+}
+
+.strategy-progress-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.strategy-progress-head strong {
+    color: var(--ink);
+}
+
+.strategy-progress-head span {
+    color: var(--accent-strong);
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+}
+
+.strategy-step-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.strategy-step-list span {
+    padding: 3px 7px;
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+    background: #ffffff;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.strategy-step-list span.active {
+    border-color: #bfdbfe;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-weight: 800;
 }
 
 .strategy-visual-editor {

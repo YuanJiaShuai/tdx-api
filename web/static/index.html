@@ -559,9 +559,9 @@
                             <p class="card-subtitle" id="strategyEditorHint">选择策略后编辑配置</p>
                         </div>
                         <div class="item-actions compact-actions">
-                            <button class="primary" onclick="saveStrategy()">保存</button>
-                            <button onclick="cloneCurrentStrategy()">复制</button>
-                            <button onclick="runCurrentStrategy()">运行</button>
+                            <button id="strategySaveButton" class="primary" onclick="saveStrategy()">保存</button>
+                            <button id="strategyCloneButton" onclick="cloneCurrentStrategy()">复制</button>
+                            <button id="strategyRunButton" onclick="runCurrentStrategy()">运行</button>
                         </div>
                     </div>
                     <div class="strategy-form-grid">
@@ -574,13 +574,13 @@
                         <summary>高级 JSON 配置</summary>
                         <textarea id="strategyConfig" rows="14" spellcheck="false" placeholder='{"universe":"pool","pool_id":"watchlist","filters":[],"scores":[]}'></textarea>
                         <div class="item-actions">
-                            <button type="button" onclick="renderStrategyVisualFromJSON()">应用 JSON 到表单</button>
-                            <button type="button" onclick="syncStrategyFormToJSON()">同步表单到 JSON</button>
+                            <button id="strategyApplyJSONButton" type="button" onclick="renderStrategyVisualFromJSON()">应用 JSON 到表单</button>
+                            <button id="strategySyncJSONButton" type="button" onclick="syncStrategyFormToJSON()">同步表单到 JSON</button>
                         </div>
                     </details>
                     <div class="item-actions">
-                        <button class="btn-secondary" onclick="formatStrategyConfig()">格式化 JSON</button>
-                        <button class="danger-light" onclick="deleteCurrentStrategy()">删除</button>
+                        <button id="strategyFormatJSONButton" class="btn-secondary" onclick="formatStrategyConfig()">格式化 JSON</button>
+                        <button id="strategyDeleteButton" class="danger-light" onclick="deleteCurrentStrategy()">删除</button>
                     </div>
                 </div>
                 <div class="strategy-side">

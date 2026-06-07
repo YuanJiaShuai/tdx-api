@@ -15,6 +15,14 @@ let selectedDecisionResult = null;
 let selectedReviewItem = null;
 let decisionShowingToday = false;
 let selectedStrategyID = '';
+let strategyRunState = {
+    running: false,
+    strategyID: '',
+    stepIndex: 0,
+    timer: null,
+    message: '',
+    progress: 0
+};
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -950,9 +958,23 @@ function renderStrategyList() {
                 <div class="data-item-title">${escapeHTML(item.name)}${item.readonly ? ' <span class="tag">内置模板</span>' : ''}</div>
                 <div class="data-item-meta">${escapeHTML(item.description || '暂无说明')}</div>
                 <div class="data-item-meta">${escapeHTML(strategyUniverseLabel(cfg))} · 过滤 ${filterCount} · 评分 ${scoreCount} · ${item.enabled ? '启用' : '停用'}</div>
+                ${renderStrategyRunStatus(item.id)}
             </div>
         `;
     }).join('') || '<div class="data-item">暂无策略</div>';
+}
+
+function renderStrategyRunStatus(strategyID) {
+    if (!strategyRunState.running || strategyRunState.strategyID !== strategyID) {
+        return '<div class="strategy-run-mini idle">空闲</div>';
+    }
+    return `
+        <div class="strategy-run-mini running">
+            <span>${escapeHTML(strategyRunState.message || '运行中')}</span>
+            <strong>${strategyRunState.progress}%</strong>
+            <div class="mini-progress"><i style="width:${strategyRunState.progress}%"></i></div>
+        </div>
+    `;
 }
 
 function parseStrategyConfig(raw) {
@@ -1263,6 +1285,7 @@ function numberFromInput(id, fallback) {
 }
 
 function newStrategy() {
+    if (strategyRunState.running) return;
     selectedStrategyID = '';
     document.getElementById('strategyName').dataset.id = '';
     document.getElementById('strategyName').dataset.readonly = 'false';
@@ -1276,6 +1299,7 @@ function newStrategy() {
 }
 
 function fillStrategy(id) {
+    if (strategyRunState.running) return;
     const item = strategies.find(v => v.id === id);
     if (!item) return;
     selectedStrategyID = id;
@@ -1314,6 +1338,7 @@ function formatStrategyConfig() {
 }
 
 async function saveStrategy() {
+    if (strategyRunState.running) return;
     try {
         const payload = currentStrategyPayload();
         if (payload.readonly) {
@@ -1334,6 +1359,7 @@ async function saveStrategy() {
 }
 
 async function cloneCurrentStrategy() {
+    if (strategyRunState.running) return;
     const id = document.getElementById('strategyName').dataset.id || selectedStrategyID;
     if (!id) {
         alert('请先选择一个策略');
@@ -1351,6 +1377,7 @@ async function cloneCurrentStrategy() {
 }
 
 async function deleteCurrentStrategy() {
+    if (strategyRunState.running) return;
     const id = document.getElementById('strategyName').dataset.id || selectedStrategyID;
     const readonly = document.getElementById('strategyName').dataset.readonly === 'true';
     if (!id) return;
@@ -1375,15 +1402,14 @@ async function runCurrentStrategy() {
         alert('请先保存或选择一个策略');
         return;
     }
-    const summary = document.getElementById('strategyRunSummary');
     const list = document.getElementById('strategyRunResults');
-    if (summary) summary.textContent = '运行中...';
+    startStrategyRunUI(id);
     if (list) list.innerHTML = '';
     try {
         const run = await apiFetch(`/api/strategies/${id}/run`, { method: 'POST' });
         const result = JSON.parse(run.result_json || '{}');
         const items = result.items || [];
-        if (summary) summary.innerHTML = `完成 · 扫描 ${result.total || 0} 只 · 命中 ${run.matched_count || items.length} 只`;
+        finishStrategyRunUI('success', `完成 · 扫描 ${result.total || 0} 只 · 命中 ${run.matched_count || items.length} 只`);
         if (list) {
             list.innerHTML = items.slice(0, 80).map(item => `
                 <div class="data-item">
@@ -1399,9 +1425,112 @@ async function runCurrentStrategy() {
         }
         await Promise.all([loadRuns(), loadSelectionResults()]);
     } catch (error) {
-        if (summary) summary.textContent = error.message;
+        finishStrategyRunUI('failed', error.message);
         alert(error.message);
     }
+}
+
+function startStrategyRunUI(strategyID) {
+    stopStrategyProgressTimer();
+    strategyRunState = {
+        running: true,
+        strategyID,
+        stepIndex: 0,
+        timer: null,
+        message: '准备数据',
+        progress: 8
+    };
+    setStrategyEditorLocked(true);
+    renderStrategyList();
+    renderStrategyProgressPanel();
+    strategyRunState.timer = setInterval(advanceStrategyRunStep, 1400);
+}
+
+function advanceStrategyRunStep() {
+    const steps = strategyProgressSteps();
+    if (!strategyRunState.running) return;
+    strategyRunState.stepIndex = Math.min(strategyRunState.stepIndex + 1, steps.length - 1);
+    const current = steps[strategyRunState.stepIndex];
+    strategyRunState.message = current.label;
+    strategyRunState.progress = current.progress;
+    renderStrategyList();
+    renderStrategyProgressPanel();
+}
+
+function finishStrategyRunUI(status, message) {
+    stopStrategyProgressTimer();
+    strategyRunState.running = false;
+    strategyRunState.message = message;
+    strategyRunState.progress = status === 'success' ? 100 : strategyRunState.progress;
+    setStrategyEditorLocked(false);
+    renderStrategyList();
+    const summary = document.getElementById('strategyRunSummary');
+    if (summary) {
+        summary.className = `data-item strategy-run-summary ${status}`;
+        summary.innerHTML = escapeHTML(message || (status === 'success' ? '完成' : '运行失败'));
+    }
+}
+
+function stopStrategyProgressTimer() {
+    if (strategyRunState.timer) {
+        clearInterval(strategyRunState.timer);
+    }
+    strategyRunState.timer = null;
+}
+
+function strategyProgressSteps() {
+    return [
+        { label: '准备数据', progress: 8 },
+        { label: '加载K线', progress: 24 },
+        { label: '计算公式', progress: 46 },
+        { label: '计算因子', progress: 64 },
+        { label: '评分排序', progress: 82 },
+        { label: '写入结果', progress: 94 }
+    ];
+}
+
+function renderStrategyProgressPanel() {
+    const summary = document.getElementById('strategyRunSummary');
+    if (!summary) return;
+    const steps = strategyProgressSteps();
+    summary.className = 'data-item strategy-run-summary running';
+    summary.innerHTML = `
+        <div class="strategy-progress-head">
+            <strong>运行中：${escapeHTML(strategyRunState.message)}</strong>
+            <span>${strategyRunState.progress}%</span>
+        </div>
+        <div class="strategy-progress-bar"><i style="width:${strategyRunState.progress}%"></i></div>
+        <div class="strategy-step-list">
+            ${steps.map((step, index) => `<span class="${index <= strategyRunState.stepIndex ? 'active' : ''}">${escapeHTML(step.label)}</span>`).join('')}
+        </div>
+    `;
+}
+
+function setStrategyEditorLocked(locked) {
+    const ids = [
+        'strategySaveButton',
+        'strategyCloneButton',
+        'strategyRunButton',
+        'strategyDeleteButton',
+        'strategyApplyJSONButton',
+        'strategySyncJSONButton',
+        'strategyFormatJSONButton',
+        'strategyName',
+        'strategyEnabled',
+        'strategyDescription',
+        'strategyConfig'
+    ];
+    ids.forEach(id => {
+        const node = document.getElementById(id);
+        if (node) node.disabled = locked;
+    });
+    const runButton = document.getElementById('strategyRunButton');
+    if (runButton) runButton.textContent = locked ? '运行中...' : '运行';
+    document.querySelectorAll('#strategyVisualEditor input, #strategyVisualEditor select, #strategyVisualEditor textarea, #strategyVisualEditor button, .advanced-json-panel button').forEach(node => {
+        node.disabled = locked;
+    });
+    const editor = document.querySelector('.strategy-editor-card');
+    if (editor) editor.classList.toggle('locked', locked);
 }
 
 function appendStrategyFactor(factorID) {
