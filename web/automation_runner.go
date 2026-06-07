@@ -152,6 +152,9 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	case "stock_selection":
 		result, matchedSymbols, err = r.runStockSelection(ctx, task, run)
 		matchedCount = len(matchedSymbols)
+	case "strategy_selection":
+		result, matchedSymbols, err = r.runStrategySelection(ctx, task, run)
+		matchedCount = len(matchedSymbols)
 	case "system_sync":
 		result, matchedCount, err = r.runSystemSync(ctx, task)
 	case "custom":
@@ -180,6 +183,9 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	eventName := "automation.finished"
 	if task.Type == "stock_selection" && status == "success" {
 		eventName = "stock_selection.finished"
+	}
+	if task.Type == "strategy_selection" && status == "success" {
+		eventName = "strategy_selection.finished"
 	}
 	if status == "failed" {
 		eventName = "automation.failed"

@@ -1038,6 +1038,62 @@ textarea::placeholder {
     align-items: start;
 }
 
+.strategy-layout {
+    display: grid;
+    grid-template-columns: minmax(240px, 0.72fr) minmax(420px, 1.34fr) minmax(300px, 0.94fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.strategy-list,
+.factor-list,
+.strategy-run-results {
+    max-height: 680px;
+}
+
+.strategy-item {
+    cursor: pointer;
+}
+
+.strategy-item.selected {
+    border-left-color: var(--accent);
+    background: #f8fbff;
+}
+
+.strategy-form-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px;
+    gap: 10px;
+    align-items: start;
+}
+
+.strategy-editor-card textarea#strategyConfig {
+    min-height: 520px;
+}
+
+.strategy-side {
+    display: grid;
+    gap: 16px;
+}
+
+.factor-param-list,
+.strategy-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.factor-param-list span,
+.strategy-reasons span {
+    padding: 3px 7px;
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+    background: var(--panel-muted);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
 .data-item {
     padding: 12px;
     border: 1px solid var(--line-soft);
@@ -1665,7 +1721,12 @@ textarea::placeholder {
     }
 
     .decision-grid,
-    .decision-detail-grid {
+    .decision-detail-grid,
+    .strategy-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .strategy-form-grid {
         grid-template-columns: 1fr;
     }
 

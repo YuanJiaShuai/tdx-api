@@ -42,6 +42,17 @@ type StockPool struct {
 	UpdatedAt   string   `json:"updated_at"`
 }
 
+type Strategy struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ConfigJSON  string `json:"config_json"`
+	Enabled     bool   `json:"enabled"`
+	Readonly    bool   `json:"readonly"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
 const (
 	DecisionWatchPoolID   = "watchlist"
 	DecisionExcludePoolID = "exclude"
@@ -188,6 +199,16 @@ func (s *AppStore) migrate() error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS strategies (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			config_json TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			readonly INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS automation_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
@@ -294,7 +315,40 @@ func (s *AppStore) seedDefaults() error {
 	if err := s.ensureDecisionPools(); err != nil {
 		return err
 	}
+	if err := s.ensureStrategyTemplates(); err != nil {
+		return err
+	}
 	return s.ensureFixedAutomationTasks()
+}
+
+func defaultStrategyTemplates() []Strategy {
+	return []Strategy{
+		{
+			ID:          "template-a-share-v3",
+			Name:        "A股V3强势启动",
+			Description: "内置模板：硬过滤成交额/排除池，使用趋势、放量、突破和主力拉升公式进行加权评分。",
+			ConfigJSON:  `{"universe":"pool","pool_id":"watchlist","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}}],"scores":[{"id":"ma_trend","factor":"ma_trend","weight":20,"params":{"short":5,"mid":10,"long":20}},{"id":"volume_up","factor":"volume_up","weight":15,"params":{"days":5,"ratio":1.3}},{"id":"break_high","factor":"break_high","weight":15,"params":{"days":20}},{"id":"main_force","factor":"formula","weight":30,"params":{"formula_name":"主力拉升"}}],"pass":{"min_score":60,"top_n":50}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+	}
+}
+
+func (s *AppStore) ensureStrategyTemplates() error {
+	now := nowText()
+	for _, item := range defaultStrategyTemplates() {
+		if strings.TrimSpace(item.ConfigJSON) == "" {
+			item.ConfigJSON = "{}"
+		}
+		_, err := s.db.Exec(`INSERT OR IGNORE INTO strategies
+			(id,name,description,config_json,enabled,readonly,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?)`,
+			item.ID, item.Name, item.Description, item.ConfigJSON, boolInt(item.Enabled), boolInt(item.Readonly), now, now)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func fixedCloseSyncAutomationTask() AutomationTask {
@@ -538,6 +592,105 @@ func (s *AppStore) DeleteStockPool(id string) error {
 	}
 	_, err := s.db.Exec(`DELETE FROM stock_pools WHERE id=?`, id)
 	return err
+}
+
+func normalizeStrategy(item Strategy) Strategy {
+	item.Name = strings.TrimSpace(item.Name)
+	item.Description = strings.TrimSpace(item.Description)
+	if strings.TrimSpace(item.ConfigJSON) == "" {
+		item.ConfigJSON = "{}"
+	}
+	return item
+}
+
+func (s *AppStore) ListStrategies() ([]Strategy, error) {
+	rows, err := s.db.Query(`SELECT id,name,description,config_json,enabled,readonly,created_at,updated_at FROM strategies ORDER BY readonly DESC, updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Strategy{}
+	for rows.Next() {
+		var item Strategy
+		var enabled, readonly int
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.ConfigJSON, &enabled, &readonly, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Enabled = intBool(enabled)
+		item.Readonly = intBool(readonly)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *AppStore) GetStrategy(id string) (Strategy, error) {
+	var item Strategy
+	var enabled, readonly int
+	err := s.db.QueryRow(`SELECT id,name,description,config_json,enabled,readonly,created_at,updated_at FROM strategies WHERE id=?`, id).
+		Scan(&item.ID, &item.Name, &item.Description, &item.ConfigJSON, &enabled, &readonly, &item.CreatedAt, &item.UpdatedAt)
+	item.Enabled = intBool(enabled)
+	item.Readonly = intBool(readonly)
+	return item, err
+}
+
+func (s *AppStore) UpsertStrategy(item Strategy) (Strategy, error) {
+	item = normalizeStrategy(item)
+	if item.Name == "" {
+		return item, errors.New("策略名称不能为空")
+	}
+	if !json.Valid([]byte(item.ConfigJSON)) {
+		return item, errors.New("config_json不是有效JSON")
+	}
+	if item.ID != "" {
+		old, err := s.GetStrategy(item.ID)
+		if err == nil && old.Readonly {
+			return item, errors.New("系统策略模板不能编辑，请复制后修改")
+		}
+	}
+	now := nowText()
+	if item.ID == "" {
+		item.ID = uuid.NewString()
+		item.CreatedAt = now
+	} else if item.CreatedAt == "" {
+		old, err := s.GetStrategy(item.ID)
+		if err == nil {
+			item.CreatedAt = old.CreatedAt
+		} else {
+			item.CreatedAt = now
+		}
+	}
+	item.UpdatedAt = now
+	_, err := s.db.Exec(`INSERT INTO strategies
+		(id,name,description,config_json,enabled,readonly,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			name=excluded.name,description=excluded.description,config_json=excluded.config_json,
+			enabled=excluded.enabled,updated_at=excluded.updated_at`,
+		item.ID, item.Name, item.Description, item.ConfigJSON, boolInt(item.Enabled), boolInt(item.Readonly), item.CreatedAt, item.UpdatedAt)
+	return item, err
+}
+
+func (s *AppStore) DeleteStrategy(id string) error {
+	item, err := s.GetStrategy(id)
+	if err != nil {
+		return err
+	}
+	if item.Readonly {
+		return errors.New("系统策略模板不能删除")
+	}
+	_, err = s.db.Exec(`DELETE FROM strategies WHERE id=?`, id)
+	return err
+}
+
+func (s *AppStore) CloneStrategy(id string) (Strategy, error) {
+	item, err := s.GetStrategy(id)
+	if err != nil {
+		return Strategy{}, err
+	}
+	item.ID = ""
+	item.Name = item.Name + " 副本"
+	item.Readonly = false
+	return s.UpsertStrategy(item)
 }
 
 func (s *AppStore) AddStockPoolSymbol(id, symbol string) (StockPool, error) {

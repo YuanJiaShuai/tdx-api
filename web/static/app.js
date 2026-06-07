@@ -2,6 +2,8 @@
 let currentStock = '';
 let formulas = [];
 let pools = [];
+let strategies = [];
+let factors = [];
 let automations = [];
 let webhooks = [];
 let selectionResults = [];
@@ -12,6 +14,7 @@ let currentHQOverlay = null;
 let selectedDecisionResult = null;
 let selectedReviewItem = null;
 let decisionShowingToday = false;
+let selectedStrategyID = '';
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -78,6 +81,7 @@ function switchWorkspace(name, button) {
     if (name === 'dataCenter') loadDataCenter();
     if (name === 'selectionResults') loadSelectionResults();
     if (name === 'dailyReview') loadDailyReview();
+    if (name === 'strategies') loadStrategyCenter();
     if (name === 'automations') loadAutomationData();
     if (name === 'webhooks') loadWebhooks();
 }
@@ -591,7 +595,8 @@ async function loadFormulaList() {
         renderHQFormulaArgsSummary();
     }
     renderFormulaArgsEditor(parseHQFormulaArgs({ args_json: document.getElementById('formulaArgs')?.value || '[]' }));
-    document.getElementById('automationFormula').innerHTML = formulaOptions;
+    const automationFormula = document.getElementById('automationFormula');
+    if (automationFormula) automationFormula.innerHTML = formulaOptions;
     const resultFilter = document.getElementById('resultFormulaFilter');
     if (resultFilter) {
         resultFilter.innerHTML = '<option value="">全部公式</option>' + formulaOptions;
@@ -823,8 +828,11 @@ function renderHQFormulaArgsSummary() {
 
 async function loadPools() {
     pools = await apiFetch('/api/stock-pools');
-    document.getElementById('automationPool').innerHTML = pools.map(p => `<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
-    document.getElementById('poolList').innerHTML = pools.map(p => `
+    const automationPool = document.getElementById('automationPool');
+    if (automationPool) automationPool.innerHTML = pools.map(p => `<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
+    const poolList = document.getElementById('poolList');
+    if (!poolList) return;
+    poolList.innerHTML = pools.map(p => `
         <div class="data-item">
             <div class="data-item-title">${escapeHTML(p.name)}</div>
             <div class="data-item-meta">${p.symbols.length} 只股票 · ${escapeHTML(p.symbols.join(', '))}</div>
@@ -866,8 +874,259 @@ async function deletePool(id) {
     await loadPools();
 }
 
+async function loadStrategyCenter() {
+    await Promise.all([loadStrategies(), loadFactors(), loadFormulaList(), loadPools()]);
+    if (!selectedStrategyID && strategies.length) {
+        fillStrategy(strategies[0].id);
+    }
+}
+
+async function loadStrategies() {
+    strategies = await apiFetch('/api/strategies') || [];
+    renderStrategyList();
+    const select = document.getElementById('automationStrategy');
+    if (select) {
+        select.innerHTML = strategies.map(item => `<option value="${item.id}">${escapeHTML(item.name)}${item.readonly ? '（模板）' : ''}</option>`).join('');
+    }
+}
+
+async function loadFactors() {
+    factors = await apiFetch('/api/factors') || [];
+    const list = document.getElementById('factorList');
+    if (!list) return;
+    list.innerHTML = factors.map(factor => `
+        <div class="data-item factor-item">
+            <div class="data-item-title">${escapeHTML(factor.name)} <span class="tag">${escapeHTML(factor.kind)}</span></div>
+            <div class="data-item-meta">${escapeHTML(factor.id)} · ${escapeHTML(factor.description)}</div>
+            <div class="factor-param-list">${(factor.params || []).map(p => `<span>${escapeHTML(p.label)}=${escapeHTML(compactValue(p.default))}</span>`).join('')}</div>
+            <div class="item-actions">
+                <button onclick="appendStrategyFactor('${escapeJSString(factor.id)}')">加入配置</button>
+            </div>
+        </div>
+    `).join('') || '<div class="data-item">暂无因子</div>';
+}
+
+function renderStrategyList() {
+    const list = document.getElementById('strategyList');
+    if (!list) return;
+    list.innerHTML = strategies.map(item => {
+        const cfg = parseStrategyConfig(item.config_json);
+        const filterCount = Array.isArray(cfg.filters) ? cfg.filters.length : 0;
+        const scoreCount = Array.isArray(cfg.scores) ? cfg.scores.length : 0;
+        const selected = item.id === selectedStrategyID ? ' selected' : '';
+        return `
+            <div class="data-item strategy-item${selected}" onclick="fillStrategy('${escapeJSString(item.id)}')">
+                <div class="data-item-title">${escapeHTML(item.name)}${item.readonly ? ' <span class="tag">内置模板</span>' : ''}</div>
+                <div class="data-item-meta">${escapeHTML(item.description || '暂无说明')}</div>
+                <div class="data-item-meta">${escapeHTML(strategyUniverseLabel(cfg))} · 过滤 ${filterCount} · 评分 ${scoreCount} · ${item.enabled ? '启用' : '停用'}</div>
+            </div>
+        `;
+    }).join('') || '<div class="data-item">暂无策略</div>';
+}
+
+function parseStrategyConfig(raw) {
+    if (typeof raw === 'object' && raw) return raw;
+    try {
+        return JSON.parse(raw || '{}');
+    } catch {
+        return {};
+    }
+}
+
+function strategyUniverseLabel(cfg = {}) {
+    const universe = cfg.universe || 'pool';
+    if (universe === 'symbols') return `自定义标的 ${(cfg.symbols || []).length} 只`;
+    if (universe === 'all' || universe === 'all_a') return '全市场A股';
+    return `股票池 ${cfg.pool_id || 'watchlist'}`;
+}
+
+function defaultStrategyConfig() {
+    return {
+        universe: 'pool',
+        pool_id: 'watchlist',
+        period: 'day',
+        calc_count: 260,
+        batch_size: 50,
+        continue_on_error: true,
+        filters: [
+            { id: 'exclude_pool', factor: 'pool_exclude', params: { pool_id: 'exclude' } }
+        ],
+        scores: [
+            { id: 'ma_trend', factor: 'ma_trend', weight: 20, params: { short: 5, mid: 10, long: 20 } }
+        ],
+        pass: { min_score: 20, top_n: 50 }
+    };
+}
+
+function newStrategy() {
+    selectedStrategyID = '';
+    document.getElementById('strategyName').dataset.id = '';
+    document.getElementById('strategyName').dataset.readonly = 'false';
+    document.getElementById('strategyName').value = '我的选股策略';
+    document.getElementById('strategyDescription').value = '';
+    document.getElementById('strategyEnabled').checked = true;
+    document.getElementById('strategyConfig').value = prettyJSON(defaultStrategyConfig());
+    document.getElementById('strategyEditorHint').textContent = '新策略保存后可用于自动化任务';
+    renderStrategyList();
+}
+
+function fillStrategy(id) {
+    const item = strategies.find(v => v.id === id);
+    if (!item) return;
+    selectedStrategyID = id;
+    document.getElementById('strategyName').dataset.id = item.id;
+    document.getElementById('strategyName').dataset.readonly = item.readonly ? 'true' : 'false';
+    document.getElementById('strategyName').value = item.name || '';
+    document.getElementById('strategyDescription').value = item.description || '';
+    document.getElementById('strategyEnabled').checked = !!item.enabled;
+    document.getElementById('strategyConfig').value = prettyJSON(parseStrategyConfig(item.config_json));
+    document.getElementById('strategyEditorHint').textContent = item.readonly ? '内置模板只读，请复制后修改' : '可保存后在自动化任务中选择';
+    renderStrategyList();
+}
+
+function currentStrategyPayload() {
+    const id = document.getElementById('strategyName').dataset.id || '';
+    const readonly = document.getElementById('strategyName').dataset.readonly === 'true';
+    const config = JSON.parse(document.getElementById('strategyConfig').value || '{}');
+    return {
+        id,
+        name: document.getElementById('strategyName').value,
+        description: document.getElementById('strategyDescription').value,
+        config_json: JSON.stringify(config),
+        enabled: document.getElementById('strategyEnabled').checked,
+        readonly
+    };
+}
+
+function formatStrategyConfig() {
+    try {
+        document.getElementById('strategyConfig').value = prettyJSON(JSON.parse(document.getElementById('strategyConfig').value || '{}'));
+    } catch (error) {
+        alert('配置不是有效JSON：' + error.message);
+    }
+}
+
+async function saveStrategy() {
+    try {
+        const payload = currentStrategyPayload();
+        if (payload.readonly) {
+            alert('内置模板不能直接编辑，请先复制');
+            return;
+        }
+        const item = await apiFetch(payload.id ? `/api/strategies/${payload.id}` : '/api/strategies', {
+            method: payload.id ? 'PUT' : 'POST',
+            body: JSON.stringify(payload)
+        });
+        selectedStrategyID = item.id;
+        await loadStrategies();
+        fillStrategy(item.id);
+        alert('策略已保存');
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function cloneCurrentStrategy() {
+    const id = document.getElementById('strategyName').dataset.id || selectedStrategyID;
+    if (!id) {
+        alert('请先选择一个策略');
+        return;
+    }
+    try {
+        const item = await apiFetch(`/api/strategies/${id}/clone`, { method: 'POST' });
+        selectedStrategyID = item.id;
+        await loadStrategies();
+        fillStrategy(item.id);
+        alert('策略已复制');
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function deleteCurrentStrategy() {
+    const id = document.getElementById('strategyName').dataset.id || selectedStrategyID;
+    const readonly = document.getElementById('strategyName').dataset.readonly === 'true';
+    if (!id) return;
+    if (readonly) {
+        alert('内置模板不能删除');
+        return;
+    }
+    if (!confirm('确认删除这个策略？')) return;
+    try {
+        await apiFetch(`/api/strategies/${id}`, { method: 'DELETE' });
+        selectedStrategyID = '';
+        await loadStrategies();
+        if (strategies.length) fillStrategy(strategies[0].id);
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function runCurrentStrategy() {
+    const id = document.getElementById('strategyName').dataset.id || selectedStrategyID;
+    if (!id) {
+        alert('请先保存或选择一个策略');
+        return;
+    }
+    const summary = document.getElementById('strategyRunSummary');
+    const list = document.getElementById('strategyRunResults');
+    if (summary) summary.textContent = '运行中...';
+    if (list) list.innerHTML = '';
+    try {
+        const run = await apiFetch(`/api/strategies/${id}/run`, { method: 'POST' });
+        const result = JSON.parse(run.result_json || '{}');
+        const items = result.items || [];
+        if (summary) summary.innerHTML = `完成 · 扫描 ${result.total || 0} 只 · 命中 ${run.matched_count || items.length} 只`;
+        if (list) {
+            list.innerHTML = items.slice(0, 80).map(item => `
+                <div class="data-item">
+                    <div class="result-symbol">${escapeHTML(item.symbol)}</div>
+                    <div class="data-item-meta">评分 <span class="result-latest">${Number(item.score || 0).toFixed(2)}</span> · 最新价 ${Number(item.latest || 0).toFixed(2)}</div>
+                    <div class="strategy-reasons">${(item.reasons || []).slice(0, 4).map(reason => `<span>${escapeHTML(reason)}</span>`).join('')}</div>
+                    <div class="item-actions">
+                        <button class="primary" onclick="openResultChart('${escapeJSString(item.symbol)}')">打开图表</button>
+                        <button onclick="addSymbolToPool('watchlist', '${escapeJSString(item.symbol)}')">观察</button>
+                    </div>
+                </div>
+            `).join('') || '<div class="data-item">未命中标的</div>';
+        }
+        await Promise.all([loadRuns(), loadSelectionResults()]);
+    } catch (error) {
+        if (summary) summary.textContent = error.message;
+        alert(error.message);
+    }
+}
+
+function appendStrategyFactor(factorID) {
+    const factor = factors.find(item => item.id === factorID);
+    if (!factor) return;
+    try {
+        const cfg = JSON.parse(document.getElementById('strategyConfig').value || '{}');
+        const params = {};
+        (factor.params || []).forEach(param => {
+            if (param.default !== '') params[param.name] = param.default;
+        });
+        const rule = {
+            id: `${factor.id}_${Date.now().toString(36)}`,
+            factor: factor.id,
+            params
+        };
+        if (factor.kind === 'score') rule.weight = 10;
+        if (factor.kind === 'filter') {
+            cfg.filters = Array.isArray(cfg.filters) ? cfg.filters : [];
+            cfg.filters.push(rule);
+        } else {
+            cfg.scores = Array.isArray(cfg.scores) ? cfg.scores : [];
+            cfg.scores.push(rule);
+        }
+        document.getElementById('strategyConfig').value = prettyJSON(cfg);
+    } catch (error) {
+        alert('请先修正策略配置JSON：' + error.message);
+    }
+}
+
 async function loadAutomationData() {
-    await Promise.all([loadFormulaList(), loadPools(), loadWebhooks(), loadAutomations(), loadRuns(), loadSelectionResults()]);
+    await Promise.all([loadFormulaList(), loadPools(), loadStrategies(), loadWebhooks(), loadAutomations(), loadRuns(), loadSelectionResults()]);
     updateAutomationPayloadMode();
 }
 
@@ -911,6 +1170,8 @@ function fillAutomation(id) {
     document.getElementById('automationType').value = t.type || 'stock_selection';
     document.getElementById('automationFormula').value = payload.formula_id || '';
     document.getElementById('automationPool').value = payload.pool_id || '';
+    const strategySelect = document.getElementById('automationStrategy');
+    if (strategySelect) strategySelect.value = payload.strategy_id || '';
     document.getElementById('automationPayload').value = JSON.stringify(payload, null, 2);
     document.getElementById('automationCron').value = t.cron;
     document.getElementById('automationEnabled').checked = !!t.enabled;
@@ -924,10 +1185,12 @@ function fillAutomation(id) {
 function updateAutomationPayloadMode() {
     const type = document.getElementById('automationType')?.value || 'stock_selection';
     const stockFields = document.getElementById('stockSelectionFields');
+    const strategyFields = document.getElementById('strategySelectionFields');
     const payloadBox = document.getElementById('automationPayload');
     if (stockFields) stockFields.style.display = type === 'stock_selection' ? 'block' : 'none';
+    if (strategyFields) strategyFields.style.display = type === 'strategy_selection' ? 'block' : 'none';
     if (!payloadBox) return;
-    payloadBox.style.display = type === 'stock_selection' ? 'none' : 'block';
+    payloadBox.style.display = (type === 'stock_selection' || type === 'strategy_selection') ? 'none' : 'block';
     if (!payloadBox.value.trim()) {
         payloadBox.value = type === 'system_sync'
             ? JSON.stringify({ scope: 'all', tables: ['day'], limit: 4, max_codes: 200, continue_on_error: true }, null, 2)
@@ -949,6 +1212,10 @@ async function saveAutomation() {
                 out_count: 1,
                 batch_size: 50,
                 continue_on_error: true
+            };
+        } else if (type === 'strategy_selection') {
+            payload = {
+                strategy_id: document.getElementById('automationStrategy').value
             };
         } else {
             payload = JSON.parse(document.getElementById('automationPayload').value || '{}');

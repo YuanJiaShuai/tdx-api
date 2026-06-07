@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票数据查询系统</title>
-    <link rel="stylesheet" href="style.css?v=automation-fixed-run-20260607">
+    <link rel="stylesheet" href="style.css?v=strategy-center-mvp-20260607">
     <style>
         /* 确保图表容器占满宽度 */
         #klineChart, #minuteChart {
@@ -50,6 +50,7 @@
             <button class="workspace-tab" onclick="switchWorkspace('dataCenter', this)">数据中心</button>
             <button class="workspace-tab" onclick="switchWorkspace('selectionResults', this)">选股结果</button>
             <button class="workspace-tab" onclick="switchWorkspace('dailyReview', this)">每日复盘</button>
+            <button class="workspace-tab" onclick="switchWorkspace('strategies', this)">策略中心</button>
             <button class="workspace-tab" onclick="switchWorkspace('automations', this)">自动化</button>
             <button class="workspace-tab" onclick="switchWorkspace('webhooks', this)">Webhook</button>
         </div>
@@ -501,12 +502,16 @@
                     <input id="automationName" type="text" placeholder="任务名称">
                     <select id="automationType" onchange="updateAutomationPayloadMode()">
                         <option value="stock_selection">选股任务</option>
+                        <option value="strategy_selection">策略选股</option>
                         <option value="system_sync">系统同步</option>
                         <option value="custom">自定义任务</option>
                     </select>
                     <div id="stockSelectionFields">
                         <select id="automationFormula"></select>
                         <select id="automationPool"></select>
+                    </div>
+                    <div id="strategySelectionFields">
+                        <select id="automationStrategy"></select>
                     </div>
                     <textarea id="automationPayload" rows="7" placeholder='任务 Payload JSON，例如 {"scope":"all"}'></textarea>
                     <input id="automationCron" type="text" placeholder="Cron，例如 0 30 21 * * *" value="0 30 21 * * *">
@@ -531,6 +536,55 @@
                 <div class="card">
                     <h3>运行记录</h3>
                     <div id="runList" class="data-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="strategiesWorkspace" class="workspace">
+            <div class="strategy-layout">
+                <div class="card strategy-list-card">
+                    <div class="card-header">
+                        <div>
+                            <h3>策略列表</h3>
+                            <p class="card-subtitle">模板复制后可编辑</p>
+                        </div>
+                        <button class="btn-secondary compact" onclick="newStrategy()">新建</button>
+                    </div>
+                    <div id="strategyList" class="data-list strategy-list"></div>
+                </div>
+                <div class="card strategy-editor-card">
+                    <div class="card-header">
+                        <div>
+                            <h3>策略编辑</h3>
+                            <p class="card-subtitle" id="strategyEditorHint">选择策略后编辑配置</p>
+                        </div>
+                        <div class="item-actions compact-actions">
+                            <button class="primary" onclick="saveStrategy()">保存</button>
+                            <button onclick="cloneCurrentStrategy()">复制</button>
+                            <button onclick="runCurrentStrategy()">运行</button>
+                        </div>
+                    </div>
+                    <div class="strategy-form-grid">
+                        <input id="strategyName" type="text" placeholder="策略名称">
+                        <label class="check-line inline-check"><input id="strategyEnabled" type="checkbox" checked> 启用策略</label>
+                    </div>
+                    <textarea id="strategyDescription" rows="2" placeholder="策略说明"></textarea>
+                    <textarea id="strategyConfig" rows="20" spellcheck="false" placeholder='{"universe":"pool","pool_id":"watchlist","filters":[],"scores":[]}'></textarea>
+                    <div class="item-actions">
+                        <button class="btn-secondary" onclick="formatStrategyConfig()">格式化配置</button>
+                        <button class="danger-light" onclick="deleteCurrentStrategy()">删除</button>
+                    </div>
+                </div>
+                <div class="strategy-side">
+                    <div class="card">
+                        <h3>因子库</h3>
+                        <div id="factorList" class="data-list factor-list"></div>
+                    </div>
+                    <div class="card">
+                        <h3>运行结果</h3>
+                        <div id="strategyRunSummary" class="data-item">暂无运行</div>
+                        <div id="strategyRunResults" class="data-list strategy-run-results"></div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -593,9 +647,9 @@
         </div>
     </div>
 
-    <script src="chart-shim.js?v=automation-fixed-run-20260607"></script>
-    <script src="chartlib/umychart.min.js?v=automation-fixed-run-20260607"></script>
-    <script src="chart-adapter.js?v=automation-fixed-run-20260607"></script>
-    <script src="app.js?v=automation-fixed-run-20260607"></script>
+    <script src="chart-shim.js?v=strategy-center-mvp-20260607"></script>
+    <script src="chartlib/umychart.min.js?v=strategy-center-mvp-20260607"></script>
+    <script src="chart-adapter.js?v=strategy-center-mvp-20260607"></script>
+    <script src="app.js?v=strategy-center-mvp-20260607"></script>
 </body>
 </html>
