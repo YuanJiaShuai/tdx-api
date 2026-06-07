@@ -214,7 +214,7 @@ func loadFormulaKline(symbol, period string, calcCount int) ([]FormulaKline, err
 			Low:    priceToYuan(item.Low),
 			Close:  closePrice,
 			Vol:    float64(item.Volume),
-			Amount: float64(item.Amount),
+			Amount: amountToYuan(item.Amount, closePrice, float64(item.Volume)),
 		})
 		prevClose = closePrice
 	}
@@ -291,6 +291,43 @@ func priceToYuan(v interface{}) float64 {
 		if f > 1000 {
 			return f / 1000
 		}
+		return f
+	}
+}
+
+func amountToYuan(raw interface{}, closePrice float64, volume float64) float64 {
+	amount := amountFloat(raw)
+	if amount > 0 {
+		if closePrice > 0 && volume > 0 {
+			estimated := closePrice * volume * 100
+			if estimated > 0 && amount/estimated > 100 {
+				return amount / 1000
+			}
+		}
+		return amount
+	}
+	if closePrice > 0 && volume > 0 {
+		return closePrice * volume * 100
+	}
+	return 0
+}
+
+func amountFloat(v interface{}) float64 {
+	switch x := v.(type) {
+	case int:
+		return float64(x)
+	case uint32:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case uint64:
+		return float64(x)
+	case float64:
+		return x
+	case float32:
+		return float64(x)
+	default:
+		f, _ := strconv.ParseFloat(fmt.Sprint(v), 64)
 		return f
 	}
 }

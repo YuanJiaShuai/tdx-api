@@ -1165,7 +1165,7 @@ func protocolKlinesToFormulaRows(list []*protocol.Kline, calcCount int) []Formul
 			Low:    priceToYuan(item.Low),
 			Close:  closePrice,
 			Vol:    float64(item.Volume),
-			Amount: float64(item.Amount),
+			Amount: amountToYuan(item.Amount, closePrice, float64(item.Volume)),
 		})
 		prevClose = closePrice
 	}
