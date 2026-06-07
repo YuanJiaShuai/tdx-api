@@ -1322,6 +1322,24 @@ textarea::placeholder {
     background: #fbfdff;
 }
 
+.automation-task-item.running {
+    border-left-color: var(--accent);
+    background: #f8fbff;
+}
+
+.automation-run-progress {
+    margin: 10px 0;
+    padding: 10px;
+    border: 1px solid #bfdbfe;
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+}
+
+.automation-task-item button:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+}
+
 .data-item-title {
     margin-bottom: 5px;
     color: var(--ink);

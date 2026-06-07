@@ -217,11 +217,9 @@ func (r *AutomationRunner) resolveTaskWebhooks(task AutomationTask) []Webhook {
 	if err == nil && len(hooks) > 0 {
 		return hooks
 	}
-	if isFixedAutomationTaskID(task.ID) {
-		hooks, err = r.store.ListEnabledWebhooks()
-		if err == nil {
-			return hooks
-		}
+	hooks, err = r.store.ListEnabledWebhooks()
+	if err == nil {
+		return hooks
 	}
 	return nil
 }

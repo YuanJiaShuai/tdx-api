@@ -23,6 +23,14 @@ let strategyRunState = {
     message: '',
     progress: 0
 };
+let automationRunState = {
+    running: false,
+    taskID: '',
+    stepIndex: 0,
+    timer: null,
+    message: '',
+    progress: 0
+};
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -1568,11 +1576,16 @@ async function loadAutomationData() {
 
 async function loadAutomations() {
     automations = await apiFetch('/api/automations') || [];
+    renderAutomations();
+}
+
+function renderAutomations() {
     document.getElementById('automationList').innerHTML = automations.map(t => `
-        <div class="data-item">
+        <div class="data-item automation-task-item ${automationRunState.running && automationRunState.taskID === t.id ? 'running' : ''}">
             <div class="data-item-title">${escapeHTML(t.name)}${t.readonly ? ' <span class="tag">系统固定</span>' : ''}</div>
             <div class="data-item-meta">${escapeHTML(t.type)} · ${escapeHTML(t.cron)} · ${t.enabled ? '启用' : '停用'}${t.next_run_at ? ` · 下次：${escapeHTML(t.next_run_at)}` : ''}</div>
             <div class="data-item-meta">上次：${escapeHTML(t.last_status || '--')} ${escapeHTML(t.last_message || '')}</div>
+            ${renderAutomationRunStatus(t.id)}
             <div class="item-actions">${automationTaskActions(t)}</div>
         </div>
     `).join('') || '<div class="data-item">暂无任务</div>';
@@ -1580,20 +1593,37 @@ async function loadAutomations() {
 
 function automationTaskActions(task) {
     const id = escapeJSString(task.id);
+    const running = automationRunState.running;
     if (task.readonly) {
         return `
-            <button class="${task.enabled ? '' : 'primary'}" onclick="toggleAutomation('${id}', ${task.enabled ? 'false' : 'true'})">${task.enabled ? '关闭' : '开启'}</button>
-            <button onclick="runAutomation('${id}')">立即执行一次</button>
+            <button class="${task.enabled ? '' : 'primary'}" onclick="toggleAutomation('${id}', ${task.enabled ? 'false' : 'true'})" ${running ? 'disabled' : ''}>${task.enabled ? '关闭' : '开启'}</button>
+            <button onclick="runAutomation('${id}')" ${running ? 'disabled' : ''}>${automationRunState.taskID === task.id ? '执行中...' : '立即执行一次'}</button>
         `;
     }
     return `
-        <button onclick="fillAutomation('${id}')">编辑</button>
-        <button class="primary" onclick="runAutomation('${id}')">立即运行</button>
-        <button onclick="deleteAutomation('${id}')">删除</button>
+        <button onclick="fillAutomation('${id}')" ${running ? 'disabled' : ''}>编辑</button>
+        <button class="primary" onclick="runAutomation('${id}')" ${running ? 'disabled' : ''}>${automationRunState.taskID === task.id ? '运行中...' : '立即运行'}</button>
+        <button onclick="deleteAutomation('${id}')" ${running ? 'disabled' : ''}>删除</button>
+    `;
+}
+
+function renderAutomationRunStatus(taskID) {
+    if (!automationRunState.running || automationRunState.taskID !== taskID) {
+        return '';
+    }
+    return `
+        <div class="automation-run-progress">
+            <div class="strategy-progress-head">
+                <strong>执行中：${escapeHTML(automationRunState.message || '准备任务')}</strong>
+                <span>${automationRunState.progress}%</span>
+            </div>
+            <div class="strategy-progress-bar"><i style="width:${automationRunState.progress}%"></i></div>
+        </div>
     `;
 }
 
 function fillAutomation(id) {
+    if (automationRunState.running) return;
     const t = automations.find(item => item.id === id);
     if (!t) return;
     if (t.readonly) {
@@ -1635,6 +1665,7 @@ function updateAutomationPayloadMode() {
 }
 
 async function saveAutomation() {
+    if (automationRunState.running) return;
     try {
         const id = document.getElementById('automationName').dataset.id || '';
         const type = document.getElementById('automationType').value || 'stock_selection';
@@ -1677,17 +1708,75 @@ async function saveAutomation() {
 }
 
 async function runAutomation(id) {
+    if (automationRunState.running) return;
+    startAutomationRunUI(id);
     try {
         await apiFetch(`/api/automations/${id}/run`, { method: 'POST' });
+        finishAutomationRunUI('success', '任务执行完成');
         await Promise.all([loadAutomations(), loadRuns(), loadSelectionResults()]);
         alert('任务执行完成');
     } catch (error) {
+        finishAutomationRunUI('failed', error.message);
         alert(error.message);
         await loadRuns();
     }
 }
 
+function startAutomationRunUI(taskID) {
+    stopAutomationProgressTimer();
+    automationRunState = {
+        running: true,
+        taskID,
+        stepIndex: 0,
+        timer: null,
+        message: '准备任务',
+        progress: 10
+    };
+    renderAutomations();
+    automationRunState.timer = setInterval(advanceAutomationRunStep, 1300);
+}
+
+function advanceAutomationRunStep() {
+    const steps = automationProgressSteps();
+    if (!automationRunState.running) return;
+    automationRunState.stepIndex = Math.min(automationRunState.stepIndex + 1, steps.length - 1);
+    const current = steps[automationRunState.stepIndex];
+    automationRunState.message = current.label;
+    automationRunState.progress = current.progress;
+    renderAutomationRunState();
+}
+
+function finishAutomationRunUI(status, message) {
+    stopAutomationProgressTimer();
+    automationRunState.running = false;
+    automationRunState.message = message;
+    automationRunState.progress = status === 'success' ? 100 : automationRunState.progress;
+    renderAutomationRunState();
+}
+
+function stopAutomationProgressTimer() {
+    if (automationRunState.timer) {
+        clearInterval(automationRunState.timer);
+    }
+    automationRunState.timer = null;
+}
+
+function automationProgressSteps() {
+    return [
+        { label: '准备任务', progress: 10 },
+        { label: '读取配置', progress: 25 },
+        { label: '执行任务', progress: 48 },
+        { label: '处理结果', progress: 72 },
+        { label: '写入记录', progress: 90 }
+    ];
+}
+
+function renderAutomationRunState() {
+    renderAutomations();
+}
+
 async function toggleAutomation(id, enabled) {
+    if (automationRunState.running) return;
     try {
         await apiFetch(`/api/automations/${id}/enabled`, {
             method: 'PUT',
@@ -1700,6 +1789,7 @@ async function toggleAutomation(id, enabled) {
 }
 
 async function createSystemTemplate(template) {
+    if (automationRunState.running) return;
     try {
         await apiFetch('/api/automations/templates', {
             method: 'POST',
@@ -1713,6 +1803,7 @@ async function createSystemTemplate(template) {
 }
 
 async function deleteAutomation(id) {
+    if (automationRunState.running) return;
     if (!confirm('确认删除这个任务？')) return;
     await apiFetch(`/api/automations/${id}`, { method: 'DELETE' });
     await loadAutomations();

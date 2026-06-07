@@ -171,7 +171,7 @@ func webhookAllowsEvent(hook Webhook, event string) bool {
 		return true
 	}
 	for _, item := range events {
-		if item == "*" || item == event {
+		if item == "*" || item == event || (item == "automation.finished" && strings.HasSuffix(event, ".finished")) {
 			return true
 		}
 	}
