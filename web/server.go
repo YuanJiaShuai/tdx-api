@@ -670,25 +670,27 @@ func splitCodes(param string) []string {
 
 func getMinuteWithFallback(code, date string) (*protocol.MinuteResp, string, error) {
 	target := strings.TrimSpace(date)
-	if target == "" {
-		target = time.Now().Format("20060102")
-		resp, err := client.GetMinute(code)
-		return resp, target, err
-	}
-
-	resp, err := client.GetHistoryMinute(target, code)
-	return resp, target, err
-	if date != "" {
-		resp, err := client.GetHistoryMinute(date, code)
-		return resp, date, err
+	if target != "" {
+		normalized, err := normalizeMinuteDate(target)
+		if err != nil {
+			return nil, target, err
+		}
+		resp, err := client.GetHistoryMinute(normalized, code)
+		return resp, normalized, err
 	}
 
 	today := time.Now()
+	todayStr := today.Format("20060102")
+	resp, err := client.GetMinute(code)
+	if err == nil && resp != nil && resp.Count > 0 && len(resp.List) > 0 {
+		return resp, todayStr, nil
+	}
+
 	const maxLookback = 10
 
-	var lastResp *protocol.MinuteResp
-	var lastDate string
-	var lastErr error
+	lastResp := resp
+	lastDate := todayStr
+	lastErr := err
 
 	for i := 0; i < maxLookback; i++ {
 		currentDate := today.AddDate(0, 0, -i).Format("20060102")
@@ -713,6 +715,16 @@ func getMinuteWithFallback(code, date string) (*protocol.MinuteResp, string, err
 	}
 
 	return nil, "", lastErr
+}
+
+func normalizeMinuteDate(date string) (string, error) {
+	date = strings.TrimSpace(date)
+	for _, layout := range []string{"20060102", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, date, time.Local); err == nil {
+			return t.Format("20060102"), nil
+		}
+	}
+	return "", fmt.Errorf("date 参数格式错误，应为 YYYYMMDD 或 YYYY-MM-DD")
 }
 
 func main() {
