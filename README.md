@@ -34,6 +34,20 @@
 | 自动化 | 系统同步任务、选股任务、Cron 调度、任务模板、Webhook 通知 |
 | 部署 | Docker Compose 单服务、本地源码运行、Windows/macOS/Linux 脚本 |
 
+## 界面预览
+
+行情工作台把今日命中、观察池、排除池和快捷标的放在同一个入口，适合每天打开后先看整体状态。
+
+![行情工作台](docs/assets/tdx-workbench-market.png)
+
+数据中心更偏工具台：市场总览、代码目录、个股资料、历史数据和板块行业查询都在这里。
+
+![数据中心](docs/assets/tdx-workbench-data-center.png)
+
+自动化页面用于维护股票池、选股任务、系统同步模板和运行记录，让策略筛选不只停留在一次性脚本里。
+
+![自动化任务](docs/assets/tdx-workbench-automation.png)
+
 ## 一分钟启动
 
 ### Docker Compose
