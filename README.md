@@ -110,7 +110,7 @@ go run .
 | `GET /api/hqchart/kline` | Web 专业行情 K 线适配 | `/api/hqchart/kline?symbol=000001&period=day` |
 | `GET /api/hqchart/history` | HQChart 原生历史 K 线适配 | `/api/hqchart/history?symbol=000001&period=day` |
 
-完整接口见 [docs/API.md](docs/API.md)。
+完整接口见 [API 参考](docs/api-reference.md)。
 
 ## 工作流示例
 
@@ -145,11 +145,11 @@ tdx-api/
 
 | 文档 | 说明 |
 | --- | --- |
-| [docs/API.md](docs/API.md) | REST API 参考 |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker、本地运行和排障 |
-| [docs/WEB.md](docs/WEB.md) | Web 页面使用说明 |
-| [docs/gbbq_除权除息与复权算法.md](docs/gbbq_除权除息与复权算法.md) | gbbq 与复权算法说明 |
-| [docs/HISTORY.md](docs/HISTORY.md) | 历史文档合并摘要 |
+| [API 参考](docs/api-reference.md) | REST API 参数、响应和示例 |
+| [部署指南](docs/deployment-guide.md) | Docker、本地运行、验证和排障 |
+| [Web 使用指南](docs/web-guide.md) | 页面入口、功能区域和操作流程 |
+| [除权除息与复权算法](docs/gbbq-adjustment.md) | gbbq 数据结构和复权计算说明 |
+| [文档历史](docs/document-history.md) | 旧文档和阶段性说明的去向摘要 |
 
 ## 开发验证
 

@@ -105,4 +105,4 @@ Webhook 使用 `POST` JSON：
 
 ## 相关 API
 
-常用接口见 [API.md](API.md)。新增的财务、F10、板块、扩展行情等能力也已在 API 文档中列出。
+常用接口见 [API 参考](api-reference.md)。新增的财务、F10、板块、扩展行情等能力也已在 API 文档中列出。
