@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -105,7 +106,10 @@ func (tm *TaskManager) Get(id string) (*Task, bool) {
 	defer tm.mu.RUnlock()
 
 	task, ok := tm.tasks[id]
-	return task, ok
+	if !ok {
+		return nil, false
+	}
+	return cloneTask(task), true
 }
 
 func (tm *TaskManager) List() []*Task {
@@ -114,7 +118,23 @@ func (tm *TaskManager) List() []*Task {
 
 	list := make([]*Task, 0, len(tm.tasks))
 	for _, task := range tm.tasks {
-		list = append(list, task)
+		list = append(list, cloneTask(task))
 	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].StartedAt.After(list[j].StartedAt)
+	})
 	return list
+}
+
+func cloneTask(task *Task) *Task {
+	if task == nil {
+		return nil
+	}
+	cloned := *task
+	cloned.cancel = nil
+	if task.EndedAt != nil {
+		endedAt := *task.EndedAt
+		cloned.EndedAt = &endedAt
+	}
+	return &cloned
 }

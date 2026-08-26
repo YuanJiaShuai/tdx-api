@@ -323,6 +323,7 @@ func handleGetMarketStats(w http.ResponseWriter, r *http.Request) {
 			classifyPrice(lastPrice, &stats.BJ.Up, &stats.BJ.Down, &stats.BJ.Flat)
 		}
 	}
+	stats.UpdateTime = time.Now().Format(time.RFC3339)
 
 	successResponse(w, stats)
 }
