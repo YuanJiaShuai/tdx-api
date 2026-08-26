@@ -10,6 +10,7 @@ let selectionResults = [];
 let decisionResults = [];
 let dailyReview = null;
 let reviewItems = [];
+let tradingState = null;
 let currentHQOverlay = null;
 let selectedDecisionResult = null;
 let selectedReviewItem = null;
@@ -30,6 +31,43 @@ let automationRunState = {
     timer: null,
     message: '',
     progress: 0
+};
+
+const tradingStoreKey = 'tdx-personal-trading-system-v1';
+const defaultTradingState = {
+    account: {
+        principal: 50000,
+        totalAssets: 56279.20,
+        maxTradeRisk: 1,
+        maxPositionWeight: 30
+    },
+    discipline: {
+        reason: false,
+        invalid: false,
+        risk: false,
+        noImpulse: false
+    },
+    filter: 'all',
+    trades: [
+        {
+            id: 'serveyou-2026-08-26',
+            stockName: '税友股份',
+            stockCode: '603171',
+            status: 'active',
+            entryDate: '2026-08-26',
+            entryPrice: 40.80,
+            currentPrice: 40.29,
+            shares: 300,
+            invalidPrice: 39.60,
+            positionLabel: '试错仓',
+            targetOne: '40.80 / 42.60-43.30',
+            targetTwo: '45-46',
+            tradeMode: '强势股回调到关键支撑附近，轻仓试错，博短线止跌修复。',
+            buyReason: '1. 前期从 34.42 附近启动，最高冲到 52.10，说明曾经有明显资金推动。\n2. 从 8月6日高点 52.10 回落到 40 元附近，跌幅较大，短线存在修复可能。\n3. 当前价格接近 7月31日加速段低点 39.60 附近，属于重要短线观察区。\n4. 买入价 40.80 距离 39.60 风控位不远，单股风险约 1.20 元，亏损比例约 2.94%，风险可控。',
+            exitRules: '技术无效点：有效跌破 39.60 元。\n\n有效跌破定义：\n1. 放量跌破 39.60，并且 15-30 分钟内不能快速收回；\n2. 或者当天收盘价低于 39.60；\n3. 或者跌破后反抽到 39.60-40.00 区间明显受压，再次回落。\n\n操作计划：\n1. 如果明天跌破 39.60 且收不回，先卖出 50% 或全部离场，保护本金。\n2. 如果盘中跌破 39.60 后快速拉回 40 元上方，先不急着卖完，观察是否是假破。\n3. 如果重新站稳 40.80 成本价，说明短线压力减轻，继续观察。\n4. 如果站上 42.60-43.30 区间，说明短线企稳增强，可考虑是否加确认仓。\n5. 如果反弹到 45-46 区间但放量滞涨，考虑止盈或减仓。\n6. 如果跌破 39.60 后反抽不过 40 元，不接回，不补仓。\n\n加仓条件：守住 39.60；重新站稳 40.80；放量站上 42.60-43.30。\n\n不加仓条件：跌破 39.60 后没有收回；反弹无量；冲高回落；大盘明显走弱；只是因为怕踏空而想追。\n\n止盈计划：快速反弹到 42.60-43.30 但量能不足，可先减一部分；放量突破 43.30 继续持有观察；到 45-46 附近冲不动，优先锁定利润；反弹途中跌回 40.80 下方，减仓。',
+            review: '盘后复盘：\n1. 今天有没有按计划执行？\n2. 买入理由是否仍然成立？\n3. 39.60 是否守住？\n4. 成交量是放大还是缩小？\n5. 反弹时有没有主动买盘？\n6. 我的操作是按规则，还是按情绪？\n7. 这笔交易下次哪里可以改进？'
+        }
+    ]
 };
 
 // 工具函数 - 显示加载
@@ -97,6 +135,7 @@ function switchWorkspace(name, button) {
     if (name === 'dataCenter') loadDataCenter();
     if (name === 'selectionResults') loadSelectionResults();
     if (name === 'dailyReview') loadDailyReview();
+    if (name === 'tradingSystem') renderTradingSystem();
     if (name === 'strategies') loadStrategyCenter();
     if (name === 'automations') loadAutomationData();
     if (name === 'webhooks') loadWebhooks();
@@ -2301,6 +2340,411 @@ async function selectReviewItem(id) {
     await selectDecisionResult(review.result.id);
 }
 
+function cloneTradingState(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function loadTradingState() {
+    if (tradingState) return tradingState;
+    try {
+        const raw = localStorage.getItem(tradingStoreKey);
+        if (!raw) {
+            tradingState = cloneTradingState(defaultTradingState);
+            return tradingState;
+        }
+        const parsed = JSON.parse(raw);
+        tradingState = {
+            ...cloneTradingState(defaultTradingState),
+            ...parsed,
+            account: { ...defaultTradingState.account, ...(parsed.account || {}) },
+            discipline: { ...defaultTradingState.discipline, ...(parsed.discipline || {}) },
+            trades: Array.isArray(parsed.trades) ? parsed.trades : []
+        };
+    } catch (error) {
+        tradingState = cloneTradingState(defaultTradingState);
+    }
+    return tradingState;
+}
+
+function saveTradingState() {
+    if (!tradingState) loadTradingState();
+    localStorage.setItem(tradingStoreKey, JSON.stringify(tradingState));
+}
+
+function tradingMoney(value) {
+    const num = Number(value || 0);
+    return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function tradingPercent(value) {
+    const num = Number(value || 0);
+    return `${num.toFixed(2)}%`;
+}
+
+function tradingNumberInput(id) {
+    const value = document.getElementById(id)?.value;
+    if (value === undefined || value === null || value === '') return 0;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+}
+
+function calcTradingTrade(trade) {
+    const state = loadTradingState();
+    const entryPrice = Number(trade.entryPrice || 0);
+    const currentPrice = Number(trade.currentPrice || 0);
+    const invalidPrice = Number(trade.invalidPrice || 0);
+    const shares = Number(trade.shares || 0);
+    const entryValue = entryPrice * shares;
+    const marketValue = currentPrice * shares;
+    const pnl = (currentPrice - entryPrice) * shares;
+    const pnlPct = entryPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+    const riskPerShare = Math.max(entryPrice - invalidPrice, 0);
+    const riskAmount = riskPerShare * shares;
+    const totalAssets = Number(state.account.totalAssets || 0);
+    const riskPct = totalAssets ? (riskAmount / totalAssets) * 100 : 0;
+    const weight = totalAssets ? (marketValue / totalAssets) * 100 : 0;
+    return { entryValue, marketValue, pnl, pnlPct, riskPerShare, riskAmount, riskPct, weight };
+}
+
+function tradingRiskClass(calc) {
+    const state = loadTradingState();
+    const maxRisk = Number(state.account.maxTradeRisk || 0);
+    if (!maxRisk) return 'trading-risk-watch';
+    if (calc.riskPct <= maxRisk * 0.7) return 'trading-risk-safe';
+    if (calc.riskPct <= maxRisk) return 'trading-risk-watch';
+    return 'trading-risk-bad';
+}
+
+function renderTradingAccount() {
+    const state = loadTradingState();
+    const fields = {
+        tradingPrincipal: state.account.principal,
+        tradingTotalAssets: state.account.totalAssets,
+        tradingMaxTradeRisk: state.account.maxTradeRisk,
+        tradingMaxPositionWeight: state.account.maxPositionWeight
+    };
+    Object.entries(fields).forEach(([id, value]) => {
+        const node = document.getElementById(id);
+        if (node) node.value = value ?? '';
+    });
+}
+
+function renderTradingStats() {
+    const state = loadTradingState();
+    const activeTrades = state.trades.filter(trade => trade.status === 'active');
+    const totals = activeTrades.reduce((acc, trade) => {
+        const calc = calcTradingTrade(trade);
+        acc.position += calc.marketValue;
+        acc.risk += calc.riskAmount;
+        acc.pnl += calc.pnl;
+        acc.entry += calc.entryValue;
+        return acc;
+    }, { position: 0, risk: 0, pnl: 0, entry: 0 });
+    const assets = Number(state.account.totalAssets || 0);
+    const principal = Number(state.account.principal || 0);
+    const cash = assets - totals.position;
+    const realized = assets - principal;
+    const riskPct = assets ? (totals.risk / assets) * 100 : 0;
+    const pnlPct = totals.entry ? (totals.pnl / totals.entry) * 100 : 0;
+
+    const statAssets = document.getElementById('tradingStatAssets');
+    const statProfit = document.getElementById('tradingStatProfit');
+    const statPosition = document.getElementById('tradingStatPosition');
+    const statCash = document.getElementById('tradingStatCash');
+    const statRisk = document.getElementById('tradingStatRisk');
+    const statRiskPct = document.getElementById('tradingStatRiskPct');
+    const statPnl = document.getElementById('tradingStatPnl');
+    const statPnlPct = document.getElementById('tradingStatPnlPct');
+
+    if (statAssets) statAssets.textContent = `¥${tradingMoney(assets)}`;
+    if (statProfit) {
+        statProfit.textContent = `累计盈亏：${realized >= 0 ? '+' : ''}¥${tradingMoney(realized)}`;
+        statProfit.className = `metric-note ${realized >= 0 ? 'trading-positive' : 'trading-negative'}`;
+    }
+    if (statPosition) statPosition.textContent = `¥${tradingMoney(totals.position)}`;
+    if (statCash) statCash.textContent = `现金估算：¥${tradingMoney(cash)}`;
+    if (statRisk) statRisk.textContent = `¥${tradingMoney(totals.risk)}`;
+    if (statRiskPct) statRiskPct.textContent = `占账户：${tradingPercent(riskPct)}`;
+    if (statPnl) {
+        statPnl.textContent = `${totals.pnl >= 0 ? '+' : ''}¥${tradingMoney(totals.pnl)}`;
+        statPnl.className = `metric-value ${totals.pnl >= 0 ? 'trading-positive' : 'trading-negative'}`;
+    }
+    if (statPnlPct) statPnlPct.textContent = `持仓盈亏率：${pnlPct >= 0 ? '+' : ''}${tradingPercent(pnlPct)}`;
+}
+
+function renderTradingDiscipline() {
+    const state = loadTradingState();
+    const box = document.getElementById('tradingDisciplineBox');
+    if (!box) return;
+    const items = [
+        ['reason', '买入理由写清楚'],
+        ['invalid', '技术无效点写清楚'],
+        ['risk', '最大亏损能接受'],
+        ['noImpulse', '没有因为怕踏空追买']
+    ];
+    box.innerHTML = `
+        <h4>开仓前四问</h4>
+        ${items.map(([key, label]) => `
+            <label class="trading-check">
+                <input type="checkbox" data-trading-discipline="${key}" ${state.discipline[key] ? 'checked' : ''}>
+                <span>${escapeHTML(label)}</span>
+            </label>
+        `).join('')}
+    `;
+    box.querySelectorAll('[data-trading-discipline]').forEach(input => {
+        input.addEventListener('change', () => {
+            state.discipline[input.dataset.tradingDiscipline] = input.checked;
+            saveTradingState();
+        });
+    });
+}
+
+function renderTradingCards() {
+    const state = loadTradingState();
+    const list = document.getElementById('tradingList');
+    const empty = document.getElementById('tradingEmptyState');
+    if (!list) return;
+    const search = (document.getElementById('tradingSearch')?.value || '').trim().toLowerCase();
+    const visibleTrades = state.trades.filter(trade => {
+        const matchesFilter = state.filter === 'all' || trade.status === state.filter;
+        const haystack = `${trade.stockName || ''} ${trade.stockCode || ''}`.toLowerCase();
+        return matchesFilter && haystack.includes(search);
+    });
+    if (empty) empty.classList.toggle('hidden', visibleTrades.length > 0);
+    list.innerHTML = visibleTrades.map(trade => {
+        const calc = calcTradingTrade(trade);
+        const pnlClass = calc.pnl >= 0 ? 'trading-positive' : 'trading-negative';
+        const statusText = trade.status === 'active' ? '持仓' : '已清仓';
+        return `
+            <article class="trading-card">
+                <div class="trading-card-head">
+                    <div class="trading-stock-title">
+                        <strong>${escapeHTML(trade.stockName || '--')} <span>${escapeHTML(trade.stockCode || '--')}</span></strong>
+                        <span>${escapeHTML(trade.entryDate || '--')} · ${escapeHTML(trade.positionLabel || '未标记')} · ${statusText}</span>
+                    </div>
+                    <div class="trading-num">
+                        <span class="trading-mini-label">持仓市值</span>
+                        <b>¥${tradingMoney(calc.marketValue)}</b>
+                    </div>
+                    <div class="trading-num">
+                        <span class="trading-mini-label">仓位占比</span>
+                        <b>${tradingPercent(calc.weight)}</b>
+                    </div>
+                    <div class="trading-num">
+                        <span class="trading-mini-label">浮动盈亏</span>
+                        <b class="${pnlClass}">${calc.pnl >= 0 ? '+' : ''}¥${tradingMoney(calc.pnl)}</b>
+                    </div>
+                    <div class="trading-num">
+                        <span class="trading-mini-label">盈亏率</span>
+                        <b class="${pnlClass}">${calc.pnlPct >= 0 ? '+' : ''}${tradingPercent(calc.pnlPct)}</b>
+                    </div>
+                    <div class="item-actions compact-actions">
+                        <button type="button" onclick="openTradingDialog('${escapeJSString(trade.id)}')">编辑</button>
+                        <button type="button" onclick="deleteTradingTrade('${escapeJSString(trade.id)}')">删除</button>
+                    </div>
+                </div>
+                <div class="trading-card-body">
+                    <div>
+                        <div class="trading-plan-grid">
+                            <div class="trading-pill">
+                                <span>买入 / 当前</span>
+                                <b>${tradingMoney(trade.entryPrice)} / ${tradingMoney(trade.currentPrice)}</b>
+                            </div>
+                            <div class="trading-pill ${tradingRiskClass(calc)}">
+                                <span>技术无效点</span>
+                                <b>${tradingMoney(trade.invalidPrice)} · 风险 ¥${tradingMoney(calc.riskAmount)}</b>
+                            </div>
+                            <div class="trading-pill">
+                                <span>观察 / 压力</span>
+                                <b>${escapeHTML(trade.targetOne || '--')} / ${escapeHTML(trade.targetTwo || '--')}</b>
+                            </div>
+                        </div>
+                        <div class="trading-notes">
+                            <div class="trading-note">
+                                <span>交易模式</span>
+                                <p>${escapeHTML(trade.tradeMode || '未填写')}</p>
+                            </div>
+                            <div class="trading-note">
+                                <span>买入理由</span>
+                                <p>${escapeHTML(trade.buyReason || '未填写')}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="trading-notes">
+                        <div class="trading-note">
+                            <span>退出/加仓规则</span>
+                            <p>${escapeHTML(trade.exitRules || '未填写')}</p>
+                        </div>
+                        <div class="trading-note">
+                            <span>盘后复盘</span>
+                            <p>${escapeHTML(trade.review || '盘后再写')}</p>
+                        </div>
+                    </div>
+                </div>
+            </article>
+        `;
+    }).join('');
+}
+
+function renderTradingSystem() {
+    loadTradingState();
+    renderTradingAccount();
+    renderTradingStats();
+    renderTradingDiscipline();
+    renderTradingCards();
+    document.querySelectorAll('[data-trading-filter]').forEach(button => {
+        button.classList.toggle('active', button.dataset.tradingFilter === tradingState.filter);
+    });
+}
+
+function saveTradingAccount() {
+    const state = loadTradingState();
+    state.account = {
+        principal: tradingNumberInput('tradingPrincipal'),
+        totalAssets: tradingNumberInput('tradingTotalAssets'),
+        maxTradeRisk: tradingNumberInput('tradingMaxTradeRisk'),
+        maxPositionWeight: tradingNumberInput('tradingMaxPositionWeight')
+    };
+    saveTradingState();
+    renderTradingSystem();
+}
+
+function bindTradingSystem() {
+    loadTradingState();
+    document.querySelectorAll('[data-trading-filter]').forEach(button => {
+        button.addEventListener('click', () => {
+            tradingState.filter = button.dataset.tradingFilter;
+            saveTradingState();
+            renderTradingSystem();
+        });
+    });
+    ['tradingPrincipal', 'tradingTotalAssets', 'tradingMaxTradeRisk', 'tradingMaxPositionWeight'].forEach(id => {
+        const node = document.getElementById(id);
+        if (node) node.addEventListener('change', saveTradingAccount);
+    });
+    const search = document.getElementById('tradingSearch');
+    if (search) search.addEventListener('input', renderTradingCards);
+    const importFile = document.getElementById('tradingImportFile');
+    if (importFile) importFile.addEventListener('change', importTradingData);
+    const form = document.getElementById('tradingForm');
+    if (form) {
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            saveTradingTradeFromForm();
+        });
+    }
+}
+
+function openTradingDialog(id = '') {
+    const state = loadTradingState();
+    const trade = id ? state.trades.find(item => item.id === id) : null;
+    const dialog = document.getElementById('tradingDialog');
+    if (!dialog) return;
+    document.getElementById('tradingDialogTitle').textContent = trade ? '编辑交易' : '新建交易';
+    document.getElementById('tradingTradeId').value = trade?.id || '';
+    document.getElementById('tradingStockName').value = trade?.stockName || '';
+    document.getElementById('tradingStockCode').value = trade?.stockCode || '';
+    document.getElementById('tradingTradeStatus').value = trade?.status || 'active';
+    document.getElementById('tradingEntryDate').value = trade?.entryDate || localDateString();
+    document.getElementById('tradingEntryPrice').value = trade?.entryPrice ?? '';
+    document.getElementById('tradingShares').value = trade?.shares ?? '';
+    document.getElementById('tradingCurrentPrice').value = trade?.currentPrice ?? '';
+    document.getElementById('tradingInvalidPrice').value = trade?.invalidPrice ?? '';
+    document.getElementById('tradingPositionLabel').value = trade?.positionLabel || '试错仓';
+    document.getElementById('tradingTargetOne').value = trade?.targetOne || '';
+    document.getElementById('tradingTargetTwo').value = trade?.targetTwo || '';
+    document.getElementById('tradingTradeMode').value = trade?.tradeMode || '';
+    document.getElementById('tradingBuyReason').value = trade?.buyReason || '';
+    document.getElementById('tradingExitRules').value = trade?.exitRules || '';
+    document.getElementById('tradingReview').value = trade?.review || '';
+    dialog.classList.add('open');
+    dialog.setAttribute('aria-hidden', 'false');
+    setTimeout(() => document.getElementById('tradingStockName')?.focus(), 50);
+}
+
+function closeTradingDialog() {
+    const dialog = document.getElementById('tradingDialog');
+    if (!dialog) return;
+    dialog.classList.remove('open');
+    dialog.setAttribute('aria-hidden', 'true');
+}
+
+function saveTradingTradeFromForm() {
+    const state = loadTradingState();
+    const id = document.getElementById('tradingTradeId').value || `trade-${Date.now()}`;
+    const trade = {
+        id,
+        stockName: document.getElementById('tradingStockName').value.trim(),
+        stockCode: document.getElementById('tradingStockCode').value.trim(),
+        status: document.getElementById('tradingTradeStatus').value,
+        entryDate: document.getElementById('tradingEntryDate').value,
+        entryPrice: tradingNumberInput('tradingEntryPrice'),
+        shares: tradingNumberInput('tradingShares'),
+        currentPrice: tradingNumberInput('tradingCurrentPrice'),
+        invalidPrice: tradingNumberInput('tradingInvalidPrice'),
+        positionLabel: document.getElementById('tradingPositionLabel').value,
+        targetOne: document.getElementById('tradingTargetOne').value.trim(),
+        targetTwo: document.getElementById('tradingTargetTwo').value.trim(),
+        tradeMode: document.getElementById('tradingTradeMode').value.trim(),
+        buyReason: document.getElementById('tradingBuyReason').value.trim(),
+        exitRules: document.getElementById('tradingExitRules').value.trim(),
+        review: document.getElementById('tradingReview').value.trim()
+    };
+    const idx = state.trades.findIndex(item => item.id === id);
+    if (idx >= 0) state.trades[idx] = trade;
+    else state.trades.unshift(trade);
+    saveTradingState();
+    closeTradingDialog();
+    renderTradingSystem();
+}
+
+function deleteTradingTrade(id) {
+    const state = loadTradingState();
+    const trade = state.trades.find(item => item.id === id);
+    if (!confirm(`删除 ${trade?.stockName || '这笔交易'} 的交易卡？`)) return;
+    state.trades = state.trades.filter(item => item.id !== id);
+    saveTradingState();
+    renderTradingSystem();
+}
+
+function exportTradingData() {
+    const state = loadTradingState();
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `trading-system-${localDateString()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
+function importTradingData(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const imported = JSON.parse(String(reader.result || '{}'));
+            if (!imported.account || !Array.isArray(imported.trades)) throw new Error('bad shape');
+            tradingState = {
+                ...cloneTradingState(defaultTradingState),
+                ...imported,
+                account: { ...defaultTradingState.account, ...(imported.account || {}) },
+                discipline: { ...defaultTradingState.discipline, ...(imported.discipline || {}) }
+            };
+            saveTradingState();
+            renderTradingSystem();
+        } catch (error) {
+            alert('导入失败：请选择交易系统导出的 JSON 文件。');
+        } finally {
+            event.target.value = '';
+        }
+    };
+    reader.readAsText(file);
+}
+
 function formatPercent(value) {
     if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '--';
     const num = Number(value);
@@ -2787,6 +3231,8 @@ function clearHQFormulaOverlay() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+        bindTradingSystem();
+        renderTradingSystem();
         await refreshSystemStatus();
         setInterval(refreshSystemStatus, 30000);
         if (!currentStock) {

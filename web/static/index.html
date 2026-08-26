@@ -50,6 +50,7 @@
             <button class="workspace-tab" onclick="switchWorkspace('dataCenter', this)">数据中心</button>
             <button class="workspace-tab" onclick="switchWorkspace('selectionResults', this)">选股结果</button>
             <button class="workspace-tab" onclick="switchWorkspace('dailyReview', this)">每日复盘</button>
+            <button class="workspace-tab" onclick="switchWorkspace('tradingSystem', this)">交易系统</button>
             <button class="workspace-tab" onclick="switchWorkspace('strategies', this)">策略中心</button>
             <button class="workspace-tab" onclick="switchWorkspace('automations', this)">自动化</button>
             <button class="workspace-tab" onclick="switchWorkspace('webhooks', this)">Webhook</button>
@@ -630,6 +631,89 @@
             </div>
         </section>
 
+        <section id="tradingSystemWorkspace" class="workspace">
+            <div class="trading-layout">
+                <aside class="trading-side card">
+                    <div class="card-header">
+                        <div>
+                            <h3>账户与纪律</h3>
+                            <p class="card-subtitle">本地自动保存</p>
+                        </div>
+                    </div>
+                    <div class="trading-form-grid two">
+                        <label>
+                            <span>本金</span>
+                            <input id="tradingPrincipal" type="number" step="0.01" min="0">
+                        </label>
+                        <label>
+                            <span>当前总资产</span>
+                            <input id="tradingTotalAssets" type="number" step="0.01" min="0">
+                        </label>
+                        <label>
+                            <span>单笔账户风险上限 %</span>
+                            <input id="tradingMaxTradeRisk" type="number" step="0.1" min="0">
+                        </label>
+                        <label>
+                            <span>单票仓位上限 %</span>
+                            <input id="tradingMaxPositionWeight" type="number" step="1" min="0">
+                        </label>
+                    </div>
+                    <div class="item-actions trading-actions">
+                        <button class="primary" type="button" onclick="saveTradingAccount()">保存账户</button>
+                        <button type="button" onclick="exportTradingData()">导出</button>
+                        <button type="button" onclick="document.getElementById('tradingImportFile').click()">导入</button>
+                        <input id="tradingImportFile" class="hidden-input" type="file" accept="application/json">
+                    </div>
+                    <div class="trading-discipline" id="tradingDisciplineBox"></div>
+                </aside>
+
+                <main class="trading-main">
+                    <div class="trading-stat-grid" aria-label="账户摘要">
+                        <div class="metric-card trading-stat">
+                            <span class="metric-label">总资产</span>
+                            <span class="metric-value" id="tradingStatAssets">--</span>
+                            <span class="metric-note" id="tradingStatProfit">--</span>
+                        </div>
+                        <div class="metric-card trading-stat">
+                            <span class="metric-label">持仓市值</span>
+                            <span class="metric-value" id="tradingStatPosition">--</span>
+                            <span class="metric-note" id="tradingStatCash">--</span>
+                        </div>
+                        <div class="metric-card trading-stat">
+                            <span class="metric-label">最大计划亏损</span>
+                            <span class="metric-value" id="tradingStatRisk">--</span>
+                            <span class="metric-note" id="tradingStatRiskPct">--</span>
+                        </div>
+                        <div class="metric-card trading-stat">
+                            <span class="metric-label">当前浮动盈亏</span>
+                            <span class="metric-value" id="tradingStatPnl">--</span>
+                            <span class="metric-note" id="tradingStatPnlPct">--</span>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <h3>交易卡</h3>
+                                <p class="card-subtitle">交易计划、风控计算、盘后复盘</p>
+                            </div>
+                            <div class="item-actions compact-actions">
+                                <input id="tradingSearch" class="compact-input" type="search" placeholder="搜索股票或代码">
+                                <button class="primary" type="button" onclick="openTradingDialog()">新建交易</button>
+                            </div>
+                        </div>
+                        <div class="trading-filter" aria-label="状态筛选">
+                            <button class="active" type="button" data-trading-filter="all">全部</button>
+                            <button type="button" data-trading-filter="active">持仓</button>
+                            <button type="button" data-trading-filter="closed">已清仓</button>
+                        </div>
+                        <div class="trading-list" id="tradingList"></div>
+                        <div class="data-item trading-empty hidden" id="tradingEmptyState">还没有交易卡。新建一笔交易，先写清楚买入理由、无效点和处理计划。</div>
+                    </div>
+                </main>
+            </div>
+        </section>
+
         <section id="webhooksWorkspace" class="workspace">
             <div class="panel-grid two">
                 <div class="card">
@@ -648,6 +732,95 @@
                 </div>
             </div>
         </section>
+
+        <div class="modal-shell" id="tradingDialog" aria-hidden="true">
+            <div class="modal-backdrop" onclick="closeTradingDialog()"></div>
+            <div class="modal-panel trading-modal-panel" role="dialog" aria-modal="true" aria-labelledby="tradingDialogTitle">
+                <div class="modal-header">
+                    <h3 id="tradingDialogTitle">新建交易</h3>
+                    <button type="button" onclick="closeTradingDialog()">×</button>
+                </div>
+                <form id="tradingForm" class="trading-modal-body">
+                    <input id="tradingTradeId" type="hidden">
+                    <div class="trading-form-grid three">
+                        <label>
+                            <span>股票名称</span>
+                            <input id="tradingStockName" required>
+                        </label>
+                        <label>
+                            <span>代码</span>
+                            <input id="tradingStockCode" required>
+                        </label>
+                        <label>
+                            <span>状态</span>
+                            <select id="tradingTradeStatus">
+                                <option value="active">持仓</option>
+                                <option value="closed">已清仓</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>买入日期</span>
+                            <input id="tradingEntryDate" type="date">
+                        </label>
+                        <label>
+                            <span>买入价</span>
+                            <input id="tradingEntryPrice" type="number" step="0.01" min="0" required>
+                        </label>
+                        <label>
+                            <span>股数</span>
+                            <input id="tradingShares" type="number" step="100" min="0" required>
+                        </label>
+                        <label>
+                            <span>当前价</span>
+                            <input id="tradingCurrentPrice" type="number" step="0.01" min="0" required>
+                        </label>
+                        <label>
+                            <span>技术无效点</span>
+                            <input id="tradingInvalidPrice" type="number" step="0.01" min="0" required>
+                        </label>
+                        <label>
+                            <span>仓位标签</span>
+                            <select id="tradingPositionLabel">
+                                <option value="试错仓">试错仓</option>
+                                <option value="确认仓">确认仓</option>
+                                <option value="趋势仓">趋势仓</option>
+                                <option value="观察仓">观察仓</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="trading-form-grid two">
+                        <label>
+                            <span>第一观察/压力位</span>
+                            <input id="tradingTargetOne" placeholder="例如 42.60-43.30">
+                        </label>
+                        <label>
+                            <span>强压力/止盈区</span>
+                            <input id="tradingTargetTwo" placeholder="例如 45-46">
+                        </label>
+                    </div>
+                    <label>
+                        <span>交易模式</span>
+                        <input id="tradingTradeMode" placeholder="例如 强势股回调支撑试错">
+                    </label>
+                    <label>
+                        <span>买入理由</span>
+                        <textarea id="tradingBuyReason" rows="3"></textarea>
+                    </label>
+                    <label>
+                        <span>退出/加仓规则</span>
+                        <textarea id="tradingExitRules" rows="3"></textarea>
+                    </label>
+                    <label>
+                        <span>盘后复盘</span>
+                        <textarea id="tradingReview" rows="3" placeholder="盘后填写：有没有按计划执行？量能如何？情绪有没有影响操作？"></textarea>
+                    </label>
+                    <div class="item-actions modal-actions">
+                        <button type="button" onclick="closeTradingDialog()">取消</button>
+                        <button class="primary" type="submit">保存交易</button>
+                    </div>
+                </form>
+            </div>
+        </div>
 
         <!-- 加载指示器 -->
         <div id="loading" class="loading" style="display: none;">

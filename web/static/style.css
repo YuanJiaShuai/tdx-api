@@ -1460,6 +1460,300 @@ textarea::placeholder {
     font-size: 12px;
 }
 
+.trading-layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.trading-side {
+    position: sticky;
+    top: 72px;
+}
+
+.trading-main {
+    min-width: 0;
+}
+
+.trading-form-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.trading-form-grid.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.trading-form-grid.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trading-form-grid label,
+.trading-modal-body label {
+    display: grid;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.trading-form-grid input,
+.trading-form-grid select,
+.trading-modal-body input,
+.trading-modal-body select,
+.trading-modal-body textarea {
+    margin-bottom: 0;
+}
+
+.trading-actions {
+    margin: 12px 0 16px;
+}
+
+.hidden-input {
+    display: none;
+}
+
+.trading-discipline {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: var(--panel-muted);
+}
+
+.trading-discipline h4 {
+    margin: 0 0 4px;
+    color: var(--ink);
+    font-size: 14px;
+}
+
+.trading-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.trading-check input {
+    width: 16px;
+    min-height: 16px;
+    margin: 1px 0 0;
+    flex: 0 0 auto;
+}
+
+.trading-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.trading-stat {
+    min-height: 104px;
+}
+
+.trading-positive {
+    color: var(--danger-color) !important;
+}
+
+.trading-negative {
+    color: var(--success-color) !important;
+}
+
+.trading-neutral {
+    color: var(--text-secondary) !important;
+}
+
+.compact-input {
+    width: min(240px, 100%);
+    min-height: 34px;
+    margin-bottom: 0;
+}
+
+.trading-filter {
+    display: inline-flex;
+    overflow: hidden;
+    margin-bottom: 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.trading-filter button {
+    min-height: 34px;
+    padding: 7px 12px;
+    border: 0;
+    border-right: 1px solid var(--line);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.trading-filter button:last-child {
+    border-right: 0;
+}
+
+.trading-filter button.active {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+.trading-list {
+    display: grid;
+    gap: 12px;
+}
+
+.trading-card {
+    overflow: hidden;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.trading-card-head {
+    display: grid;
+    grid-template-columns: minmax(170px, 1.1fr) repeat(4, minmax(96px, 0.7fr)) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 14px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--panel-muted);
+}
+
+.trading-stock-title {
+    min-width: 0;
+}
+
+.trading-stock-title strong {
+    display: block;
+    color: var(--ink);
+    font-size: 16px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.trading-stock-title span,
+.trading-mini-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.trading-num {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.trading-num b {
+    color: var(--ink);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.trading-card-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+    gap: 14px;
+    padding: 14px;
+}
+
+.trading-plan-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.trading-pill,
+.trading-note {
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: var(--panel-muted);
+}
+
+.trading-pill {
+    min-height: 70px;
+    padding: 10px;
+}
+
+.trading-pill span,
+.trading-note span {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.trading-pill b {
+    display: block;
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.trading-risk-safe {
+    border-left: 4px solid var(--success-color);
+    background: var(--success-soft);
+}
+
+.trading-risk-watch {
+    border-left: 4px solid var(--warning-color);
+    background: var(--warning-soft);
+}
+
+.trading-risk-bad {
+    border-left: 4px solid var(--danger-color);
+    background: var(--danger-soft);
+}
+
+.trading-notes {
+    display: grid;
+    gap: 10px;
+}
+
+.trading-note {
+    padding: 10px;
+    background: #ffffff;
+}
+
+.trading-note p {
+    margin: 0;
+    color: var(--text-color);
+    font-size: 13px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.trading-empty.hidden {
+    display: none;
+}
+
+.trading-modal-panel {
+    width: min(900px, calc(100vw - 40px));
+}
+
+.trading-modal-body {
+    display: grid;
+    gap: 12px;
+}
+
+.modal-actions {
+    justify-content: flex-end;
+    padding-top: 4px;
+}
+
 .data-table-wrap {
     max-height: 520px;
     overflow: auto;
@@ -1955,7 +2249,21 @@ textarea::placeholder {
 
     .decision-grid,
     .decision-detail-grid,
+    .trading-layout,
     .strategy-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .trading-side {
+        position: static;
+    }
+
+    .trading-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .trading-card-head,
+    .trading-card-body {
         grid-template-columns: 1fr;
     }
 
@@ -2083,6 +2391,22 @@ textarea::placeholder {
     .score-grid,
     .track-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .trading-form-grid.two,
+    .trading-form-grid.three,
+    .trading-plan-grid,
+    .trading-stat-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .trading-filter,
+    .compact-input {
+        width: 100%;
+    }
+
+    .trading-filter button {
+        flex: 1 1 0;
     }
 
     .stock-info-grid,
