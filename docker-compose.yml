@@ -1,16 +1,20 @@
+name: tdx-workbench
+
 services:
-  stock-web:
+  market-service:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: tdx-stock-web
+      dockerfile: services/market-service/Dockerfile
+    container_name: tdx-workbench-market
     ports:
-      - "8080:8080"
+      - "18081:8081"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
+      - TDX_APP_ROLE=market-service
+      - PORT=8081
     dns:
       - 223.5.5.5
       - 119.29.29.29
@@ -18,13 +22,94 @@ services:
     networks:
       - stock-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 5s
+      start_period: 10s
+
+  formula-worker:
+    build:
+      context: .
+      dockerfile: services/formula-worker/Dockerfile
+    container_name: tdx-workbench-formula
+    ports:
+      - "18712:8712"
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - FORMULA_WORKER_HOST=0.0.0.0
+      - FORMULA_WORKER_PORT=8712
+    networks:
+      - stock-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8712/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  selection-worker:
+    build:
+      context: .
+      dockerfile: services/selection-worker/Dockerfile
+    container_name: tdx-workbench-selection
+    ports:
+      - "18082:8082"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - TDX_APP_ROLE=selection-worker
+      - PORT=8082
+      - FORMULA_WORKER_URL=http://formula-worker:8712
+      - MARKET_SERVICE_URL=http://market-service:8081
+      - AUTOMATION_SCHEDULER_ENABLED=true
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 8.8.8.8
+    networks:
+      - stock-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  stock-web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: tdx-workbench-web
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - TDX_APP_ROLE=web
+      - PORT=8080
+      - MARKET_SERVICE_URL=http://market-service:8081
+      - FORMULA_WORKER_URL=http://formula-worker:8712
+      - AUTOMATION_SCHEDULER_ENABLED=false
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 8.8.8.8
+    networks:
+      - stock-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     labels:
-      - "com.stock.description=TDX Stock Data Query System"
+      - "com.stock.description=TDX Workbench"
       - "com.stock.version=1.0.0"
 
 networks:

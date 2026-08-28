@@ -137,6 +137,9 @@ func (c *FormulaWorkerClient) Run(ctx context.Context, reqData FormulaRunRequest
 }
 
 func buildFormulaData(symbols []string, symbol, period string, calcCount int) (map[string][]FormulaKline, error) {
+	if err := initMarketRuntime(false, false); err != nil {
+		return nil, err
+	}
 	if len(symbols) == 0 && symbol != "" {
 		symbols = []string{symbol}
 	}

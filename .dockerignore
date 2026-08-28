@@ -32,8 +32,8 @@ vendor/
 *.sum.lock
 
 # Web compiled
-web/stock-web
-web/*.exe
+apps/web/stock-web
+apps/web/*.exe
 
 # Runtime data and generated artifacts
 data/

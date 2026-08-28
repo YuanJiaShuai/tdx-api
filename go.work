@@ -1,0 +1,6 @@
+go 1.23
+
+use (
+	./apps/web
+	./packages/tdx-core
+)

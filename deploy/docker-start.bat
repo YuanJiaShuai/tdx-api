@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ========================================
-echo   TDX股票数据查询系统 - Docker版
+echo   TDX Workbench - Docker版
 echo ========================================
 echo.
 
@@ -31,16 +31,16 @@ if errorlevel 1 (
 echo [√] Docker正在运行
 echo.
 
-REM 检查docker-compose是否可用
-docker-compose --version >nul 2>&1
+REM 检查 Docker Compose 是否可用
+docker compose version >nul 2>&1
 if errorlevel 1 (
-    echo [错误] docker-compose不可用
+    echo [错误] Docker Compose 不可用，请先安装或升级 Docker Desktop
     echo.
     pause
     exit /b 1
 )
 
-echo [√] docker-compose可用
+echo [√] Docker Compose 可用
 echo.
 
 echo ----------------------------------------
@@ -49,7 +49,7 @@ echo ----------------------------------------
 echo.
 
 REM 启动服务
-docker-compose up -d
+docker compose up -d --build
 
 if errorlevel 1 (
     echo.
@@ -67,10 +67,10 @@ echo.
 echo 访问地址: http://localhost:8080
 echo.
 echo 常用命令:
-echo   查看日志: docker-compose logs -f
-echo   停止服务: docker-compose stop
-echo   重启服务: docker-compose restart
-echo   完全清理: docker-compose down
+echo   查看日志: docker compose logs -f
+echo   停止服务: docker compose stop
+echo   重启Web: docker compose restart stock-web
+echo   完全清理: docker compose down
 echo.
 echo ----------------------------------------
 
@@ -84,4 +84,3 @@ echo.
 echo 浏览器已打开，请稍候...
 echo.
 pause
-

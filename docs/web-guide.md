@@ -116,7 +116,7 @@ Webhook 使用 `POST` JSON：
 ## 使用建议
 
 - 日/周/月 K 线默认使用同花顺前复权数据。
-- Docker 模式会自动启动公式 worker；源码模式需要先运行 `python3 formula-worker/worker.py`。
+- Docker 模式会自动启动公式 worker；源码模式需要先运行 `python3 services/formula-worker/worker.py`。
 - 可通过 `/api/formula/health` 查看当前公式引擎，`engine=hqchartpy2` 表示已经使用 HQChartPy2。
 - 原始通达信 K 线可调用 `/api/kline-all/tdx`。
 - 如果遇到分时为空，先确认查询日期是否为交易日。

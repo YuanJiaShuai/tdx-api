@@ -11,7 +11,7 @@
 | Docker 部署完成/快速参考 | 常用命令合并到 [部署指南](deployment-guide.md) |
 | Web 演示/使用指南 | 精简为 [Web 使用指南](web-guide.md) |
 | 前复权更新说明 | 细节见 [除权除息与复权算法](gbbq-adjustment.md)，接口说明见 [API 参考](api-reference.md) |
-| 图表修复更新 | 已体现在当前 `web/static/` 代码中 |
+| 图表修复更新 | 已体现在当前 `apps/web/static/` 代码中 |
 | 2025-11-10 更新说明 | 全量 K 线、历史成交、交易日、任务接口已进入 [API 参考](api-reference.md) |
 
 ## 当前长期文档

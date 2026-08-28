@@ -133,6 +133,60 @@ type Webhook struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
+type TradingAccount struct {
+	Principal         float64 `json:"principal"`
+	TotalAssets       float64 `json:"totalAssets"`
+	MaxTradeRisk      float64 `json:"maxTradeRisk"`
+	MaxPositionWeight float64 `json:"maxPositionWeight"`
+}
+
+type TradingDiscipline struct {
+	Reason    bool `json:"reason"`
+	Invalid   bool `json:"invalid"`
+	Risk      bool `json:"risk"`
+	NoImpulse bool `json:"noImpulse"`
+}
+
+type TradingFeeConfig struct {
+	BuyCommissionRate   float64 `json:"buyCommissionRate"`
+	SellCommissionRate  float64 `json:"sellCommissionRate"`
+	StampTaxRate        float64 `json:"stampTaxRate"`
+	TransferFeeRate     float64 `json:"transferFeeRate"`
+	MinCommission       float64 `json:"minCommission"`
+}
+
+type TradingTrade struct {
+	ID            string  `json:"id"`
+	StockName     string  `json:"stockName"`
+	StockCode     string  `json:"stockCode"`
+	Status        string  `json:"status"`
+	EntryDate     string  `json:"entryDate"`
+	EntryPrice    float64 `json:"entryPrice"`
+	CurrentPrice  float64 `json:"currentPrice"`
+	PreviousClose float64 `json:"previousClosePrice"`
+	Shares        float64 `json:"shares"`
+	InvalidPrice  float64 `json:"invalidPrice"`
+	PositionLabel string  `json:"positionLabel"`
+	TargetOne     string  `json:"targetOne"`
+	TargetTwo     string  `json:"targetTwo"`
+	TradeMode     string  `json:"tradeMode"`
+	BuyReason     string  `json:"buyReason"`
+	ExitRules     string  `json:"exitRules"`
+	Review        string  `json:"review"`
+}
+
+type TradingSystemState struct {
+	Account    TradingAccount    `json:"account"`
+	Discipline TradingDiscipline `json:"discipline"`
+	Fees       TradingFeeConfig  `json:"fees"`
+	Filter     string            `json:"filter"`
+	Trades     []TradingTrade     `json:"trades"`
+	CreatedAt  string            `json:"createdAt,omitempty"`
+	UpdatedAt  string            `json:"updatedAt,omitempty"`
+}
+
+const TradingSystemStateID = "default"
+
 func OpenAppStore() (*AppStore, error) {
 	if err := os.MkdirAll(tdx.DefaultDatabaseDir, 0755); err != nil {
 		return nil, err
@@ -264,6 +318,12 @@ func (s *AppStore) migrate() error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS trading_system_state (
+			id TEXT PRIMARY KEY,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 
 	for _, stmt := range stmts {
@@ -321,7 +381,10 @@ func (s *AppStore) seedDefaults() error {
 	if err := s.ensureStrategyTemplates(); err != nil {
 		return err
 	}
-	return s.ensureFixedAutomationTasks()
+	if err := s.ensureFixedAutomationTasks(); err != nil {
+		return err
+	}
+	return s.ensureTradingSystemState()
 }
 
 func defaultStrategyTemplates() []Strategy {
@@ -395,6 +458,64 @@ func (s *AppStore) ensureFixedAutomationTasks() error {
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
 		"", "", "", "", now, now)
+	return err
+}
+
+func defaultTradingSystemState() TradingSystemState {
+	return TradingSystemState{
+		Account: TradingAccount{
+			Principal:         50000,
+			TotalAssets:       56279.20,
+			MaxTradeRisk:      1,
+			MaxPositionWeight: 30,
+		},
+		Discipline: TradingDiscipline{
+			Reason:    false,
+			Invalid:   false,
+			Risk:      false,
+			NoImpulse: false,
+		},
+		Fees: TradingFeeConfig{
+			BuyCommissionRate:  0.03,
+			SellCommissionRate: 0.03,
+			StampTaxRate:       0.05,
+			TransferFeeRate:    0.001,
+			MinCommission:      5,
+		},
+		Filter: "all",
+		Trades: []TradingTrade{
+			{
+				ID:            "serveyou-2026-08-26",
+				StockName:     "税友股份",
+				StockCode:     "603171",
+				Status:        "active",
+				EntryDate:     "2026-08-26",
+				EntryPrice:    40.80,
+				CurrentPrice:  40.29,
+				Shares:        300,
+				InvalidPrice:  39.60,
+				PositionLabel: "试错仓",
+				TargetOne:     "40.80 / 42.60-43.30",
+				TargetTwo:     "45-46",
+				TradeMode:     "强势股回调到关键支撑附近，轻仓试错，博短线止跌修复。",
+				BuyReason:     "1. 前期从 34.42 附近启动，最高冲到 52.10，说明曾经有明显资金推动。\n2. 从 8月6日高点 52.10 回落到 40 元附近，跌幅较大，短线存在修复可能。\n3. 当前价格接近 7月31日加速段低点 39.60 附近，属于重要短线观察区。\n4. 买入价 40.80 距离 39.60 风控位不远，单股风险约 1.20 元，亏损比例约 2.94%，风险可控。",
+				ExitRules:     "技术无效点：有效跌破 39.60 元。\n\n有效跌破定义：\n1. 放量跌破 39.60，并且 15-30 分钟内不能快速收回；\n2. 或者当天收盘价低于 39.60；\n3. 或者跌破后反抽到 39.60-40.00 区间明显受压，再次回落。\n\n操作计划：\n1. 如果明天跌破 39.60 且收不回，先卖出 50% 或全部离场，保护本金。\n2. 如果盘中跌破 39.60 后快速拉回 40 元上方，先不急着卖完，观察是否是假破。\n3. 如果重新站稳 40.80 成本价，说明短线压力减轻，继续观察。\n4. 如果站上 42.60-43.30 区间，说明短线企稳增强，可考虑是否加确认仓。\n5. 如果反弹到 45-46 区间但放量滞涨，考虑止盈或减仓。\n6. 如果跌破 39.60 后反抽不过 40 元，不接回，不补仓。\n\n加仓条件：守住 39.60；重新站稳 40.80；放量站上 42.60-43.30。\n\n不加仓条件：跌破 39.60 后没有收回；反弹无量；冲高回落；大盘明显走弱；只是因为怕踏空而想追。\n\n止盈计划：快速反弹到 42.60-43.30 但量能不足，可先减一部分；放量突破 43.30 继续持有观察；到 45-46 附近冲不动，优先锁定利润；反弹途中跌回 40.80 下方，减仓。",
+				Review:        "盘后复盘：\n1. 今天有没有按计划执行？\n2. 买入理由是否仍然成立？\n3. 39.60 是否守住？\n4. 成交量是放大还是缩小？\n5. 反弹时有没有主动买盘？\n6. 我的操作是按规则，还是按情绪？\n7. 这笔交易下次哪里可以改进？",
+			},
+		},
+	}
+}
+
+func (s *AppStore) ensureTradingSystemState() error {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM trading_system_state`).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	state := defaultTradingSystemState()
+	_, err := s.UpsertTradingSystemState(state)
 	return err
 }
 
@@ -801,6 +922,128 @@ func (s *AppStore) UpsertDecisionNote(note DecisionNote) (DecisionNote, error) {
 			exclude_category=excluded.exclude_category,exclude_reason=excluded.exclude_reason,updated_at=excluded.updated_at`,
 		note.Symbol, note.Status, note.AddedPrice, note.AddReason, note.PlanBuy, note.StopLoss, note.ReviewNote, note.ExcludeCategory, note.ExcludeReason, note.CreatedAt, note.UpdatedAt)
 	return note, err
+}
+
+func normalizeTradingSystemState(state TradingSystemState) TradingSystemState {
+	state.Filter = strings.TrimSpace(state.Filter)
+	if state.Filter == "" {
+		state.Filter = "all"
+	}
+	state.Account = TradingAccount{
+		Principal:         state.Account.Principal,
+		TotalAssets:       state.Account.TotalAssets,
+		MaxTradeRisk:      state.Account.MaxTradeRisk,
+		MaxPositionWeight: state.Account.MaxPositionWeight,
+	}
+	state.Discipline = TradingDiscipline{
+		Reason:    state.Discipline.Reason,
+		Invalid:   state.Discipline.Invalid,
+		Risk:      state.Discipline.Risk,
+		NoImpulse: state.Discipline.NoImpulse,
+	}
+	state.Fees = normalizeTradingFeeConfig(state.Fees)
+	trades := make([]TradingTrade, 0, len(state.Trades))
+	for _, trade := range state.Trades {
+		trade.ID = strings.TrimSpace(trade.ID)
+		if trade.ID == "" {
+			trade.ID = uuid.NewString()
+		}
+		trade.StockName = strings.TrimSpace(trade.StockName)
+		trade.StockCode = strings.TrimSpace(trade.StockCode)
+		trade.Status = strings.TrimSpace(trade.Status)
+		if trade.Status == "" {
+			trade.Status = "active"
+		}
+		trade.EntryDate = strings.TrimSpace(trade.EntryDate)
+		trade.PositionLabel = strings.TrimSpace(trade.PositionLabel)
+		if trade.PositionLabel == "" {
+			trade.PositionLabel = "试错仓"
+		}
+		trade.TargetOne = strings.TrimSpace(trade.TargetOne)
+		trade.TargetTwo = strings.TrimSpace(trade.TargetTwo)
+		trade.TradeMode = strings.TrimSpace(trade.TradeMode)
+		trade.BuyReason = strings.TrimSpace(trade.BuyReason)
+		trade.ExitRules = strings.TrimSpace(trade.ExitRules)
+		trade.Review = strings.TrimSpace(trade.Review)
+		trades = append(trades, trade)
+	}
+	state.Trades = trades
+	if state.Trades == nil {
+		state.Trades = []TradingTrade{}
+	}
+	return state
+}
+
+func normalizeTradingFeeConfig(fees TradingFeeConfig) TradingFeeConfig {
+	if fees.BuyCommissionRate < 0 {
+		fees.BuyCommissionRate = 0
+	}
+	if fees.SellCommissionRate < 0 {
+		fees.SellCommissionRate = 0
+	}
+	if fees.StampTaxRate < 0 {
+		fees.StampTaxRate = 0
+	}
+	if fees.TransferFeeRate < 0 {
+		fees.TransferFeeRate = 0
+	}
+	if fees.MinCommission < 0 {
+		fees.MinCommission = 0
+	}
+	if fees.BuyCommissionRate == 0 && fees.SellCommissionRate == 0 && fees.StampTaxRate == 0 && fees.TransferFeeRate == 0 && fees.MinCommission == 0 {
+		return TradingFeeConfig{
+			BuyCommissionRate:  0.03,
+			SellCommissionRate: 0.03,
+			StampTaxRate:       0.05,
+			TransferFeeRate:    0.001,
+			MinCommission:      5,
+		}
+	}
+	return fees
+}
+
+func (s *AppStore) GetTradingSystemState() (TradingSystemState, error) {
+	var state TradingSystemState
+	var raw string
+	var createdAt, updatedAt string
+	err := s.db.QueryRow(`SELECT state_json,created_at,updated_at FROM trading_system_state WHERE id=?`, TradingSystemStateID).
+		Scan(&raw, &createdAt, &updatedAt)
+	if err != nil {
+		return state, err
+	}
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		return state, err
+	}
+	state = normalizeTradingSystemState(state)
+	state.CreatedAt = createdAt
+	state.UpdatedAt = updatedAt
+	if state.Trades == nil {
+		state.Trades = []TradingTrade{}
+	}
+	return state, nil
+}
+
+func (s *AppStore) UpsertTradingSystemState(state TradingSystemState) (TradingSystemState, error) {
+	state = normalizeTradingSystemState(state)
+	now := nowText()
+	old, err := s.GetTradingSystemState()
+	if err == nil {
+		state.CreatedAt = old.CreatedAt
+	} else {
+		state.CreatedAt = now
+	}
+	state.UpdatedAt = now
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return state, err
+	}
+	_, err = s.db.Exec(`INSERT INTO trading_system_state
+		(id,state_json,created_at,updated_at)
+		VALUES (?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			state_json=excluded.state_json,updated_at=excluded.updated_at`,
+		TradingSystemStateID, string(raw), state.CreatedAt, state.UpdatedAt)
+	return state, err
 }
 
 func (s *AppStore) SetDecisionStatus(symbol, status string) error {

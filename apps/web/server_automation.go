@@ -30,8 +30,10 @@ func initAutomationServices() error {
 	appStore = store
 	formulaWorker = NewFormulaWorkerClient()
 	automationRunner = NewAutomationRunner(appStore, formulaWorker)
-	if err := automationRunner.Start(); err != nil {
-		return err
+	if envBool("AUTOMATION_SCHEDULER_ENABLED", true) {
+		if err := automationRunner.Start(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -376,6 +378,36 @@ func handleDecisionNoteOperations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		successResponse(w, item)
+	default:
+		errorResponse(w, "不支持的请求方法")
+	}
+}
+
+func handleTradingSystemState(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		state, err := appStore.GetTradingSystemState()
+		if err == sql.ErrNoRows {
+			successResponse(w, defaultTradingSystemState())
+			return
+		}
+		if err != nil {
+			errorResponse(w, err.Error())
+			return
+		}
+		successResponse(w, state)
+	case http.MethodPut, http.MethodPost:
+		var req TradingSystemState
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			errorResponse(w, "请求参数错误: "+err.Error())
+			return
+		}
+		state, err := appStore.UpsertTradingSystemState(req)
+		if err != nil {
+			errorResponse(w, err.Error())
+			return
+		}
+		successResponse(w, state)
 	default:
 		errorResponse(w, "不支持的请求方法")
 	}
@@ -998,7 +1030,7 @@ func handleWebhookOperations(w http.ResponseWriter, r *http.Request) {
 		logs := sendWebhooks(r.Context(), []Webhook{hook}, WebhookEvent{
 			Event:   "webhook.test",
 			Status:  "success",
-			Message: "tdx-api webhook测试",
+			Message: "tdx-workbench webhook测试",
 		})
 		successResponse(w, logs)
 		return

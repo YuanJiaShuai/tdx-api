@@ -41,4 +41,4 @@ require (
 	xorm.io/xorm v1.3.9 // indirect
 )
 
-replace github.com/injoyai/tdx => ../
+replace github.com/injoyai/tdx => ../../packages/tdx-core

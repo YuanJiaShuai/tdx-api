@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票数据查询系统</title>
-    <link rel="stylesheet" href="style.css?v=strategy-visual-editor-20260607">
+    <link rel="stylesheet" href="style.css?v=trading-system-ui-20260827">
     <style>
         /* 确保图表容器占满宽度 */
         #klineChart, #minuteChart {
@@ -32,10 +32,6 @@
                 <div class="system-item">
                     <span class="system-label">服务</span>
                     <strong id="serviceStatusText">检测中</strong>
-                </div>
-                <div class="system-item">
-                    <span class="system-label">公式引擎</span>
-                    <strong id="formulaEngineText">检测中</strong>
                 </div>
                 <div class="system-item">
                     <span class="system-label">更新时间</span>
@@ -658,6 +654,31 @@
                             <input id="tradingMaxPositionWeight" type="number" step="1" min="0">
                         </label>
                     </div>
+                    <div class="trading-cost-panel">
+                        <h4>交易成本</h4>
+                        <div class="trading-form-grid two">
+                            <label>
+                                <span>买入佣金 %</span>
+                                <input id="tradingBuyCommissionRate" type="number" step="0.001" min="0">
+                            </label>
+                            <label>
+                                <span>卖出佣金 %</span>
+                                <input id="tradingSellCommissionRate" type="number" step="0.001" min="0">
+                            </label>
+                            <label>
+                                <span>印花税 %</span>
+                                <input id="tradingStampTaxRate" type="number" step="0.001" min="0">
+                            </label>
+                            <label>
+                                <span>过户费 %</span>
+                                <input id="tradingTransferFeeRate" type="number" step="0.001" min="0">
+                            </label>
+                            <label>
+                                <span>最低佣金 ¥</span>
+                                <input id="tradingMinCommission" type="number" step="0.01" min="0">
+                            </label>
+                        </div>
+                    </div>
                     <div class="item-actions trading-actions">
                         <button class="primary" type="button" onclick="saveTradingAccount()">保存账户</button>
                         <button type="button" onclick="exportTradingData()">导出</button>
@@ -685,7 +706,7 @@
                             <span class="metric-note" id="tradingStatRiskPct">--</span>
                         </div>
                         <div class="metric-card trading-stat">
-                            <span class="metric-label">当前浮动盈亏</span>
+                            <span class="metric-label">当前浮动盈亏（含费）</span>
                             <span class="metric-value" id="tradingStatPnl">--</span>
                             <span class="metric-note" id="tradingStatPnlPct">--</span>
                         </div>
@@ -698,6 +719,11 @@
                                 <p class="card-subtitle">交易计划、风控计算、盘后复盘</p>
                             </div>
                             <div class="item-actions compact-actions">
+                                <div class="trading-refresh-panel" aria-live="polite">
+                                    <span id="tradingRefreshStatus">等待刷新</span>
+                                    <span id="tradingRefreshCountdown">--:--</span>
+                                </div>
+                                <button type="button" onclick="refreshTradingQuotes({ manual: true })">刷新行情</button>
                                 <input id="tradingSearch" class="compact-input" type="search" placeholder="搜索股票或代码">
                                 <button class="primary" type="button" onclick="openTradingDialog()">新建交易</button>
                             </div>
@@ -829,9 +855,9 @@
         </div>
     </div>
 
-    <script src="chart-shim.js?v=strategy-visual-editor-20260607"></script>
-    <script src="chartlib/umychart.min.js?v=strategy-visual-editor-20260607"></script>
-    <script src="chart-adapter.js?v=strategy-visual-editor-20260607"></script>
-    <script src="app.js?v=strategy-visual-editor-20260607"></script>
+    <script src="chart-shim.js?v=trading-system-ui-20260827"></script>
+    <script src="chartlib/umychart.min.js?v=trading-system-ui-20260827"></script>
+    <script src="chart-adapter.js?v=trading-system-ui-20260827"></script>
+    <script src="app.js?v=trading-system-ui-20260827"></script>
 </body>
 </html>

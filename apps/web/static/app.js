@@ -11,6 +11,7 @@ let decisionResults = [];
 let dailyReview = null;
 let reviewItems = [];
 let tradingState = null;
+let tradingStateLoaded = false;
 let currentHQOverlay = null;
 let selectedDecisionResult = null;
 let selectedReviewItem = null;
@@ -33,7 +34,6 @@ let automationRunState = {
     progress: 0
 };
 
-const tradingStoreKey = 'tdx-personal-trading-system-v1';
 const defaultTradingState = {
     account: {
         principal: 50000,
@@ -46,6 +46,13 @@ const defaultTradingState = {
         invalid: false,
         risk: false,
         noImpulse: false
+    },
+    fees: {
+        buyCommissionRate: 0.03,
+        sellCommissionRate: 0.03,
+        stampTaxRate: 0.05,
+        transferFeeRate: 0.001,
+        minCommission: 5
     },
     filter: 'all',
     trades: [
@@ -69,6 +76,13 @@ const defaultTradingState = {
         }
     ]
 };
+const tradingStoreKey = 'tdx-personal-trading-system-v1';
+const tradingRefreshIntervalMS = 3 * 60 * 1000;
+let tradingRefreshTimer = null;
+let tradingNextRefreshAt = 0;
+let tradingRefreshing = false;
+let tradingLastRefreshAt = '';
+let tradingRefreshMessage = '交易时段每 3 分钟刷新';
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -94,20 +108,14 @@ async function apiFetch(url, options = {}) {
 
 async function refreshSystemStatus() {
     const serviceNode = document.getElementById('serviceStatusText');
-    const engineNode = document.getElementById('formulaEngineText');
     const timeNode = document.getElementById('systemTimeText');
-    if (!serviceNode || !engineNode || !timeNode) return;
+    if (!serviceNode || !timeNode) return;
     try {
-        const [status, formula] = await Promise.all([
-            apiFetch('/api/server-status'),
-            apiFetch('/api/formula/health')
-        ]);
+        const status = await apiFetch('/api/server-status');
         serviceNode.textContent = status.ready ? '运行正常' : (status.status || '异常');
-        engineNode.textContent = formula.engine || 'fallback';
         timeNode.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     } catch (error) {
         serviceNode.textContent = '连接异常';
-        engineNode.textContent = '--';
         timeNode.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     }
 }
@@ -135,7 +143,13 @@ function switchWorkspace(name, button) {
     if (name === 'dataCenter') loadDataCenter();
     if (name === 'selectionResults') loadSelectionResults();
     if (name === 'dailyReview') loadDailyReview();
-    if (name === 'tradingSystem') renderTradingSystem();
+    if (name === 'tradingSystem') {
+        renderTradingSystem();
+        startTradingAutoRefresh();
+        if (isTradingSession() && !tradingLastRefreshAt) {
+            refreshTradingQuotes({ silent: true });
+        }
+    }
     if (name === 'strategies') loadStrategyCenter();
     if (name === 'automations') loadAutomationData();
     if (name === 'webhooks') loadWebhooks();
@@ -229,6 +243,10 @@ function localDateString(date = new Date()) {
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+}
+
+function localTimeString(date = new Date()) {
+    return date.toLocaleTimeString('zh-CN', { hour12: false });
 }
 
 function setLoadingText(containerId, text = '加载中...') {
@@ -2346,39 +2364,141 @@ function cloneTradingState(value) {
 
 function loadTradingState() {
     if (tradingState) return tradingState;
-    try {
-        const raw = localStorage.getItem(tradingStoreKey);
-        if (!raw) {
-            tradingState = cloneTradingState(defaultTradingState);
-            return tradingState;
-        }
-        const parsed = JSON.parse(raw);
-        tradingState = {
-            ...cloneTradingState(defaultTradingState),
-            ...parsed,
-            account: { ...defaultTradingState.account, ...(parsed.account || {}) },
-            discipline: { ...defaultTradingState.discipline, ...(parsed.discipline || {}) },
-            trades: Array.isArray(parsed.trades) ? parsed.trades : []
-        };
-    } catch (error) {
-        tradingState = cloneTradingState(defaultTradingState);
-    }
+    tradingState = cloneTradingState(defaultTradingState);
     return tradingState;
 }
 
-function saveTradingState() {
-    if (!tradingState) loadTradingState();
-    localStorage.setItem(tradingStoreKey, JSON.stringify(tradingState));
+function normalizeTradingState(raw) {
+    const parsed = raw && typeof raw === 'object' ? raw : {};
+    return {
+        ...cloneTradingState(defaultTradingState),
+        ...parsed,
+        account: {
+            ...defaultTradingState.account,
+            ...(parsed.account || {})
+        },
+        discipline: {
+            ...defaultTradingState.discipline,
+            ...(parsed.discipline || {})
+        },
+        fees: {
+            ...defaultTradingState.fees,
+            ...(parsed.fees || {})
+        },
+        trades: Array.isArray(parsed.trades) ? parsed.trades : cloneTradingState(defaultTradingState.trades)
+    };
 }
 
-function tradingMoney(value) {
+function tradingStateSignature(raw) {
+    const state = normalizeTradingState(raw);
+    return JSON.stringify({
+        account: state.account,
+        discipline: state.discipline,
+        fees: state.fees,
+        filter: state.filter,
+        trades: state.trades
+    });
+}
+
+async function hydrateTradingState(force = false) {
+    if (tradingStateLoaded && tradingState && !force) return tradingState;
+    try {
+        const remote = normalizeTradingState(await apiFetch('/api/trading-system'));
+        const localRaw = localStorage.getItem(tradingStoreKey);
+        if (localRaw) {
+            try {
+                const local = normalizeTradingState(JSON.parse(localRaw));
+                const defaultSignature = tradingStateSignature(defaultTradingState);
+                if (tradingStateSignature(remote) === defaultSignature && tradingStateSignature(local) !== defaultSignature) {
+                    tradingState = local;
+                    tradingStateLoaded = true;
+                    await saveTradingState();
+                    return tradingState;
+                }
+            } catch {
+                // ignore local migration errors and keep remote as the source of truth
+            }
+        }
+        tradingState = remote;
+        localStorage.setItem(tradingStoreKey, JSON.stringify(tradingState));
+    } catch {
+        if (!tradingState) {
+            try {
+                const raw = localStorage.getItem(tradingStoreKey);
+                tradingState = raw ? normalizeTradingState(JSON.parse(raw)) : cloneTradingState(defaultTradingState);
+            } catch {
+                tradingState = cloneTradingState(defaultTradingState);
+            }
+        }
+    }
+    tradingStateLoaded = true;
+    return tradingState;
+}
+
+async function saveTradingState() {
+    if (!tradingState) loadTradingState();
+    try {
+        const saved = await apiFetch('/api/trading-system', {
+            method: 'PUT',
+            body: JSON.stringify(tradingState)
+        });
+        tradingState = normalizeTradingState(saved);
+        tradingStateLoaded = true;
+        localStorage.setItem(tradingStoreKey, JSON.stringify(tradingState));
+        return tradingState;
+    } catch (error) {
+        localStorage.setItem(tradingStoreKey, JSON.stringify(tradingState));
+        throw error;
+    }
+}
+
+function tradingMoney(value, decimals = 2) {
     const num = Number(value || 0);
-    return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return num.toLocaleString('zh-CN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function tradingPrice(value, decimals = 3) {
+    return tradingMoney(value, decimals);
+}
+
+function tradingQuantity(value) {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num)) return '--';
+    return num.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+}
+
+function tradingTrendClass(delta) {
+    const num = Number(delta || 0);
+    if (num > 0) return 'trading-positive';
+    if (num < 0) return 'trading-negative';
+    return 'trading-neutral';
+}
+
+function tradingSignedAmount(value, decimals = 2) {
+    const num = Number(value || 0);
+    const abs = tradingMoney(Math.abs(num), decimals);
+    return `${num >= 0 ? '+' : '-'}${abs}`;
 }
 
 function tradingPercent(value) {
     const num = Number(value || 0);
     return `${num.toFixed(2)}%`;
+}
+
+function tradingLineCount(text) {
+    return String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean).length;
+}
+
+function tradingSnippet(text, maxLines = 2) {
+    return String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .slice(0, maxLines)
+        .join(' ');
 }
 
 function tradingNumberInput(id) {
@@ -2388,22 +2508,208 @@ function tradingNumberInput(id) {
     return Number.isFinite(num) ? num : 0;
 }
 
+function tradingRateToDecimal(value) {
+    const num = Number(value || 0);
+    return Number.isFinite(num) ? num / 100 : 0;
+}
+
+function tradingCommission(turnover, ratePercent, minCommission = 0) {
+    const rate = tradingRateToDecimal(ratePercent);
+    if (!(turnover > 0) || !(rate > 0)) return 0;
+    return Math.max(turnover * rate, Number(minCommission || 0));
+}
+
+function tradingIsShanghai(symbol) {
+    return String(symbol || '').trim().startsWith('6');
+}
+
+function isTradingSession(date = new Date()) {
+    const day = date.getDay();
+    if (day === 0 || day === 6) return false;
+    const minutes = date.getHours() * 60 + date.getMinutes();
+    const morning = minutes >= 9 * 60 + 30 && minutes <= 11 * 60 + 30;
+    const afternoon = minutes >= 13 * 60 && minutes <= 15 * 60;
+    return morning || afternoon;
+}
+
+function isTradingWorkspaceActive() {
+    return document.getElementById('tradingSystemWorkspace')?.classList.contains('active');
+}
+
+function formatTradingCountdown(ms) {
+    const safe = Math.max(0, Math.ceil(ms / 1000));
+    const minutes = String(Math.floor(safe / 60)).padStart(2, '0');
+    const seconds = String(safe % 60).padStart(2, '0');
+    return `${minutes}:${seconds}`;
+}
+
+function updateTradingRefreshStatus() {
+    const statusNode = document.getElementById('tradingRefreshStatus');
+    const countdownNode = document.getElementById('tradingRefreshCountdown');
+    if (!statusNode || !countdownNode) return;
+
+    if (tradingRefreshing) {
+        statusNode.textContent = '正在刷新行情';
+        countdownNode.textContent = '--:--';
+        return;
+    }
+
+    if (!isTradingSession()) {
+        statusNode.textContent = tradingLastRefreshAt ? `上次刷新 ${tradingLastRefreshAt}` : '非交易时段';
+        countdownNode.textContent = '手动可刷';
+        return;
+    }
+
+    statusNode.textContent = tradingRefreshMessage;
+    countdownNode.textContent = formatTradingCountdown(tradingNextRefreshAt - Date.now());
+}
+
+function startTradingAutoRefresh() {
+    if (!tradingNextRefreshAt) {
+        tradingNextRefreshAt = Date.now() + tradingRefreshIntervalMS;
+    }
+    if (tradingRefreshTimer) {
+        updateTradingRefreshStatus();
+        return;
+    }
+    tradingRefreshTimer = setInterval(() => {
+        if (!isTradingWorkspaceActive()) return;
+        if (isTradingSession() && Date.now() >= tradingNextRefreshAt) {
+            refreshTradingQuotes({ silent: true });
+            return;
+        }
+        updateTradingRefreshStatus();
+    }, 1000);
+    updateTradingRefreshStatus();
+}
+
+function quoteClosePrice(quote) {
+    const raw = Number(quote?.K?.Close || 0);
+    return raw > 0 ? raw / 1000 : 0;
+}
+
+function quotePrevClosePrice(quote) {
+    const raw = Number(quote?.K?.Last || 0);
+    return raw > 0 ? raw / 1000 : 0;
+}
+
+function activeTradingCodes(state) {
+    return Array.from(new Set((state.trades || [])
+        .filter(trade => trade.status === 'active')
+        .map(trade => normalizeSymbol(trade.stockCode))
+        .filter(Boolean)));
+}
+
+async function refreshTradingQuotes(options = {}) {
+    if (tradingRefreshing) return;
+    tradingRefreshing = true;
+    updateTradingRefreshStatus();
+    try {
+        const state = await hydrateTradingState();
+        const codes = activeTradingCodes(state);
+        if (codes.length === 0) {
+            tradingRefreshMessage = '没有持仓股票';
+            return;
+        }
+
+        const quotes = await apiFetch(`/api/quote?code=${encodeURIComponent(codes.join(','))}`);
+        const quoteMap = new Map((Array.isArray(quotes) ? quotes : []).map(quote => [normalizeSymbol(quote.Code), quote]));
+        let updated = 0;
+        state.trades.forEach(trade => {
+            if (trade.status !== 'active') return;
+            const code = normalizeSymbol(trade.stockCode);
+            const quote = quoteMap.get(code);
+            const price = quoteClosePrice(quote);
+            if (price <= 0) return;
+            const previousClose = quotePrevClosePrice(quote);
+            if (Number(trade.currentPrice || 0) !== price) {
+                trade.currentPrice = Number(price.toFixed(3));
+                updated += 1;
+            }
+            if (previousClose > 0) {
+                trade.previousClosePrice = Number(previousClose.toFixed(3));
+            }
+        });
+        tradingState = state;
+        if (updated > 0) {
+            try {
+                await saveTradingState();
+            } catch {
+                localStorage.setItem(tradingStoreKey, JSON.stringify(tradingState));
+            }
+        } else {
+            localStorage.setItem(tradingStoreKey, JSON.stringify(tradingState));
+        }
+        tradingLastRefreshAt = localTimeString();
+        tradingRefreshMessage = updated > 0 ? `已更新 ${updated} 只持仓` : '行情已是最新';
+        renderTradingSystem();
+    } catch (error) {
+        tradingRefreshMessage = `刷新失败：${error.message || error}`;
+        if (options.manual) alert(tradingRefreshMessage);
+    } finally {
+        tradingRefreshing = false;
+        tradingNextRefreshAt = Date.now() + tradingRefreshIntervalMS;
+        updateTradingRefreshStatus();
+    }
+}
+
 function calcTradingTrade(trade) {
     const state = loadTradingState();
+    const fees = state.fees || {};
     const entryPrice = Number(trade.entryPrice || 0);
     const currentPrice = Number(trade.currentPrice || 0);
+    const previousClosePrice = Number(trade.previousClosePrice || 0);
     const invalidPrice = Number(trade.invalidPrice || 0);
     const shares = Number(trade.shares || 0);
     const entryValue = entryPrice * shares;
     const marketValue = currentPrice * shares;
-    const pnl = (currentPrice - entryPrice) * shares;
-    const pnlPct = entryPrice ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+    const buyCommission = tradingCommission(entryValue, fees.buyCommissionRate, fees.minCommission);
+    const buyTransferFee = tradingIsShanghai(trade.stockCode)
+        ? entryValue * tradingRateToDecimal(fees.transferFeeRate)
+        : 0;
+    const sellCommission = tradingCommission(marketValue, fees.sellCommissionRate, fees.minCommission);
+    const stampTax = marketValue > 0 ? marketValue * tradingRateToDecimal(fees.stampTaxRate) : 0;
+    const sellTransferFee = tradingIsShanghai(trade.stockCode)
+        ? marketValue * tradingRateToDecimal(fees.transferFeeRate)
+        : 0;
+    const transferFee = buyTransferFee + sellTransferFee;
+    const feeAmount = buyCommission + sellCommission + stampTax + transferFee;
+    const holdingCostValue = entryValue + buyCommission + buyTransferFee;
+    const holdingCostPrice = shares ? holdingCostValue / shares : 0;
+    const grossPnl = (currentPrice - entryPrice) * shares;
+    const pnl = grossPnl - feeAmount;
+    const pnlPct = entryValue ? (pnl / entryValue) * 100 : 0;
+    const latestVsEntry = currentPrice - entryPrice;
+    const latestVsHolding = currentPrice - holdingCostPrice;
+    const latestVsPrevClose = previousClosePrice > 0 ? currentPrice - previousClosePrice : 0;
     const riskPerShare = Math.max(entryPrice - invalidPrice, 0);
     const riskAmount = riskPerShare * shares;
     const totalAssets = Number(state.account.totalAssets || 0);
     const riskPct = totalAssets ? (riskAmount / totalAssets) * 100 : 0;
     const weight = totalAssets ? (marketValue / totalAssets) * 100 : 0;
-    return { entryValue, marketValue, pnl, pnlPct, riskPerShare, riskAmount, riskPct, weight };
+    return {
+        entryValue,
+        marketValue,
+        holdingCostValue,
+        holdingCostPrice,
+        grossPnl,
+        pnl,
+        pnlPct,
+        latestVsEntry,
+        latestVsHolding,
+        latestVsPrevClose,
+        feeAmount,
+        buyCommission,
+        buyTransferFee,
+        sellCommission,
+        stampTax,
+        sellTransferFee,
+        transferFee,
+        riskPerShare,
+        riskAmount,
+        riskPct,
+        weight
+    };
 }
 
 function tradingRiskClass(calc) {
@@ -2422,6 +2728,21 @@ function renderTradingAccount() {
         tradingTotalAssets: state.account.totalAssets,
         tradingMaxTradeRisk: state.account.maxTradeRisk,
         tradingMaxPositionWeight: state.account.maxPositionWeight
+    };
+    Object.entries(fields).forEach(([id, value]) => {
+        const node = document.getElementById(id);
+        if (node) node.value = value ?? '';
+    });
+}
+
+function renderTradingFees() {
+    const state = loadTradingState();
+    const fields = {
+        tradingBuyCommissionRate: state.fees.buyCommissionRate,
+        tradingSellCommissionRate: state.fees.sellCommissionRate,
+        tradingStampTaxRate: state.fees.stampTaxRate,
+        tradingTransferFeeRate: state.fees.transferFeeRate,
+        tradingMinCommission: state.fees.minCommission
     };
     Object.entries(fields).forEach(([id, value]) => {
         const node = document.getElementById(id);
@@ -2469,7 +2790,7 @@ function renderTradingStats() {
         statPnl.textContent = `${totals.pnl >= 0 ? '+' : ''}¥${tradingMoney(totals.pnl)}`;
         statPnl.className = `metric-value ${totals.pnl >= 0 ? 'trading-positive' : 'trading-negative'}`;
     }
-    if (statPnlPct) statPnlPct.textContent = `持仓盈亏率：${pnlPct >= 0 ? '+' : ''}${tradingPercent(pnlPct)}`;
+    if (statPnlPct) statPnlPct.textContent = `持仓净盈亏率：${pnlPct >= 0 ? '+' : ''}${tradingPercent(pnlPct)}`;
 }
 
 function renderTradingDiscipline() {
@@ -2499,6 +2820,19 @@ function renderTradingDiscipline() {
     });
 }
 
+function renderTradingDetail(title, text, open = false, meta = '') {
+    const count = tradingLineCount(text);
+    return `
+        <details class="trading-detail" ${open ? 'open' : ''}>
+            <summary>
+                <span>${escapeHTML(title)}</span>
+                <em>${escapeHTML(meta || `${count} 条内容`)}</em>
+            </summary>
+            <div class="trading-detail-body">${escapeHTML(text || '未填写')}</div>
+        </details>
+    `;
+}
+
 function renderTradingCards() {
     const state = loadTradingState();
     const list = document.getElementById('tradingList');
@@ -2514,29 +2848,68 @@ function renderTradingCards() {
     list.innerHTML = visibleTrades.map(trade => {
         const calc = calcTradingTrade(trade);
         const pnlClass = calc.pnl >= 0 ? 'trading-positive' : 'trading-negative';
+        const cardClass = calc.pnl >= 0 ? 'trading-card-positive' : 'trading-card-negative';
+        const entryClass = tradingTrendClass(calc.latestVsEntry);
+        const holdingClass = tradingTrendClass(calc.latestVsHolding);
+        const prevCloseClass = tradingTrendClass(calc.latestVsPrevClose);
+        const prevCloseNote = Number(trade.previousClosePrice || 0) > 0
+            ? `较昨收 ${tradingSignedAmount(calc.latestVsPrevClose, 3)}`
+            : '昨收未同步';
         const statusText = trade.status === 'active' ? '持仓' : '已清仓';
+        const reasonCount = tradingLineCount(trade.buyReason);
+        const exitCount = tradingLineCount(trade.exitRules);
+        const reviewCount = tradingLineCount(trade.review);
         return `
-            <article class="trading-card">
+            <article class="trading-card ${cardClass}">
                 <div class="trading-card-head">
                     <div class="trading-stock-title">
-                        <strong>${escapeHTML(trade.stockName || '--')} <span>${escapeHTML(trade.stockCode || '--')}</span></strong>
-                        <span>${escapeHTML(trade.entryDate || '--')} · ${escapeHTML(trade.positionLabel || '未标记')} · ${statusText}</span>
+                        <div class="trading-title-row">
+                            <strong>${escapeHTML(trade.stockName || '--')} <span>${escapeHTML(trade.stockCode || '--')}</span></strong>
+                            <span class="trading-hero-chip state-${trade.status}">${statusText}</span>
+                        </div>
+                        <div class="trading-meta-row">
+                            <span>${escapeHTML(trade.entryDate || '--')}</span>
+                            <span>${escapeHTML(trade.positionLabel || '未标记')}</span>
+                            <span>${escapeHTML(tradingSnippet(trade.tradeMode || '未填写', 1))}</span>
+                        </div>
                     </div>
-                    <div class="trading-num">
-                        <span class="trading-mini-label">持仓市值</span>
-                        <b>¥${tradingMoney(calc.marketValue)}</b>
-                    </div>
-                    <div class="trading-num">
-                        <span class="trading-mini-label">仓位占比</span>
-                        <b>${tradingPercent(calc.weight)}</b>
-                    </div>
-                    <div class="trading-num">
-                        <span class="trading-mini-label">浮动盈亏</span>
-                        <b class="${pnlClass}">${calc.pnl >= 0 ? '+' : ''}¥${tradingMoney(calc.pnl)}</b>
-                    </div>
-                    <div class="trading-num">
-                        <span class="trading-mini-label">盈亏率</span>
-                        <b class="${pnlClass}">${calc.pnlPct >= 0 ? '+' : ''}${tradingPercent(calc.pnlPct)}</b>
+                    <div class="trading-head-stats">
+                        <div class="trading-head-row">
+                            <div class="trading-num">
+                                <span class="trading-mini-label">持仓成本</span>
+                                <b class="${holdingClass}">${tradingPrice(calc.holdingCostPrice)}</b>
+                                <span class="trading-num-note ${holdingClass}">成交均价 ${tradingPrice(trade.entryPrice)} · 较最新价 ${tradingSignedAmount(calc.latestVsHolding, 3)}</span>
+                            </div>
+                            <div class="trading-num">
+                                <span class="trading-mini-label">最新价</span>
+                                <b class="${prevCloseClass}">${tradingPrice(trade.currentPrice)}</b>
+                                <span class="trading-num-note ${prevCloseClass}">${prevCloseNote}</span>
+                            </div>
+                            <div class="trading-num">
+                                <span class="trading-mini-label">持仓数量</span>
+                                <b>${tradingQuantity(trade.shares)} 股</b>
+                            </div>
+                            <div class="trading-num">
+                                <span class="trading-mini-label">持仓市值</span>
+                                <b>¥${tradingMoney(calc.marketValue)}</b>
+                            </div>
+                        </div>
+                        <div class="trading-head-divider" aria-hidden="true"></div>
+                        <div class="trading-head-row">
+                            <div class="trading-num">
+                                <span class="trading-mini-label">仓位占比</span>
+                                <b>${tradingPercent(calc.weight)}</b>
+                            </div>
+                            <div class="trading-num">
+                                <span class="trading-mini-label">浮动盈亏</span>
+                                <b class="${pnlClass}">${calc.pnl >= 0 ? '+' : ''}¥${tradingMoney(calc.pnl)}</b>
+                            </div>
+                            <div class="trading-num">
+                                <span class="trading-mini-label">盈亏率</span>
+                                <b class="${pnlClass}">${calc.pnlPct >= 0 ? '+' : ''}${tradingPercent(calc.pnlPct)}</b>
+                            </div>
+                            <div class="trading-num trading-num-empty" aria-hidden="true"></div>
+                        </div>
                     </div>
                     <div class="item-actions compact-actions">
                         <button type="button" onclick="openTradingDialog('${escapeJSString(trade.id)}')">编辑</button>
@@ -2544,13 +2917,14 @@ function renderTradingCards() {
                     </div>
                 </div>
                 <div class="trading-card-body">
-                    <div>
+                    <div class="trading-left-column">
                         <div class="trading-plan-grid">
                             <div class="trading-pill">
-                                <span>买入 / 当前</span>
-                                <b>${tradingMoney(trade.entryPrice)} / ${tradingMoney(trade.currentPrice)}</b>
+                                <span>当前 / 净盈亏</span>
+                                <b>${tradingPrice(trade.currentPrice)} / ${calc.pnl >= 0 ? '+' : ''}¥${tradingMoney(calc.pnl)}</b>
+                                <span class="trading-pill-foot">费用 ¥${tradingMoney(calc.feeAmount)}</span>
                             </div>
-                            <div class="trading-pill ${tradingRiskClass(calc)}">
+                            <div class="trading-pill">
                                 <span>技术无效点</span>
                                 <b>${tradingMoney(trade.invalidPrice)} · 风险 ¥${tradingMoney(calc.riskAmount)}</b>
                             </div>
@@ -2559,26 +2933,21 @@ function renderTradingCards() {
                                 <b>${escapeHTML(trade.targetOne || '--')} / ${escapeHTML(trade.targetTwo || '--')}</b>
                             </div>
                         </div>
-                        <div class="trading-notes">
-                            <div class="trading-note">
+                        <div class="trading-summary-strip">
+                            <div class="trading-summary-block">
                                 <span>交易模式</span>
                                 <p>${escapeHTML(trade.tradeMode || '未填写')}</p>
                             </div>
-                            <div class="trading-note">
-                                <span>买入理由</span>
-                                <p>${escapeHTML(trade.buyReason || '未填写')}</p>
+                            <div class="trading-summary-block">
+                                <span>关键判断</span>
+                                <p>${escapeHTML(tradingSnippet(trade.buyReason || '未填写', 2))}</p>
                             </div>
                         </div>
                     </div>
-                    <div class="trading-notes">
-                        <div class="trading-note">
-                            <span>退出/加仓规则</span>
-                            <p>${escapeHTML(trade.exitRules || '未填写')}</p>
-                        </div>
-                        <div class="trading-note">
-                            <span>盘后复盘</span>
-                            <p>${escapeHTML(trade.review || '盘后再写')}</p>
-                        </div>
+                    <div class="trading-right-column">
+                        ${renderTradingDetail('买入理由', trade.buyReason, false, `${reasonCount} 条`)}
+                        ${renderTradingDetail('退出 / 加仓规则', trade.exitRules, false, `${exitCount} 条`)}
+                        ${renderTradingDetail('盘后复盘', trade.review, false, `${reviewCount} 条`)}
                     </div>
                 </div>
             </article>
@@ -2587,14 +2956,16 @@ function renderTradingCards() {
 }
 
 function renderTradingSystem() {
-    loadTradingState();
+    const state = loadTradingState();
     renderTradingAccount();
+    renderTradingFees();
     renderTradingStats();
     renderTradingDiscipline();
     renderTradingCards();
     document.querySelectorAll('[data-trading-filter]').forEach(button => {
-        button.classList.toggle('active', button.dataset.tradingFilter === tradingState.filter);
+        button.classList.toggle('active', button.dataset.tradingFilter === state.filter);
     });
+    updateTradingRefreshStatus();
 }
 
 function saveTradingAccount() {
@@ -2605,20 +2976,27 @@ function saveTradingAccount() {
         maxTradeRisk: tradingNumberInput('tradingMaxTradeRisk'),
         maxPositionWeight: tradingNumberInput('tradingMaxPositionWeight')
     };
-    saveTradingState();
-    renderTradingSystem();
+    state.fees = {
+        buyCommissionRate: tradingNumberInput('tradingBuyCommissionRate'),
+        sellCommissionRate: tradingNumberInput('tradingSellCommissionRate'),
+        stampTaxRate: tradingNumberInput('tradingStampTaxRate'),
+        transferFeeRate: tradingNumberInput('tradingTransferFeeRate'),
+        minCommission: tradingNumberInput('tradingMinCommission')
+    };
+    saveTradingState().then(renderTradingSystem).catch(error => alert(error.message || '保存失败'));
 }
 
 function bindTradingSystem() {
     loadTradingState();
+    startTradingAutoRefresh();
     document.querySelectorAll('[data-trading-filter]').forEach(button => {
         button.addEventListener('click', () => {
-            tradingState.filter = button.dataset.tradingFilter;
-            saveTradingState();
-            renderTradingSystem();
+            const state = loadTradingState();
+            state.filter = button.dataset.tradingFilter;
+            saveTradingState().then(renderTradingSystem).catch(error => alert(error.message || '保存失败'));
         });
     });
-    ['tradingPrincipal', 'tradingTotalAssets', 'tradingMaxTradeRisk', 'tradingMaxPositionWeight'].forEach(id => {
+    ['tradingPrincipal', 'tradingTotalAssets', 'tradingMaxTradeRisk', 'tradingMaxPositionWeight', 'tradingBuyCommissionRate', 'tradingSellCommissionRate', 'tradingStampTaxRate', 'tradingTransferFeeRate', 'tradingMinCommission'].forEach(id => {
         const node = document.getElementById(id);
         if (node) node.addEventListener('change', saveTradingAccount);
     });
@@ -2693,9 +3071,12 @@ function saveTradingTradeFromForm() {
     const idx = state.trades.findIndex(item => item.id === id);
     if (idx >= 0) state.trades[idx] = trade;
     else state.trades.unshift(trade);
-    saveTradingState();
-    closeTradingDialog();
-    renderTradingSystem();
+    saveTradingState()
+        .then(() => {
+            closeTradingDialog();
+            renderTradingSystem();
+        })
+        .catch(error => alert(error.message || '保存失败'));
 }
 
 function deleteTradingTrade(id) {
@@ -2703,8 +3084,7 @@ function deleteTradingTrade(id) {
     const trade = state.trades.find(item => item.id === id);
     if (!confirm(`删除 ${trade?.stockName || '这笔交易'} 的交易卡？`)) return;
     state.trades = state.trades.filter(item => item.id !== id);
-    saveTradingState();
-    renderTradingSystem();
+    saveTradingState().then(renderTradingSystem).catch(error => alert(error.message || '保存失败'));
 }
 
 function exportTradingData() {
@@ -2729,13 +3109,11 @@ function importTradingData(event) {
             const imported = JSON.parse(String(reader.result || '{}'));
             if (!imported.account || !Array.isArray(imported.trades)) throw new Error('bad shape');
             tradingState = {
-                ...cloneTradingState(defaultTradingState),
-                ...imported,
-                account: { ...defaultTradingState.account, ...(imported.account || {}) },
-                discipline: { ...defaultTradingState.discipline, ...(imported.discipline || {}) }
+                ...normalizeTradingState(imported)
             };
-            saveTradingState();
-            renderTradingSystem();
+            saveTradingState()
+                .then(renderTradingSystem)
+                .catch(error => alert(error.message || '保存失败'));
         } catch (error) {
             alert('导入失败：请选择交易系统导出的 JSON 文件。');
         } finally {
@@ -3231,6 +3609,7 @@ function clearHQFormulaOverlay() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+        await hydrateTradingState();
         bindTradingSystem();
         renderTradingSystem();
         await refreshSystemStatus();

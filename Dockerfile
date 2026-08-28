@@ -12,17 +12,19 @@ WORKDIR /app
 ENV GO111MODULE=on \
     GOPROXY=https://goproxy.cn,https://mirrors.aliyun.com/goproxy/,direct \
     GOTOOLCHAIN=auto \
-    CGO_ENABLED=0
+    CGO_ENABLED=0 \
+    PATH="/usr/local/go/bin:${PATH}"
 
 # 复制 Go 模块文件
-COPY go.mod go.sum ./
-RUN go mod download
+COPY packages/tdx-core/go.mod packages/tdx-core/go.sum ./packages/tdx-core/
+COPY apps/web/go.mod apps/web/go.sum ./apps/web/
+RUN (cd packages/tdx-core && go mod download) && (cd apps/web && go mod download)
 
 # 复制整个项目的源代码
 COPY . .
 
 # 在子 shell 中编译，避免模块路径混淆问题
-RUN go mod tidy && (cd web && go build -ldflags="-s -w" -o ../stock-web .)
+RUN (cd apps/web && go build -ldflags="-s -w" -o /app/stock-web .)
 
 # 多阶段构建 - 第二阶段：运行
 FROM docker.1ms.run/library/alpine:latest
@@ -41,24 +43,15 @@ RUN addgroup -g 1000 appuser && \
 # 设置工作目录
 WORKDIR /app
 
-# ===================================================================
-# 【语法修正】
-# 从构建阶段复制编译好的二进制文件
-COPY --from=builder /app/stock-web .
-# ===================================================================
-
-# ===================================================================
-# 【语法修正】
-# 复制静态文件
-COPY --from=builder /app/web/static ./static
-# ===================================================================
-
-COPY --from=builder /app/formula-worker ./formula-worker
-COPY --from=builder /app/deploy/docker-entrypoint.sh ./docker-entrypoint.sh
+COPY services/formula-worker ./formula-worker
 
 RUN apk --no-cache add --virtual .hqchart-build g++ python3-dev zlib-dev linux-headers && \
     python3 /app/formula-worker/install_hqchartpy2.py && \
     apk del .hqchart-build
+
+COPY --from=builder /app/stock-web .
+COPY apps/web/static ./static
+COPY deploy/docker-entrypoint.sh ./docker-entrypoint.sh
 
 # 更改文件所有者
 RUN chmod +x /app/docker-entrypoint.sh /app/formula-worker/worker.py && \
