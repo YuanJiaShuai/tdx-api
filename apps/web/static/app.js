@@ -2852,9 +2852,6 @@ function renderTradingCards() {
         const entryClass = tradingTrendClass(calc.latestVsEntry);
         const holdingClass = tradingTrendClass(calc.latestVsHolding);
         const prevCloseClass = tradingTrendClass(calc.latestVsPrevClose);
-        const prevCloseNote = Number(trade.previousClosePrice || 0) > 0
-            ? `较昨收 ${tradingSignedAmount(calc.latestVsPrevClose, 3)}`
-            : '昨收未同步';
         const statusText = trade.status === 'active' ? '持仓' : '已清仓';
         const reasonCount = tradingLineCount(trade.buyReason);
         const exitCount = tradingLineCount(trade.exitRules);
@@ -2878,12 +2875,10 @@ function renderTradingCards() {
                             <div class="trading-num">
                                 <span class="trading-mini-label">持仓成本</span>
                                 <b class="${holdingClass}">${tradingPrice(calc.holdingCostPrice)}</b>
-                                <span class="trading-num-note ${holdingClass}">成交均价 ${tradingPrice(trade.entryPrice)} · 较最新价 ${tradingSignedAmount(calc.latestVsHolding, 3)}</span>
                             </div>
                             <div class="trading-num">
                                 <span class="trading-mini-label">最新价</span>
                                 <b class="${prevCloseClass}">${tradingPrice(trade.currentPrice)}</b>
-                                <span class="trading-num-note ${prevCloseClass}">${prevCloseNote}</span>
                             </div>
                             <div class="trading-num">
                                 <span class="trading-mini-label">持仓数量</span>
