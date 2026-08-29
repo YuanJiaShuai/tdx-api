@@ -17,8 +17,9 @@ ENV GO111MODULE=on \
 
 # 复制 Go 模块文件
 COPY packages/tdx-core/go.mod packages/tdx-core/go.sum ./packages/tdx-core/
+COPY packages/workbench-core/go.mod packages/workbench-core/go.sum ./packages/workbench-core/
 COPY apps/web/go.mod apps/web/go.sum ./apps/web/
-RUN (cd packages/tdx-core && go mod download) && (cd apps/web && go mod download)
+RUN (cd packages/tdx-core && go mod download) && (cd packages/workbench-core && go mod download) && (cd apps/web && go mod download)
 
 # 复制整个项目的源代码
 COPY . .

@@ -1,9 +1,40 @@
 # Selection Worker
 
-独立选股和自动化任务服务，负责 Cron 调度、选股任务运行和运行记录写入。
+指标选股服务，负责 Cron 调度、公式/策略选股运行、运行记录写入和通知触发。
 
-容器入口使用 `services/selection-worker/Dockerfile`。
+服务源码和 Go module 位于当前目录，直接依赖 `packages/tdx-core`，不会再编译 `apps/web`。
 
 默认端口：`8082`
 
-当前版本仍复用 `apps/web/` 下的 Go 代码启动 worker 角色，后续可以继续把选股逻辑从 Web app 中进一步下沉到这里。
+Web 容器保留管理入口，Docker 部署下可以通过本服务独立执行选股任务。
+
+宿主机默认映射端口为 `18082`。
+
+源码运行：
+
+```bash
+cd services/selection-worker
+go run .
+```
+
+可选环境变量：
+
+- `PORT`：监听端口，默认 `8082`
+- `FORMULA_WORKER_URL`：公式引擎地址，默认 `http://localhost:8712`
+- `MARKET_SERVICE_URL`：行情服务地址。配置后，K 线、指数、代码、板块、财务、F10 和系统同步默认通过 `market-service` 获取
+- `SELECTION_MARKET_FALLBACK_DIRECT`：行情服务失败时是否回退到 worker 本地 TDX 连接，默认 `false`；未配置 `MARKET_SERVICE_URL` 时会自动使用本地连接
+- `AUTOMATION_SCHEDULER_ENABLED`：是否启用 Cron 调度，默认 `true`
+- `SELECTION_QUOTE_MONITOR_ENABLED`：是否启用行情 SSE 监测和阈值告警，默认 `true`
+
+## 行情职责
+
+Docker 部署时建议保持 `MARKET_SERVICE_URL=http://market-service:8081`，并将
+`SELECTION_MARKET_FALLBACK_DIRECT=false`。这样 `selection-worker` 只负责调度、公式选股、
+策略执行和运行记录，通达信连接、行情读取以及后台 K 线/除权除息同步由 `market-service`
+统一处理。
+
+启用行情监测后，worker 会订阅关注股票池以及带有 `plan_buy` / `stop_loss` 的决策备注，
+触发阈值时通过已启用的 Webhook 发送 `quote.alert` 事件；最近告警可通过
+`GET /api/quote-alerts` 查看。
+
+本地源码调试时可以不配置 `MARKET_SERVICE_URL`，worker 会保留直接连接 TDX 的能力。

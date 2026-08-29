@@ -16,7 +16,9 @@
 | 行情服务 | `services/market-service/` | `tdx-workbench-market` | 通达信行情、K 线、分时、成交、代码、板块、交易日等 API |
 | 公式引擎 | `services/formula-worker/` | `tdx-workbench-formula` | HQChartPy2 或 fallback 公式执行器 |
 | 指标选股 | `services/selection-worker/` | `tdx-workbench-selection` | Cron 调度、选股运行、运行记录写入 |
+| AI 分析 | `services/ai-service/` | `tdx-workbench-ai` | DeepSeek/OpenAI-compatible 模型调用、股票分析、自选分析 |
 | 通用核心 | `packages/tdx-core/` | 无独立容器 | 通达信协议库、数据模型、扩展拉取逻辑 |
+| 工作台核心 | `packages/workbench-core/` | 无独立容器 | 公式、股票池、策略、自动化记录等共享模型与存储 |
 
 ## 目录结构
 
@@ -25,11 +27,13 @@ tdx-workbench/
 ├── apps/
 │   └── web/                    # Web 页面、API 网关和工作台后端
 ├── services/
-│   ├── market-service/          # 行情服务说明
+│   ├── market-service/          # 独立 Go 行情服务
 │   ├── formula-worker/          # Python 公式引擎服务
-│   └── selection-worker/        # 指标选股服务说明
+│   ├── selection-worker/        # 独立 Go 指标选股服务
+│   └── ai-service/              # 独立 Go AI 分析服务
 ├── packages/
-│   └── tdx-core/                # Go 通达信核心库和示例
+│   ├── tdx-core/                # Go 通达信核心库和示例
+│   └── workbench-core/          # Web 和选股服务共享的模型与存储层
 ├── deploy/                      # 本地部署辅助脚本
 ├── data/                        # 本地数据库和运行数据，Docker 会挂载
 ├── reports/                     # 选股、行情跟踪等输出
@@ -60,6 +64,7 @@ http://localhost:8080
 | 行情服务 | `8081` | `18081` |
 | 公式引擎 | `8712` | `18712` |
 | 指标选股 | `8082` | `18082` |
+| AI 分析 | `8083` | `18083` |
 
 ## 单独部署
 
@@ -70,6 +75,7 @@ docker compose up -d --build stock-web
 docker compose up -d --build market-service
 docker compose up -d --build formula-worker
 docker compose up -d --build selection-worker
+docker compose up -d --build ai-service
 ```
 
 只重启不重建：
@@ -79,6 +85,7 @@ docker compose restart stock-web
 docker compose restart market-service
 docker compose restart formula-worker
 docker compose restart selection-worker
+docker compose restart ai-service
 ```
 
 查看日志：
@@ -88,6 +95,7 @@ docker compose logs -f stock-web
 docker compose logs -f market-service
 docker compose logs -f formula-worker
 docker compose logs -f selection-worker
+docker compose logs -f ai-service
 ```
 
 ## 源码运行
@@ -96,11 +104,17 @@ docker compose logs -f selection-worker
 
 ```bash
 python3 services/formula-worker/worker.py
-cd apps/web
+cd services/market-service
+go run .
+cd ../selection-worker
+go run .
+cd ../../services/ai-service
+go run .
+cd ../../apps/web
 go run .
 ```
 
-根目录有 `go.work`，所以也可以在根目录统一管理两个 Go module。
+根目录有 `go.work`，所以也可以在根目录统一管理多个 Go module。
 
 ## 开发验证
 
@@ -108,9 +122,23 @@ go run .
 cd packages/tdx-core
 GOPROXY=https://goproxy.cn,direct go test ./...
 
+cd ../workbench-core
+GOPROXY=https://goproxy.cn,direct go test ./...
+
 cd ../../apps/web
 GOPROXY=https://goproxy.cn,direct go test ./...
 GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-workbench-web .
+
+cd ../../services/market-service
+GOPROXY=https://goproxy.cn,direct go test ./...
+GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-market-service .
+
+cd ../selection-worker
+GOPROXY=https://goproxy.cn,direct go test ./...
+GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-selection-worker .
+
+cd ../ai-service
+GOPROXY=https://goproxy.cn,direct go test ./...
 ```
 
 Docker 配置检查：
@@ -134,6 +162,13 @@ docker compose config --quiet
 | `POST /api/formula/run` | 直接执行公式 | `{"symbol":"000001","script":"T:MA(C,5);"}` |
 | `GET /api/automations` | 自动化任务列表 | `/api/automations` |
 | `GET /api/selection-results` | 选股命中结果 | `/api/selection-results?limit=100` |
+| `GET /api/ai/providers` | AI 供应商列表 | `/api/ai/providers` |
+| `POST /api/ai/analyze/stock` | 单股 AI 分析 | `{"provider":"deepseek","symbol":"603171"}` |
+| `POST /api/ai/analyze/watchlist` | 自选/观察池 AI 分析 | `{"provider":"deepseek","pool_id":"watchlist"}` |
+
+在 Docker 模式下，`selection-worker` 的行情请求默认转发给
+`market-service`。只有显式设置 `SELECTION_MARKET_FALLBACK_DIRECT=true` 时，
+worker 才会在行情服务失败后尝试直接连接通达信。
 
 完整接口见 [API 参考](docs/api-reference.md)。
 

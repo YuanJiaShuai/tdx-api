@@ -13,8 +13,9 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
-      - TDX_APP_ROLE=market-service
       - PORT=8081
+      - MARKET_SYNC_ON_START=true
+      - MARKET_DATA_DIR=/app/data/database
     dns:
       - 223.5.5.5
       - 119.29.29.29
@@ -43,7 +44,7 @@ services:
     networks:
       - stock-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8712/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8712/health"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -61,11 +62,12 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
-      - TDX_APP_ROLE=selection-worker
       - PORT=8082
       - FORMULA_WORKER_URL=http://formula-worker:8712
       - MARKET_SERVICE_URL=http://market-service:8081
+      - SELECTION_MARKET_FALLBACK_DIRECT=false
       - AUTOMATION_SCHEDULER_ENABLED=true
+      - SELECTION_QUOTE_MONITOR_ENABLED=true
     dns:
       - 223.5.5.5
       - 119.29.29.29
@@ -74,6 +76,38 @@ services:
       - stock-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: services/ai-service/Dockerfile
+    container_name: tdx-workbench-ai
+    ports:
+      - "18083:8083"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=8083
+      - MARKET_SERVICE_URL=http://market-service:8081
+      - AI_SERVICE_TOKEN=${AI_SERVICE_TOKEN:-}
+      - AUTOMATION_SCHEDULER_ENABLED=false
+      - AI_CREDENTIAL_SECRET=${AI_CREDENTIAL_SECRET:-tdx-workbench-local-ai-credential-secret}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 8.8.8.8
+    networks:
+      - stock-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -94,6 +128,8 @@ services:
       - TDX_APP_ROLE=web
       - PORT=8080
       - MARKET_SERVICE_URL=http://market-service:8081
+      - AI_SERVICE_URL=http://ai-service:8083
+      - AI_SERVICE_TOKEN=${AI_SERVICE_TOKEN:-}
       - FORMULA_WORKER_URL=http://formula-worker:8712
       - AUTOMATION_SCHEDULER_ENABLED=false
     dns:

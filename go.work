@@ -3,4 +3,8 @@ go 1.23
 use (
 	./apps/web
 	./packages/tdx-core
+	./packages/workbench-core
+	./services/ai-service
+	./services/market-service
+	./services/selection-worker
 )

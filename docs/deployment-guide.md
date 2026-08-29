@@ -43,7 +43,13 @@ docker compose up -d --build selection-worker
 
 ```bash
 python3 services/formula-worker/worker.py
-cd apps/web
+cd services/market-service
+go run .
+cd ../selection-worker
+go run .
+cd ../../services/ai-service
+go run .
+cd ../../apps/web
 go run .
 ```
 
@@ -76,9 +82,23 @@ curl "http://localhost:8080/api/formula/health"
 cd packages/tdx-core
 GOPROXY=https://goproxy.cn,direct go test ./...
 
+cd ../workbench-core
+GOPROXY=https://goproxy.cn,direct go test ./...
+
 cd ../../apps/web
 GOPROXY=https://goproxy.cn,direct go test ./...
 GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-workbench-web .
+
+cd ../../services/market-service
+GOPROXY=https://goproxy.cn,direct go test ./...
+GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-market-service .
+
+cd ../selection-worker
+GOPROXY=https://goproxy.cn,direct go test ./...
+GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-selection-worker .
+
+cd ../ai-service
+GOPROXY=https://goproxy.cn,direct go test ./...
 ```
 
 ## 常见问题
