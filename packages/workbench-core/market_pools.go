@@ -1,4 +1,4 @@
-package main
+package workbench
 
 import (
 	"sort"
@@ -86,7 +86,7 @@ func marketPoolSymbols(poolID string) []string {
 		}
 		symbols = append(symbols, code)
 	}
-	symbols = normalizeSymbols(symbols)
+	symbols = NormalizeSymbols(symbols)
 	sort.Strings(symbols)
 	return symbols
 }
@@ -127,7 +127,11 @@ func limitedMarketPoolSymbols(poolID string, maxCodes int) []string {
 		return symbols[:maxCodes]
 	}
 	if len(symbols) == 0 && poolID == "market-all-a" && tdx.DefaultCodes != nil {
-		return normalizeSymbols(tdx.DefaultCodes.GetStocks(maxCodes))
+		return NormalizeSymbols(tdx.DefaultCodes.GetStocks(maxCodes))
 	}
 	return symbols
+}
+
+func LimitedMarketPoolSymbols(poolID string, maxCodes int) []string {
+	return limitedMarketPoolSymbols(poolID, maxCodes)
 }

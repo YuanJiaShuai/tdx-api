@@ -10,10 +10,11 @@ ENV GO111MODULE=on \
     PATH="/usr/local/go/bin:${PATH}"
 
 COPY packages/tdx-core/go.mod packages/tdx-core/go.sum ./packages/tdx-core/
-COPY apps/web/go.mod apps/web/go.sum ./apps/web/
-RUN (cd packages/tdx-core && go mod download) && (cd apps/web && go mod download)
+COPY packages/workbench-core/go.mod packages/workbench-core/go.sum ./packages/workbench-core/
+COPY services/selection-worker/go.mod services/selection-worker/go.sum ./services/selection-worker/
+RUN (cd packages/tdx-core && go mod download) && (cd packages/workbench-core && go mod download) && (cd services/selection-worker && go mod download)
 COPY . .
-RUN (cd apps/web && go build -ldflags="-s -w" -o /app/selection-worker .)
+RUN (cd services/selection-worker && go build -ldflags="-s -w" -o /app/selection-worker .)
 
 FROM docker.1ms.run/library/alpine:latest
 
@@ -21,7 +22,6 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
     apk --no-cache add ca-certificates tzdata wget
 
 ENV TZ=Asia/Shanghai \
-    TDX_APP_ROLE=selection-worker \
     PORT=8082 \
     AUTOMATION_SCHEDULER_ENABLED=true
 

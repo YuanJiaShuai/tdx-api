@@ -156,7 +156,72 @@ GET /api/kline?code=600519&type=minute30
 
 ---
 
-### 3. 获取分时数据
+### 2. 标准行情快照
+
+**接口**: `GET /api/quote/standard`
+
+**描述**: 获取带有标准股票代码、市场、数据源和采集时间的实时行情快照。
+
+**请求参数**:
+| 参数 | 类型 | 必填 | 说明 |
+|-----|------|------|------|
+| codes | string | 是 | 股票代码，逗号分隔，最多50只 |
+
+代码支持 `600519`、`SH600519`、`600519.SH` 等形式，标准返回格式为 `600519.SH`。
+
+**请求示例**:
+```text
+GET /api/quote/standard?codes=600519.SH,000001.SZ
+```
+
+**响应示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "symbol": "600519.SH",
+      "code": "600519",
+      "exchange": "SH",
+      "market": "CN_A",
+      "source": "tdx",
+      "fetched_at": "2026-08-29T15:00:00+08:00",
+      "quote": {}
+    }
+  ]
+}
+```
+
+---
+
+### 3. SSE 行情订阅
+
+**接口**: `GET /api/stream/quotes`
+
+**描述**: 建立 SSE 长连接，后台按订阅股票批量轮询行情，只推送发生变化的报价。
+
+**请求参数**:
+| 参数 | 类型 | 必填 | 说明 |
+|-----|------|------|------|
+| codes | string | 是 | 股票代码，逗号分隔，最多200只 |
+
+**请求示例**:
+```text
+GET /api/stream/quotes?codes=600519.SH,000001.SZ
+```
+
+事件类型：
+
+- `ready`：连接建立
+- `quote`：行情变化，数据位于 `snapshot`
+- `heartbeat`：连接保活
+
+后台轮询间隔由 `MARKET_QUOTE_POLL_INTERVAL_SECONDS` 控制，默认3秒。
+
+---
+
+### 4. 获取分时数据
 
 **接口**: `GET /api/minute`
 
@@ -545,7 +610,32 @@ curl -X POST http://localhost:8080/api/tasks/pull-kline \
 
 ---
 
-### 13. 创建分时成交入库任务
+### 13. 创建股本变迁同步任务
+
+**接口**: `POST /api/tasks/sync-gbbq`
+
+**描述**: 在 `market-service` 中后台同步股本变迁、除权除息数据。返回的任务 ID
+可以通过 `/api/tasks/{task_id}` 查询状态。
+
+**请求示例**:
+```bash
+curl -X POST http://localhost:18081/api/tasks/sync-gbbq
+```
+
+**响应示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": "9b0d1b1b-7c3d-4ce6-9a0e-bd9f5e0dcf3b"
+  }
+}
+```
+
+---
+
+### 14. 创建分时成交入库任务
 
 **接口**: `POST /api/tasks/pull-trade`
 
@@ -574,7 +664,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 14. 查询与控制任务
+### 15. 查询与控制任务
 
 | 接口 | 方法 | 描述 |
 |------|------|------|
@@ -604,7 +694,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 15. 获取ETF列表
+### 16. 获取ETF列表
 
 **接口**: `GET /api/etf`
 
@@ -643,7 +733,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 16. 获取历史分时成交（分页）
+### 17. 获取历史分时成交（分页）
 
 **接口**: `GET /api/trade-history`
 
@@ -678,7 +768,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 17. 获取全天分时成交
+### 18. 获取全天分时成交
 
 **接口**: `GET /api/minute-trade-all`
 
@@ -711,7 +801,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 18. 查询交易日信息
+### 19. 查询交易日信息
 
 **接口**: `GET /api/workday`
 
@@ -752,7 +842,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 19. 获取市场证券数量
+### 20. 获取市场证券数量
 
 **接口**: `GET /api/market-count`
 
@@ -776,7 +866,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 20. 获取股票代码列表
+### 21. 获取股票代码列表
 
 **接口**: `GET /api/stock-codes`
 
@@ -806,7 +896,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 21. 获取ETF代码列表
+### 22. 获取ETF代码列表
 
 **接口**: `GET /api/etf-codes`
 
@@ -829,7 +919,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 22. 获取股票全部历史K线
+### 23. 获取股票全部历史K线
 
 **接口**: `GET /api/kline-all`
 
@@ -846,7 +936,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 23. 获取指数全部历史K线
+### 24. 获取指数全部历史K线
 
 **接口**: `GET /api/index/all`
 
@@ -856,7 +946,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 24. 获取上市以来分时成交
+### 25. 获取上市以来分时成交
 
 **接口**: `GET /api/trade-history/full`
 
@@ -871,7 +961,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 25. 获取交易日范围
+### 26. 获取交易日范围
 
 **接口**: `GET /api/workday/range`
 
@@ -885,7 +975,7 @@ curl -X POST http://localhost:8080/api/tasks/pull-trade \
 
 ---
 
-### 26. 计算收益区间指标
+### 27. 计算收益区间指标
 
 **接口**: `GET /api/income`
 

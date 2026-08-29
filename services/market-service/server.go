@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -21,6 +20,7 @@ import (
 var (
 	client          *tdx.Client
 	manager         *tdx.Manage
+	marketStore     *MarketStore
 	taskManager     = NewTaskManager()
 	startupWarnings []string
 	marketRuntimeMu sync.Mutex
@@ -45,6 +45,7 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		return fmt.Errorf("连接服务器失败: %w", err)
 	}
 	log.Println("成功连接到通达信服务器")
+	initMarketProviders()
 
 	// 初始化代码缓存
 	if err = os.MkdirAll(tdx.DefaultDatabaseDir, 0755); err != nil {
@@ -142,12 +143,20 @@ func handleGetQuote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	codes := splitCodes(codeParam)
-	if len(codes) == 0 {
+	symbols, err := normalizeCodeParam(codeParam)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	if len(symbols) == 0 {
 		errorResponse(w, "股票代码不能为空")
 		return
 	}
 
+	codes := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		codes = append(codes, symbol.TDXCode)
+	}
 	quotes, err := client.GetQuote(codes...)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("获取行情失败: %v", err))
@@ -596,6 +605,35 @@ func handleCreatePullKlineTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleCreateGbbqTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "只支持POST请求")
+		return
+	}
+	if manager == nil {
+		errorResponse(w, "数据管理器未初始化")
+		return
+	}
+
+	taskID := taskManager.Run("sync_gbbq", func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		gbbq, err := tdx.NewGbbq(tdx.WithGbbqClient(client))
+		if err != nil {
+			return err
+		}
+		manager.Gbbq = gbbq
+		return gbbq.Update()
+	})
+
+	successResponse(w, map[string]string{
+		"task_id": taskID,
+	})
+}
+
 func handleCreatePullTradeTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, "只支持POST请求")
@@ -762,53 +800,10 @@ func normalizeMinuteDate(date string) (string, error) {
 	return "", fmt.Errorf("date 参数格式错误，应为 YYYYMMDD 或 YYYY-MM-DD")
 }
 
-func proxyToService(envName string, fallback http.HandlerFunc) http.HandlerFunc {
-	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv(envName)), "/")
-	if baseURL == "" {
-		return fallback
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		client := &http.Client{Timeout: 180 * time.Second}
-		if strings.HasPrefix(r.URL.Path, "/api/stream/") {
-			client = &http.Client{}
-		}
-		req, err := http.NewRequestWithContext(r.Context(), r.Method, baseURL+r.URL.RequestURI(), r.Body)
-		if err != nil {
-			errorResponse(w, "代理请求创建失败: "+err.Error())
-			return
-		}
-		req.Header = r.Header.Clone()
-		if envName == "AI_SERVICE_URL" {
-			if token := strings.TrimSpace(os.Getenv("AI_SERVICE_TOKEN")); token != "" {
-				req.Header.Set("X-AI-Service-Token", token)
-			}
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			errorResponse(w, "上游服务请求失败: "+err.Error())
-			return
-		}
-		defer resp.Body.Close()
-		for key, values := range resp.Header {
-			for _, value := range values {
-				w.Header().Add(key, value)
-			}
-		}
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-	}
-}
-
-func marketAPIHandler(fallback http.HandlerFunc) http.HandlerFunc {
-	return proxyToService("MARKET_SERVICE_URL", fallback)
-}
-
-func marketProxyOnly(w http.ResponseWriter, r *http.Request) {
-	errorResponse(w, "该接口需要配置MARKET_SERVICE_URL")
-}
-
 func registerMarketRoutes() {
 	http.HandleFunc("/api/quote", handleGetQuote)
+	http.HandleFunc("/api/quote/standard", handleStandardQuote)
+	http.HandleFunc("/api/stream/quotes", handleQuoteStream)
 	http.HandleFunc("/api/kline", handleGetKline)
 	http.HandleFunc("/api/minute", handleGetMinute)
 	http.HandleFunc("/api/trade", handleGetTrade)
@@ -838,6 +833,10 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/call-auction", handleGetCallAuction)
 	http.HandleFunc("/api/gbbq", handleGetGbbq)
 	http.HandleFunc("/api/finance", handleGetFinance)
+	http.HandleFunc("/api/finance/standard", handleStandardFinance)
+	http.HandleFunc("/api/news", handleNews)
+	http.HandleFunc("/api/news/sync", handleNewsSync)
+	http.HandleFunc("/api/analysis/context", handleAnalysisContext)
 	http.HandleFunc("/api/company/categories", handleGetCompanyCategories)
 	http.HandleFunc("/api/company/content", handleGetCompanyContent)
 	http.HandleFunc("/api/block", handleGetBlockData)
@@ -852,112 +851,10 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/exhq/bars", handleExHqBars)
 	http.HandleFunc("/api/exhq/trade", handleExHqTrade)
 	http.HandleFunc("/api/tasks/pull-kline", handleCreatePullKlineTask)
+	http.HandleFunc("/api/tasks/sync-gbbq", handleCreateGbbqTask)
 	http.HandleFunc("/api/tasks/pull-trade", handleCreatePullTradeTask)
 	http.HandleFunc("/api/tasks", handleListTasks)
 	http.HandleFunc("/api/tasks/", handleTaskOperations)
-}
-
-func registerWebRoutes() {
-	if err := initAutomationServices(); err != nil {
-		log.Printf("初始化自动化服务失败: %v", err)
-		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化自动化服务失败: %v", err))
-	}
-
-	// 静态文件服务
-	http.Handle("/", http.FileServer(http.Dir("./static")))
-
-	// API路由
-	http.HandleFunc("/api/quote", marketAPIHandler(handleGetQuote))
-	http.HandleFunc("/api/quote/standard", marketAPIHandler(marketProxyOnly))
-	http.HandleFunc("/api/stream/quotes", marketAPIHandler(marketProxyOnly))
-	http.HandleFunc("/api/kline", marketAPIHandler(handleGetKline))
-	http.HandleFunc("/api/minute", marketAPIHandler(handleGetMinute))
-	http.HandleFunc("/api/trade", marketAPIHandler(handleGetTrade))
-	http.HandleFunc("/api/search", marketAPIHandler(handleSearchCode))
-	http.HandleFunc("/api/stock-info", marketAPIHandler(handleGetStockInfo))
-	http.HandleFunc("/api/codes", marketAPIHandler(handleGetCodes))
-	http.HandleFunc("/api/batch-quote", marketAPIHandler(handleBatchQuote))
-	http.HandleFunc("/api/kline-history", marketAPIHandler(handleGetKlineHistory))
-	http.HandleFunc("/api/index", marketAPIHandler(handleGetIndex))
-	http.HandleFunc("/api/index/all", marketAPIHandler(handleGetIndexAll))
-	http.HandleFunc("/api/market-stats", marketAPIHandler(handleGetMarketStats))
-	http.HandleFunc("/api/market-count", marketAPIHandler(handleGetMarketCount))
-	http.HandleFunc("/api/stock-codes", marketAPIHandler(handleGetStockCodes))
-	http.HandleFunc("/api/etf-codes", marketAPIHandler(handleGetETFCodes))
-	http.HandleFunc("/api/server-status", handleGetServerStatus)
-	http.HandleFunc("/api/health", handleHealthCheck)
-	http.HandleFunc("/api/etf", marketAPIHandler(handleGetETFList))
-	http.HandleFunc("/api/trade-history", marketAPIHandler(handleGetTradeHistory))
-	http.HandleFunc("/api/trade-history/full", marketAPIHandler(handleGetTradeHistoryFull))
-	http.HandleFunc("/api/minute-trade-all", marketAPIHandler(handleGetMinuteTradeAll))
-	http.HandleFunc("/api/kline-all", marketAPIHandler(handleGetKlineAllTDX))
-	http.HandleFunc("/api/kline-all/tdx", marketAPIHandler(handleGetKlineAllTDX))
-	http.HandleFunc("/api/kline-all/ths", marketAPIHandler(handleGetKlineAllTHS))
-	http.HandleFunc("/api/workday", marketAPIHandler(handleGetWorkday))
-	http.HandleFunc("/api/workday/range", marketAPIHandler(handleGetWorkdayRange))
-	http.HandleFunc("/api/income", marketAPIHandler(handleGetIncome))
-	http.HandleFunc("/api/call-auction", marketAPIHandler(handleGetCallAuction))
-	http.HandleFunc("/api/gbbq", marketAPIHandler(handleGetGbbq))
-	http.HandleFunc("/api/finance", marketAPIHandler(handleGetFinance))
-	http.HandleFunc("/api/finance/standard", marketAPIHandler(marketProxyOnly))
-	http.HandleFunc("/api/news", marketAPIHandler(marketProxyOnly))
-	http.HandleFunc("/api/news/sync", marketAPIHandler(marketProxyOnly))
-	http.HandleFunc("/api/analysis/context", marketAPIHandler(marketProxyOnly))
-	http.HandleFunc("/api/company/categories", marketAPIHandler(handleGetCompanyCategories))
-	http.HandleFunc("/api/company/content", marketAPIHandler(handleGetCompanyContent))
-	http.HandleFunc("/api/block", marketAPIHandler(handleGetBlockData))
-	http.HandleFunc("/api/tdx-hy", marketAPIHandler(handleGetTdxHy))
-	http.HandleFunc("/api/tdx-stat", marketAPIHandler(handleGetTdxStat))
-	http.HandleFunc("/api/tdx-stat2", marketAPIHandler(handleGetTdxStat2))
-	http.HandleFunc("/api/xgsg", marketAPIHandler(handleGetXgsg))
-	http.HandleFunc("/api/exhq/markets", marketAPIHandler(handleExHqMarkets))
-	http.HandleFunc("/api/exhq/count", marketAPIHandler(handleExHqCount))
-	http.HandleFunc("/api/exhq/instruments", marketAPIHandler(handleExHqInstruments))
-	http.HandleFunc("/api/exhq/quote", marketAPIHandler(handleExHqQuote))
-	http.HandleFunc("/api/exhq/bars", marketAPIHandler(handleExHqBars))
-	http.HandleFunc("/api/exhq/trade", marketAPIHandler(handleExHqTrade))
-	http.HandleFunc("/api/tasks/pull-kline", marketAPIHandler(handleCreatePullKlineTask))
-	http.HandleFunc("/api/tasks/pull-trade", marketAPIHandler(handleCreatePullTradeTask))
-	http.HandleFunc("/api/tasks", marketAPIHandler(handleListTasks))
-	http.HandleFunc("/api/tasks/", marketAPIHandler(handleTaskOperations))
-	http.HandleFunc("/api/formula/health", handleFormulaHealth)
-	http.HandleFunc("/api/formula/run", handleFormulaRun)
-	http.HandleFunc("/api/formulas", handleFormulas)
-	http.HandleFunc("/api/formulas/", handleFormulaOperations)
-	http.HandleFunc("/api/strategies", handleStrategies)
-	http.HandleFunc("/api/strategies/", handleStrategyOperations)
-	http.HandleFunc("/api/factors", handleStrategyFactors)
-	http.HandleFunc("/api/trading-system", handleTradingSystemState)
-	http.HandleFunc("/api/stock-pools", handleStockPools)
-	http.HandleFunc("/api/stock-pools/", handleStockPoolOperations)
-	http.HandleFunc("/api/automations", handleAutomationTasks)
-	http.HandleFunc("/api/automations/templates", handleAutomationTemplates)
-	http.HandleFunc("/api/automations/runs", handleAutomationRuns)
-	http.HandleFunc("/api/selection-results", handleSelectionResults)
-	http.HandleFunc("/api/decision-notes", handleDecisionNotes)
-	http.HandleFunc("/api/decision-notes/", handleDecisionNoteOperations)
-	http.HandleFunc("/api/daily-review", handleDailyReview)
-	http.HandleFunc("/api/automations/", handleAutomationOperations)
-	http.HandleFunc("/api/webhooks", handleWebhooks)
-	http.HandleFunc("/api/webhooks/", handleWebhookOperations)
-	http.HandleFunc("/api/hqchart/kline", handleHQChartKline)
-	http.HandleFunc("/api/hqchart/history", handleHQChartHistory)
-	registerAIProxyRoutes()
-}
-
-func registerSelectionWorkerRoutes() {
-	if err := initAutomationServices(); err != nil {
-		log.Printf("初始化选股任务服务失败: %v", err)
-		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化选股任务服务失败: %v", err))
-	}
-	http.HandleFunc("/api/health", handleHealthCheck)
-	http.HandleFunc("/api/server-status", handleGetServerStatus)
-	http.HandleFunc("/api/automations", handleAutomationTasks)
-	http.HandleFunc("/api/automations/templates", handleAutomationTemplates)
-	http.HandleFunc("/api/automations/runs", handleAutomationRuns)
-	http.HandleFunc("/api/automations/", handleAutomationOperations)
-	http.HandleFunc("/api/strategies", handleStrategies)
-	http.HandleFunc("/api/strategies/", handleStrategyOperations)
 }
 
 func listenAndServe(defaultPort string) {
@@ -973,27 +870,15 @@ func listenAndServe(defaultPort string) {
 }
 
 func main() {
-	role := strings.ToLower(strings.TrimSpace(os.Getenv("TDX_APP_ROLE")))
-	switch role {
-	case "market", "market-service":
-		if err := initMarketRuntime(true, true); err != nil {
-			log.Fatal(err)
-		}
-		registerMarketRoutes()
-		listenAndServe("8081")
-	case "selection", "selection-worker":
-		if err := initMarketRuntime(false, false); err != nil {
-			log.Fatal(err)
-		}
-		registerSelectionWorkerRoutes()
-		listenAndServe("8082")
-	default:
-		if strings.TrimSpace(os.Getenv("MARKET_SERVICE_URL")) == "" {
-			if err := initMarketRuntime(false, true); err != nil {
-				log.Fatal(err)
-			}
-		}
-		registerWebRoutes()
-		listenAndServe("8080")
+	var err error
+	marketStore, err = openMarketStore()
+	if err != nil {
+		log.Fatal(err)
 	}
+	defer closeMarketStore()
+	if err := initMarketRuntime(envBool("MARKET_SYNC_ON_START", true), envBool("MARKET_SYNC_ON_START", true)); err != nil {
+		log.Fatal(err)
+	}
+	registerMarketRoutes()
+	listenAndServe("8081")
 }

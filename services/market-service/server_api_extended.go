@@ -84,18 +84,27 @@ func handleBatchQuote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Codes) == 0 {
+	symbols, err := normalizeSymbols(req.Codes)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	if len(symbols) == 0 {
 		errorResponse(w, "股票代码列表不能为空")
 		return
 	}
 
 	// 限制最多50只
-	if len(req.Codes) > 50 {
+	if len(symbols) > 50 {
 		errorResponse(w, "一次最多查询50只股票")
 		return
 	}
 
-	quotes, err := client.GetQuote(req.Codes...)
+	codes := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		codes = append(codes, symbol.TDXCode)
+	}
+	quotes, err := client.GetQuote(codes...)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("获取行情失败: %v", err))
 		return

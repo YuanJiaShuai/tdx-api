@@ -1,9 +1,8 @@
-module web
+module selection-worker
 
 go 1.23
 
 require (
-	github.com/google/uuid v1.5.0
 	github.com/injoyai/tdx v0.0.0
 	github.com/robfig/cron/v3 v3.0.1
 	workbench-core v0.0.0
@@ -16,6 +15,7 @@ require (
 	github.com/go-sql-driver/mysql v1.7.0 // indirect
 	github.com/goccy/go-json v0.8.1 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
+	github.com/google/uuid v1.5.0 // indirect
 	github.com/injoyai/base v1.2.20 // indirect
 	github.com/injoyai/conv v1.2.5 // indirect
 	github.com/injoyai/ios v1.2.2 // indirect

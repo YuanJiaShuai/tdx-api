@@ -10,8 +10,9 @@ ENV GO111MODULE=on \
     PATH="/usr/local/go/bin:${PATH}"
 
 COPY packages/tdx-core/go.mod packages/tdx-core/go.sum ./packages/tdx-core/
+COPY packages/workbench-core/go.mod packages/workbench-core/go.sum ./packages/workbench-core/
 COPY apps/web/go.mod apps/web/go.sum ./apps/web/
-RUN (cd packages/tdx-core && go mod download) && (cd apps/web && go mod download)
+RUN (cd packages/tdx-core && go mod download) && (cd packages/workbench-core && go mod download) && (cd apps/web && go mod download)
 COPY . .
 RUN (cd apps/web && go build -ldflags="-s -w" -o /app/stock-web .)
 
