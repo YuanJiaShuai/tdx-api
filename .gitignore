@@ -27,6 +27,10 @@ coverage.out
 *.so
 *.dylib
 *.log
+/apps/web/web
+/services/ai-service/ai-service
+/services/market-service/market-service
+/services/selection-worker/selection-worker
 
 # Project runtime data and generated reports
 data/
