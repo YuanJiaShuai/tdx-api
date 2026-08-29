@@ -136,6 +136,8 @@ type Webhook struct {
 type TradingAccount struct {
 	Principal         float64 `json:"principal"`
 	TotalAssets       float64 `json:"totalAssets"`
+	MarketValue       float64 `json:"marketValue"`
+	DailyProfit       float64 `json:"dailyProfit"`
 	MaxTradeRisk      float64 `json:"maxTradeRisk"`
 	MaxPositionWeight float64 `json:"maxPositionWeight"`
 }
@@ -162,6 +164,9 @@ type TradingTrade struct {
 	Status        string  `json:"status"`
 	EntryDate     string  `json:"entryDate"`
 	EntryPrice    float64 `json:"entryPrice"`
+	ExitDate      string  `json:"exitDate"`
+	ExitPrice     float64 `json:"exitPrice"`
+	ExitShares    float64 `json:"exitShares"`
 	CurrentPrice  float64 `json:"currentPrice"`
 	PreviousClose float64 `json:"previousClosePrice"`
 	Shares        float64 `json:"shares"`
@@ -491,6 +496,9 @@ func defaultTradingSystemState() TradingSystemState {
 				Status:        "active",
 				EntryDate:     "2026-08-26",
 				EntryPrice:    40.80,
+				ExitDate:      "",
+				ExitPrice:     0,
+				ExitShares:    0,
 				CurrentPrice:  40.29,
 				Shares:        300,
 				InvalidPrice:  39.60,
@@ -932,6 +940,8 @@ func normalizeTradingSystemState(state TradingSystemState) TradingSystemState {
 	state.Account = TradingAccount{
 		Principal:         state.Account.Principal,
 		TotalAssets:       state.Account.TotalAssets,
+		MarketValue:       state.Account.MarketValue,
+		DailyProfit:       state.Account.DailyProfit,
 		MaxTradeRisk:      state.Account.MaxTradeRisk,
 		MaxPositionWeight: state.Account.MaxPositionWeight,
 	}
@@ -955,6 +965,7 @@ func normalizeTradingSystemState(state TradingSystemState) TradingSystemState {
 			trade.Status = "active"
 		}
 		trade.EntryDate = strings.TrimSpace(trade.EntryDate)
+		trade.ExitDate = strings.TrimSpace(trade.ExitDate)
 		trade.PositionLabel = strings.TrimSpace(trade.PositionLabel)
 		if trade.PositionLabel == "" {
 			trade.PositionLabel = "试错仓"

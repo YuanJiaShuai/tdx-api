@@ -38,6 +38,8 @@ const defaultTradingState = {
     account: {
         principal: 50000,
         totalAssets: 56279.20,
+        marketValue: 0,
+        dailyProfit: 0,
         maxTradeRisk: 1,
         maxPositionWeight: 30
     },
@@ -2726,6 +2728,8 @@ function renderTradingAccount() {
     const fields = {
         tradingPrincipal: state.account.principal,
         tradingTotalAssets: state.account.totalAssets,
+        tradingMarketValue: state.account.marketValue,
+        tradingDailyProfit: state.account.dailyProfit,
         tradingMaxTradeRisk: state.account.maxTradeRisk,
         tradingMaxPositionWeight: state.account.maxPositionWeight
     };
@@ -2762,8 +2766,10 @@ function renderTradingStats() {
         return acc;
     }, { position: 0, risk: 0, pnl: 0, entry: 0 });
     const assets = Number(state.account.totalAssets || 0);
+    const marketValue = Number(state.account.marketValue || 0);
+    const dailyProfit = Number(state.account.dailyProfit || 0);
     const principal = Number(state.account.principal || 0);
-    const cash = assets - totals.position;
+    const cash = assets - (marketValue || totals.position);
     const realized = assets - principal;
     const riskPct = assets ? (totals.risk / assets) * 100 : 0;
     const pnlPct = totals.entry ? (totals.pnl / totals.entry) * 100 : 0;
@@ -2782,7 +2788,7 @@ function renderTradingStats() {
         statProfit.textContent = `累计盈亏：${realized >= 0 ? '+' : ''}¥${tradingMoney(realized)}`;
         statProfit.className = `metric-note ${realized >= 0 ? 'trading-positive' : 'trading-negative'}`;
     }
-    if (statPosition) statPosition.textContent = `¥${tradingMoney(totals.position)}`;
+    if (statPosition) statPosition.textContent = `¥${tradingMoney(marketValue || totals.position)}`;
     if (statCash) statCash.textContent = `现金估算：¥${tradingMoney(cash)}`;
     if (statRisk) statRisk.textContent = `¥${tradingMoney(totals.risk)}`;
     if (statRiskPct) statRiskPct.textContent = `占账户：${tradingPercent(riskPct)}`;
@@ -2968,6 +2974,8 @@ function saveTradingAccount() {
     state.account = {
         principal: tradingNumberInput('tradingPrincipal'),
         totalAssets: tradingNumberInput('tradingTotalAssets'),
+        marketValue: tradingNumberInput('tradingMarketValue'),
+        dailyProfit: tradingNumberInput('tradingDailyProfit'),
         maxTradeRisk: tradingNumberInput('tradingMaxTradeRisk'),
         maxPositionWeight: tradingNumberInput('tradingMaxPositionWeight')
     };
@@ -2991,7 +2999,7 @@ function bindTradingSystem() {
             saveTradingState().then(renderTradingSystem).catch(error => alert(error.message || '保存失败'));
         });
     });
-    ['tradingPrincipal', 'tradingTotalAssets', 'tradingMaxTradeRisk', 'tradingMaxPositionWeight', 'tradingBuyCommissionRate', 'tradingSellCommissionRate', 'tradingStampTaxRate', 'tradingTransferFeeRate', 'tradingMinCommission'].forEach(id => {
+    ['tradingPrincipal', 'tradingTotalAssets', 'tradingMarketValue', 'tradingDailyProfit', 'tradingMaxTradeRisk', 'tradingMaxPositionWeight', 'tradingBuyCommissionRate', 'tradingSellCommissionRate', 'tradingStampTaxRate', 'tradingTransferFeeRate', 'tradingMinCommission'].forEach(id => {
         const node = document.getElementById(id);
         if (node) node.addEventListener('change', saveTradingAccount);
     });

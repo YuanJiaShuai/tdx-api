@@ -1687,10 +1687,10 @@ textarea::placeholder {
 
 .trading-card-head {
     display: grid;
-    grid-template-columns: minmax(230px, 1.2fr) minmax(0, 3fr) auto;
-    gap: 12px;
+    grid-template-columns: minmax(220px, 1.05fr) minmax(0, 2.55fr) auto;
+    gap: 10px;
     align-items: start;
-    padding: 16px 18px;
+    padding: 14px 16px 12px;
     border-bottom: 1px solid var(--line-soft);
     background:
         linear-gradient(180deg, #f9fbff, #ffffff),
@@ -1699,21 +1699,35 @@ textarea::placeholder {
 
 .trading-stock-title {
     min-width: 0;
+    display: grid;
+    gap: 5px;
+    align-content: start;
+    padding-top: 2px;
 }
 
 .trading-title-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     min-width: 0;
+    flex-wrap: wrap;
 }
 
 .trading-stock-title strong {
-    display: block;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
     color: var(--ink);
-    font-size: 18px;
-    line-height: 1.25;
+    font-size: 17px;
+    line-height: 1.2;
+    font-weight: 800;
     overflow-wrap: anywhere;
+}
+
+.trading-stock-title strong span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
 }
 
 .trading-stock-title span,
@@ -1727,14 +1741,14 @@ textarea::placeholder {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 6px;
+    margin-top: 0;
 }
 
 .trading-meta-row span {
     display: inline-flex;
     align-items: center;
-    min-height: 22px;
-    padding: 2px 7px;
+    min-height: 20px;
+    padding: 1px 7px;
     border: 1px solid var(--line-soft);
     border-radius: 999px;
     background: #ffffff;
@@ -1742,13 +1756,14 @@ textarea::placeholder {
 
 .trading-num {
     display: grid;
-    gap: 3px;
+    gap: 2px;
     min-width: 0;
 }
 
 .trading-num b {
     color: var(--ink);
-    font-size: 14px;
+    font-size: 13px;
+    line-height: 1.25;
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
 }
@@ -1769,15 +1784,17 @@ textarea::placeholder {
 
 .trading-head-stats {
     display: grid;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
     align-items: start;
+    padding-left: 14px;
+    border-left: 1px solid var(--line-soft);
 }
 
 .trading-head-row {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
+    gap: 10px;
     min-width: 0;
 }
 
@@ -1787,7 +1804,7 @@ textarea::placeholder {
 
 .trading-head-divider {
     height: 1px;
-    margin: 2px 0;
+    margin: 0;
     background: var(--line-soft);
 }
 
@@ -1800,7 +1817,7 @@ textarea::placeholder {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
     gap: 14px;
-    padding: 16px 18px 18px;
+    padding: 14px 16px 16px;
 }
 
 .trading-left-column,
