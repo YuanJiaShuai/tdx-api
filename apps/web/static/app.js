@@ -1,17 +1,48 @@
 // 全局变量
 let currentStock = '';
+let watchlistRows = [
+    { code: '601899', name: '紫金矿业' },
+    { code: '603171', name: '税友股份' },
+    { code: '002202', name: '金风科技' },
+    { code: '000630', name: '铜陵有色' }
+];
+let watchlistDragBound = false;
+let watchlistClickBound = false;
+let watchlistQuoteRequestID = 0;
+let watchlistIndustryPromise = null;
+let watchlistQuoteDialogState = {
+    open: false,
+    symbol: '',
+    title: '',
+    period: 'minute',
+    quote: null,
+    quoteData: null
+};
+let watchlistQuoteIndicatorState = {
+    activeWindow: 1,
+    windows: [
+        { defaultIndex: 'MA', defaultName: 'MA', formulaID: '' },
+        { defaultIndex: 'VOL', defaultName: 'VOL', formulaID: '' },
+        { defaultIndex: 'MACD', defaultName: 'MACD', formulaID: '' }
+    ]
+};
 let formulas = [];
 let pools = [];
 let strategies = [];
 let factors = [];
 let automations = [];
 let webhooks = [];
+let aiProviders = [];
+let aiCredentials = [];
 let selectionResults = [];
 let decisionResults = [];
 let dailyReview = null;
 let reviewItems = [];
 let tradingState = null;
 let tradingStateLoaded = false;
+let hikyuuDataLoaded = false;
+let hikyuuSyncPollTimer = null;
+let hikyuuSyncActiveTaskID = '';
 let currentHQOverlay = null;
 let selectedDecisionResult = null;
 let selectedReviewItem = null;
@@ -24,6 +55,14 @@ let strategyRunState = {
     timer: null,
     message: '',
     progress: 0
+};
+let strategyBacktestState = {
+    running: false,
+    strategyID: '',
+    timer: null,
+    message: '',
+    progress: 0,
+    status: ''
 };
 let automationRunState = {
     running: false,
@@ -111,15 +150,38 @@ async function apiFetch(url, options = {}) {
 async function refreshSystemStatus() {
     const serviceNode = document.getElementById('serviceStatusText');
     const timeNode = document.getElementById('systemTimeText');
-    if (!serviceNode || !timeNode) return;
+    const listNode = document.getElementById('serviceStatusList');
+    if (!serviceNode || !timeNode || !listNode) return;
     try {
-        const status = await apiFetch('/api/server-status');
-        serviceNode.textContent = status.ready ? '运行正常' : (status.status || '异常');
-        timeNode.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        const result = await apiFetch('/api/services/status');
+        const services = Array.isArray(result.services) ? result.services : [];
+        serviceNode.textContent = result.ready ? '全部正常' : `${services.filter(service => service.healthy).length}/${services.length} 正常`;
+        serviceNode.className = result.ready ? 'is-healthy' : 'is-degraded';
+        listNode.innerHTML = services.map(service => {
+            const healthy = service.healthy === true;
+            const statusText = healthy ? '正常' : (service.status === 'degraded' ? '降级' : '异常');
+            return `
+                <span class="service-status-chip ${healthy ? 'is-healthy' : 'is-offline'}" title="${escapeHTML(service.id || '')}">
+                    <i aria-hidden="true"></i>
+                    <b>${escapeHTML(service.name || service.id || '服务')}</b>
+                    <em>${statusText}</em>
+                </span>
+            `;
+        }).join('');
+        timeNode.textContent = formatSystemTime(result.checked_at);
     } catch (error) {
-        serviceNode.textContent = '连接异常';
+        serviceNode.textContent = '状态获取失败';
+        serviceNode.className = 'is-degraded';
+        listNode.innerHTML = '<span class="service-status-loading is-offline">无法获取服务状态</span>';
         timeNode.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     }
+}
+
+function formatSystemTime(value) {
+    const date = value ? new Date(value) : new Date();
+    return Number.isNaN(date.getTime())
+        ? new Date().toLocaleTimeString('zh-CN', { hour12: false })
+        : date.toLocaleTimeString('zh-CN', { hour12: false });
 }
 
 function loadQuickStock(code) {
@@ -127,6 +189,650 @@ function loadQuickStock(code) {
     if (input) input.value = code;
     currentStock = code;
     loadStockData(code);
+}
+
+function renderWatchlist(options = {}) {
+    const statusNode = document.getElementById('watchlistStatus');
+    const body = document.getElementById('watchlistTableBody');
+    if (!body) return;
+
+    const rows = Array.isArray(watchlistRows) ? watchlistRows : [];
+    const shouldRefreshQuotes = options.refreshQuotes !== false;
+    if (statusNode && !rows.length) statusNode.textContent = '暂无自选股票';
+    if (statusNode && rows.length && shouldRefreshQuotes) statusNode.textContent = `共 ${rows.length} 只 · 正在刷新行情`;
+    if (statusNode && rows.length && !shouldRefreshQuotes) statusNode.textContent = `共 ${rows.length} 只`;
+
+    if (!rows.length) {
+        body.innerHTML = '<tr class="watchlist-empty-row"><td colspan="16">暂无自选股票</td></tr>';
+    } else {
+        body.innerHTML = rows.map((row, index) => `
+            <tr class="watchlist-row" data-watchlist-symbol="${escapeHTML(normalizeSymbol(row.code || row.symbol || ''))}" data-watchlist-name="${escapeHTML(row.name || row.code || '')}" tabindex="0" role="button" aria-label="查看 ${escapeHTML(row.name || row.code || '股票')} 专业行情">
+                <td class="watchlist-fixed watchlist-index">${index + 1}</td>
+                <td class="watchlist-fixed watchlist-code">
+                    <button
+                        type="button"
+                        class="watchlist-code-link"
+                        data-watchlist-symbol="${escapeHTML(normalizeSymbol(row.code || row.symbol || ''))}"
+                        data-watchlist-name="${escapeHTML(row.name || row.code || '')}"
+                        aria-label="打开 ${escapeHTML(row.code || row.symbol || '--')} 行情详情"
+                    >${escapeHTML(row.code || row.symbol || '--')}</button>
+                </td>
+                <td class="watchlist-fixed watchlist-name">${escapeHTML(row.name || '--')}</td>
+                <td class="${watchlistChangeClass(row.changePercent)}">${escapeHTML(row.changePercent ?? '--')}</td>
+                <td class="${watchlistChangeClass(row.changePercent)}">${escapeHTML(row.price ?? '--')}</td>
+                <td>${escapeHTML(row.volume ?? '--')}</td>
+                <td>${escapeHTML(row.amount ?? '--')}</td>
+                <td>${escapeHTML(row.speed ?? '--')}</td>
+                <td class="${watchlistChangeClass(row.changePercent)}">${escapeHTML(row.change ?? '--')}</td>
+                <td>${escapeHTML(row.mainNetVolume ?? '--')}</td>
+                <td>${escapeHTML(row.mainNetInflow ?? '--')}</td>
+                <td>${escapeHTML(row.industry ?? '--')}</td>
+                <td>${escapeHTML(row.turnover ?? '--')}</td>
+                <td>${escapeHTML(row.category ?? '--')}</td>
+                <td>${escapeHTML(row.entrust ?? '--')}</td>
+                <td>${escapeHTML(row.volumeRatio ?? '--')}</td>
+            </tr>
+        `).join('');
+    }
+
+    bindWatchlistClick();
+    bindWatchlistDrag();
+    if (shouldRefreshQuotes && rows.length) refreshWatchlistQuotes();
+}
+
+function watchlistChangeClass(value) {
+    const change = Number.parseFloat(String(value ?? '').replace('%', ''));
+    if (!Number.isFinite(change) || change === 0) return '';
+    return change > 0 ? 'watchlist-up' : 'watchlist-down';
+}
+
+function formatWatchlistPrice(value) {
+    const price = Number(value);
+    return Number.isFinite(price) && price > 0 ? price.toFixed(2) : '--';
+}
+
+function formatWatchlistSigned(value, suffix = '') {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '--';
+    const normalized = Math.abs(number) < 0.005 ? 0 : number;
+    return `${normalized > 0 ? '+' : ''}${normalized.toFixed(2)}${suffix}`;
+}
+
+function formatWatchlistPercent(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return '--';
+    return `${number.toFixed(2)}%`;
+}
+
+function formatWatchlistPlain(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '--';
+    return number.toFixed(2);
+}
+
+function watchlistBidAskRatio(quote) {
+    const buyTotal = (quote?.BuyLevel || []).reduce((sum, item) => sum + Number(item?.Number || 0), 0);
+    const sellTotal = (quote?.SellLevel || []).reduce((sum, item) => sum + Number(item?.Number || 0), 0);
+    const total = buyTotal + sellTotal;
+    if (total <= 0) return '--';
+    return formatWatchlistSigned(((buyTotal - sellTotal) / total) * 100, '%');
+}
+
+function watchlistQuoteRow(row, quote) {
+    const previousClose = Number(quote?.K?.Last || 0) / 1000;
+    const currentPrice = Number(quote?.K?.Close || 0) / 1000;
+    if (currentPrice <= 0) return row;
+
+    const change = previousClose > 0 ? currentPrice - previousClose : 0;
+    const changePercent = previousClose > 0 ? (change / previousClose) * 100 : 0;
+    return {
+        ...row,
+        price: formatWatchlistPrice(currentPrice),
+        change: formatWatchlistSigned(change),
+        changePercent: formatWatchlistSigned(changePercent, '%'),
+        volume: quote.TotalHand > 0 ? formatAmount(Number(quote.TotalHand) * 100) : '--',
+        volumeShares: quote.TotalHand > 0 ? Number(quote.TotalHand) * 100 : 0,
+        amount: formatAmount(quote.Amount),
+        speed: Number.isFinite(Number(quote.Rate)) && Number(quote.Rate) !== 0
+            ? formatWatchlistSigned(quote.Rate, '%')
+            : '--',
+        entrust: watchlistBidAskRatio(quote)
+    };
+}
+
+async function refreshWatchlistQuotes() {
+    const rows = Array.isArray(watchlistRows) ? watchlistRows.slice() : [];
+    const codes = rows.map(row => normalizeSymbol(row.code || row.symbol)).filter(Boolean);
+    if (!codes.length) return;
+
+    const requestID = ++watchlistQuoteRequestID;
+    const statusNode = document.getElementById('watchlistStatus');
+    try {
+        const quotes = await apiFetch(`/api/quote?code=${encodeURIComponent(codes.join(','))}`);
+        if (requestID !== watchlistQuoteRequestID) return;
+
+        const quoteMap = new Map(
+            (Array.isArray(quotes) ? quotes : []).map(quote => [normalizeSymbol(quote.Code), quote])
+        );
+        const mergedRows = rows.map(row => {
+            const code = normalizeSymbol(row.code || row.symbol);
+            return watchlistQuoteRow(row, quoteMap.get(code));
+        });
+        watchlistRows = mergedRows;
+        renderWatchlist({ refreshQuotes: false });
+        await enrichWatchlistRows(mergedRows, requestID);
+        if (statusNode) statusNode.textContent = `共 ${watchlistRows.length} 只 · 更新于 ${localTimeString()}`;
+    } catch (error) {
+        if (requestID !== watchlistQuoteRequestID) return;
+        if (statusNode) statusNode.textContent = `共 ${rows.length} 只 · 行情获取失败`;
+        console.warn('刷新自选行情失败:', error);
+    }
+}
+
+async function enrichWatchlistRows(rows, requestID) {
+    const enriched = await Promise.all(rows.map(async row => {
+        const code = normalizeSymbol(row.code || row.symbol);
+        const [financeResult, klineResult, industryMap] = await Promise.allSettled([
+            apiFetch(`/api/finance/standard?code=${encodeURIComponent(code)}`),
+            apiFetch(`/api/kline-history?code=${encodeURIComponent(code)}&type=day&limit=8`),
+            loadWatchlistIndustryMap()
+        ]);
+
+        let nextRow = { ...row };
+        if (financeResult.status === 'fulfilled') {
+            nextRow = applyWatchlistFinance(nextRow, financeResult.value);
+        }
+        if (klineResult.status === 'fulfilled') {
+            nextRow = applyWatchlistKline(nextRow, klineResult.value);
+        }
+        if (industryMap.status === 'fulfilled') {
+            const industry = industryMap.value.get(code);
+            if (industry) nextRow.industry = industry;
+        }
+        return nextRow;
+    }));
+    if (requestID !== watchlistQuoteRequestID) return;
+    watchlistRows = enriched;
+    renderWatchlist({ refreshQuotes: false });
+}
+
+function applyWatchlistFinance(row, finance) {
+    const volumeShares = Number(row.volumeShares || 0);
+    const floatShares = Number(finance?.float_shares || 0);
+    return {
+        ...row,
+        turnover: floatShares > 0 && volumeShares > 0
+            ? formatWatchlistPercent((volumeShares / floatShares) * 100)
+            : row.turnover ?? '--'
+    };
+}
+
+function applyWatchlistKline(row, kline) {
+    const list = kline?.List || kline?.list || [];
+    if (list.length < 2) return row;
+    const latest = list[list.length - 1];
+    const previous = list.slice(Math.max(0, list.length - 6), list.length - 1);
+    const avgVolume = previous.reduce((sum, item) => sum + Number(item.Volume ?? item.volume ?? 0), 0) / previous.length;
+    const latestVolume = Number(latest.Volume ?? latest.volume ?? 0);
+    return {
+        ...row,
+        volumeRatio: avgVolume > 0 && latestVolume > 0
+            ? formatWatchlistPlain(latestVolume / avgVolume)
+            : row.volumeRatio ?? '--'
+    };
+}
+
+async function loadWatchlistIndustryMap() {
+    if (!watchlistIndustryPromise) {
+        watchlistIndustryPromise = apiFetch('/api/tdx-hy').then(data => {
+            const map = new Map();
+            (data?.list || data?.List || []).forEach(item => {
+                const code = normalizeSymbol(item.Code || item.code);
+                if (!code) return;
+                const tdxHy = item.TdxHy || item.tdx_hy || '';
+                const swHy = item.SwHy || item.sw_hy || '';
+                map.set(code, [tdxHy, swHy].filter(Boolean).join(' / ') || '--');
+            });
+            return map;
+        }).catch(error => {
+            watchlistIndustryPromise = null;
+            throw error;
+        });
+    }
+    return watchlistIndustryPromise;
+}
+
+function bindWatchlistDrag() {
+    const viewport = document.getElementById('watchlistScroll');
+    if (!viewport || watchlistDragBound) return;
+    watchlistDragBound = true;
+
+    let dragging = false;
+    let dragArmed = false;
+    let startX = 0;
+    let startScrollLeft = 0;
+    let moved = 0;
+
+    viewport.addEventListener('pointerdown', event => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        if (event.target.closest('button, a, input, select, textarea, label')) return;
+        dragArmed = true;
+        dragging = false;
+        moved = 0;
+        startX = event.clientX;
+        startScrollLeft = viewport.scrollLeft;
+        viewport.setPointerCapture?.(event.pointerId);
+    });
+    viewport.addEventListener('pointermove', event => {
+        if (!dragArmed) return;
+        const deltaX = event.clientX - startX;
+        moved = Math.max(moved, Math.abs(deltaX));
+        if (!dragging && moved < 6) return;
+        if (!dragging) {
+            dragging = true;
+            viewport.classList.add('is-dragging');
+        }
+        viewport.scrollLeft = startScrollLeft - (event.clientX - startX);
+    });
+    const stopDragging = event => {
+        if (!dragArmed) return;
+        dragArmed = false;
+        dragging = false;
+        viewport.classList.remove('is-dragging');
+        if (event?.pointerId !== undefined) viewport.releasePointerCapture?.(event.pointerId);
+    };
+    viewport.addEventListener('pointerup', stopDragging);
+    viewport.addEventListener('pointercancel', stopDragging);
+    viewport.addEventListener('pointerleave', event => {
+        if (event.pointerType === 'mouse') stopDragging(event);
+    });
+}
+
+function bindWatchlistClick() {
+    const body = document.getElementById('watchlistTableBody');
+    if (!body || watchlistClickBound) return;
+    watchlistClickBound = true;
+
+    const openFromRow = row => {
+        const symbol = row?.dataset?.watchlistSymbol;
+        const title = row?.dataset?.watchlistName || '';
+        if (symbol) openWatchlistSymbol(symbol, title);
+    };
+
+    body.addEventListener('click', event => {
+        const codeButton = event.target.closest('button[data-watchlist-symbol]');
+        if (codeButton && body.contains(codeButton)) {
+            event.preventDefault();
+            event.stopPropagation();
+            openWatchlistSymbol(codeButton.dataset.watchlistSymbol, codeButton.dataset.watchlistName || '');
+            return;
+        }
+        const row = event.target.closest('tr[data-watchlist-symbol]');
+        if (!row || !body.contains(row)) return;
+        openFromRow(row);
+    });
+    body.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const row = event.target.closest('tr[data-watchlist-symbol]');
+        if (!row || !body.contains(row)) return;
+        event.preventDefault();
+        openFromRow(row);
+    });
+}
+
+function openWatchlistSymbol(code, title = '') {
+    const symbol = normalizeSymbol(code);
+    if (!symbol) return;
+    openWatchlistQuoteDialog(symbol, 'minute', title);
+}
+
+function openWatchlistQuoteDialog(symbol, period = 'minute', title = '') {
+    const normalized = normalizeSymbol(symbol);
+    if (!normalized) return;
+    resetWatchlistQuoteIndicators();
+    watchlistQuoteDialogState.open = true;
+    watchlistQuoteDialogState.symbol = normalized;
+    watchlistQuoteDialogState.title = title || '';
+    watchlistQuoteDialogState.period = period;
+    syncWatchlistQuotePeriodTabs(period);
+    showWatchlistQuoteDialog();
+    refreshWatchlistQuoteDialog();
+}
+
+function showWatchlistQuoteDialog() {
+    const dialog = document.getElementById('watchlistQuoteDialog');
+    if (!dialog) return;
+    dialog.classList.add('open');
+    dialog.setAttribute('aria-hidden', 'false');
+}
+
+function closeWatchlistQuoteDialog() {
+    closeWatchlistQuoteIndicatorMenu();
+    const dialog = document.getElementById('watchlistQuoteDialog');
+    if (dialog) {
+        dialog.classList.remove('open');
+        dialog.setAttribute('aria-hidden', 'true');
+    }
+    watchlistQuoteDialogState.open = false;
+}
+
+function openWatchlistQuoteInProChart() {
+    const symbol = watchlistQuoteDialogState.symbol;
+    if (!symbol) return;
+    const hqInput = document.getElementById('hqSymbol');
+    if (hqInput) hqInput.value = symbol;
+    closeWatchlistQuoteDialog();
+    switchWorkspace('proChart', document.querySelectorAll('.workspace-tab')[1]);
+}
+
+function watchlistQuotePeriodToHqPeriod(period) {
+    switch (period) {
+        case 'minute':
+            return 'minute1';
+        case 'minute120':
+            return 'minute120';
+        case 'minute60':
+            return 'hour';
+        case 'minute30':
+            return 'minute30';
+        case 'minute15':
+            return 'minute15';
+        case 'week':
+            return 'week';
+        case 'month':
+            return 'month';
+        default:
+            return 'day';
+    }
+}
+
+function switchWatchlistQuotePeriod(period, button) {
+    closeWatchlistQuoteIndicatorMenu();
+    watchlistQuoteDialogState.period = period;
+    syncWatchlistQuoteIndicatorVisibility();
+    syncWatchlistQuotePeriodTabs(period, button);
+    refreshWatchlistQuoteDialog();
+}
+
+function syncWatchlistQuotePeriodTabs(period, activeButton) {
+    document.querySelectorAll('.quote-period-tabs .tab-btn').forEach(btn => {
+        const active = activeButton ? btn === activeButton : btn.dataset.period === period;
+        btn.classList.toggle('active', active);
+    });
+}
+
+function watchlistQuoteRenderOptions(period) {
+    if (String(period || '').startsWith('minute')) {
+        return { count: 240, pageSize: 80, dataWidth: 8 };
+    }
+    return { count: 800, pageSize: 80 };
+}
+
+function resetWatchlistQuoteIndicators() {
+    watchlistQuoteIndicatorState.activeWindow = 1;
+    watchlistQuoteIndicatorState.windows = [
+        { defaultIndex: 'MA', defaultName: 'MA', formulaID: '' },
+        { defaultIndex: 'VOL', defaultName: 'VOL', formulaID: '' },
+        { defaultIndex: 'MACD', defaultName: 'MACD', formulaID: '' }
+    ];
+    syncWatchlistQuoteIndicatorVisibility();
+    renderWatchlistQuoteIndicatorControls();
+    closeWatchlistQuoteIndicatorMenu();
+}
+
+function syncWatchlistQuoteIndicatorVisibility() {
+    const toolbar = document.querySelector('.quote-indicator-toolbar');
+    const isKLine = watchlistQuoteDialogState.period !== 'minute';
+    if (toolbar) toolbar.hidden = !isKLine;
+    if (!isKLine) closeWatchlistQuoteIndicatorMenu();
+}
+
+function watchlistQuoteIndicatorFormula(windowIndex) {
+    const setting = watchlistQuoteIndicatorState.windows[windowIndex];
+    if (!setting?.formulaID) return null;
+    return formulas.find(formula => formula.id === setting.formulaID) || null;
+}
+
+function watchlistQuoteIndicatorWindows() {
+    return watchlistQuoteIndicatorState.windows.map((setting, windowIndex) => {
+        const formula = watchlistQuoteIndicatorFormula(windowIndex);
+        if (!formula) return { Index: setting.defaultIndex };
+        return {
+            Name: formula.name || '自定义指标',
+            Script: formula.script,
+            Args: parseHQFormulaArgs(formula),
+            IsMainIndex: windowIndex === 0
+        };
+    });
+}
+
+function watchlistQuoteIndicatorLabel(windowIndex) {
+    const setting = watchlistQuoteIndicatorState.windows[windowIndex];
+    return watchlistQuoteIndicatorFormula(windowIndex)?.name || setting?.defaultName || '指标';
+}
+
+function renderWatchlistQuoteIndicatorControls() {
+    const node = document.getElementById('watchlistQuoteIndicatorControls');
+    if (!node) return;
+    node.innerHTML = watchlistQuoteIndicatorState.windows.map((setting, index) => `
+        <button
+            type="button"
+            class="quote-indicator-trigger"
+            onclick="openWatchlistQuoteIndicatorMenu(${index})"
+            title="修改${escapeHTML(setting.defaultName)}指标"
+        >
+            <span>${escapeHTML(watchlistQuoteIndicatorLabel(index))}</span>
+            <small aria-hidden="true">⌄</small>
+        </button>
+    `).join('');
+}
+
+function closeWatchlistQuoteIndicatorMenu() {
+    const menu = document.getElementById('watchlistQuoteIndicatorMenu');
+    if (!menu) return;
+    menu.classList.remove('open');
+    menu.setAttribute('aria-hidden', 'true');
+}
+
+async function openWatchlistQuoteIndicatorMenu(windowIndex) {
+    watchlistQuoteIndicatorState.activeWindow = windowIndex;
+    const menu = document.getElementById('watchlistQuoteIndicatorMenu');
+    if (!menu) return;
+    try {
+        if (!formulas.length) formulas = await apiFetch('/api/formulas');
+        const indicatorFormulas = formulas.filter(formula => (
+            formula.enabled !== false && (formula.type || 'indicator') === 'indicator'
+        ));
+        menu.innerHTML = `
+            <div class="quote-indicator-menu-title">我的自定义指标</div>
+            ${indicatorFormulas.length
+                ? indicatorFormulas.map(formula => `
+                    <button type="button" class="quote-indicator-option" onclick="selectWatchlistQuoteIndicator('${escapeJSString(formula.id)}')">
+                        <span>${escapeHTML(formula.name || '未命名指标')}</span>
+                        <small>${escapeHTML(formatFormulaArgs(formula))}</small>
+                    </button>
+                `).join('')
+                : '<div class="quote-indicator-empty">暂无图表指标，请先在公式管理中创建</div>'}
+            <button type="button" class="quote-indicator-option default-option" onclick="selectWatchlistQuoteIndicator('')">
+                <span>恢复默认指标</span>
+                <small>${escapeHTML(watchlistQuoteIndicatorState.windows[windowIndex]?.defaultName || '')}</small>
+            </button>
+        `;
+        menu.classList.add('open');
+        menu.setAttribute('aria-hidden', 'false');
+    } catch (error) {
+        menu.innerHTML = `<div class="quote-indicator-empty">${escapeHTML(error.message || error)}</div>`;
+        menu.classList.add('open');
+        menu.setAttribute('aria-hidden', 'false');
+    }
+}
+
+function renderWatchlistQuoteChart() {
+    const { symbol, period } = watchlistQuoteDialogState;
+    if (!watchlistQuoteDialogState.open || !symbol || period === 'minute') return;
+    const hqPeriod = watchlistQuotePeriodToHqPeriod(period);
+    const chartOptions = {
+        ...watchlistQuoteRenderOptions(period),
+        windows: watchlistQuoteIndicatorWindows()
+    };
+    renderHQKLine('watchlistQuoteChart', symbol, hqPeriod, chartOptions);
+    window.TDXHQChart?.resize?.(document.getElementById('watchlistQuoteChart'));
+}
+
+function selectWatchlistQuoteIndicator(formulaID) {
+    const windowIndex = watchlistQuoteIndicatorState.activeWindow;
+    const setting = watchlistQuoteIndicatorState.windows[windowIndex];
+    if (!setting) return;
+    setting.formulaID = formulaID || '';
+    closeWatchlistQuoteIndicatorMenu();
+    renderWatchlistQuoteIndicatorControls();
+
+    const chartContainer = document.getElementById('watchlistQuoteChart');
+    const chart = window.TDXHQChart?.getChart?.(chartContainer);
+    const formula = watchlistQuoteIndicatorFormula(windowIndex);
+    if (!chart || typeof chart.ChangeScriptIndex !== 'function' || !formula) {
+        renderWatchlistQuoteChart();
+        return;
+    }
+    chart.ChangeScriptIndex(windowIndex, {
+        Name: formula.name || '自定义指标',
+        Script: formula.script,
+        Args: parseHQFormulaArgs(formula),
+        IsMainIndex: windowIndex === 0
+    });
+    window.TDXHQChart?.resize?.(chartContainer);
+}
+
+async function refreshWatchlistQuoteDialog() {
+    const { symbol, period } = watchlistQuoteDialogState;
+    if (!symbol) return;
+    const titleNode = document.getElementById('watchlistQuoteTitle');
+    const codeNode = document.getElementById('watchlistQuoteCode');
+    const metaNode = document.getElementById('watchlistQuoteMeta');
+    const priceNode = document.getElementById('watchlistQuotePrice');
+    const changeNode = document.getElementById('watchlistQuoteChange');
+    const changePctNode = document.getElementById('watchlistQuoteChangePct');
+    const quoteTitle = watchlistQuoteDialogState.title || symbol;
+    if (titleNode) titleNode.textContent = quoteTitle;
+    if (codeNode) codeNode.textContent = symbol;
+    if (metaNode) metaNode.textContent = '加载中...';
+    if (priceNode) priceNode.textContent = '--';
+    if (changeNode) changeNode.textContent = '--';
+    if (changePctNode) changePctNode.textContent = '--';
+
+    try {
+        syncWatchlistQuotePeriodTabs(period);
+        const [quoteList, finance, tdxHy, klineResp] = await Promise.all([
+            apiFetch(`/api/quote?code=${encodeURIComponent(symbol)}`),
+            apiFetch(`/api/finance/standard?code=${encodeURIComponent(symbol)}`),
+            loadWatchlistIndustryMap(),
+            apiFetch(`/api/kline-history?code=${encodeURIComponent(symbol)}&type=${encodeURIComponent(watchlistQuotePeriodToHqPeriod(period))}&limit=120`)
+        ]);
+        const quote = Array.isArray(quoteList) ? quoteList[0] : null;
+        if (!watchlistQuoteDialogState.title) {
+            watchlistQuoteDialogState.title = quote?.Name || quote?.name || symbol;
+            if (titleNode) titleNode.textContent = watchlistQuoteDialogState.title;
+        }
+        watchlistQuoteDialogState.quote = quote || null;
+        watchlistQuoteDialogState.quoteData = klineResp || null;
+        renderWatchlistQuoteDialog(symbol, quote, finance, tdxHy, klineResp, period);
+        const hqPeriod = watchlistQuotePeriodToHqPeriod(period);
+        const chartOptions = watchlistQuoteRenderOptions(period);
+        const renderChart = () => {
+            if (!watchlistQuoteDialogState.open) return;
+            if (period === 'minute') {
+                renderHQMinute('watchlistQuoteChart', symbol, chartOptions);
+            } else {
+                renderWatchlistQuoteChart();
+            }
+            window.TDXHQChart?.resize?.(document.getElementById('watchlistQuoteChart'));
+        };
+        requestAnimationFrame(() => {
+            renderChart();
+            setTimeout(renderChart, 180);
+        });
+    } catch (error) {
+        if (metaNode) metaNode.textContent = error.message || String(error);
+        const chart = document.getElementById('watchlistQuoteChart');
+        if (chart) chart.innerHTML = `<div class="data-item">${escapeHTML(error.message || error)}</div>`;
+    }
+}
+
+function renderWatchlistQuoteDialog(symbol, quote, finance, industryMap, klineResp, period) {
+    const titleNode = document.getElementById('watchlistQuoteTitle');
+    const metaNode = document.getElementById('watchlistQuoteMeta');
+    const priceNode = document.getElementById('watchlistQuotePrice');
+    const changeNode = document.getElementById('watchlistQuoteChange');
+    const changePctNode = document.getElementById('watchlistQuoteChangePct');
+    const metricsNode = document.getElementById('watchlistQuoteMetrics');
+    const sellNode = document.getElementById('watchlistQuoteSellLevels');
+    const buyNode = document.getElementById('watchlistQuoteBuyLevels');
+    if (!metricsNode || !sellNode || !buyNode) return;
+
+    const code = normalizeSymbol(symbol);
+    const exchangeName = quote?.Exchange === 1 ? '沪市' : (quote?.Exchange === 0 ? '深市' : '北交所');
+    const currentPrice = Number(quote?.K?.Close || 0) / 1000;
+    const lastClose = Number(quote?.K?.Last || 0) / 1000;
+    const openPrice = Number(quote?.K?.Open || 0) / 1000;
+    const highPrice = Number(quote?.K?.High || 0) / 1000;
+    const lowPrice = Number(quote?.K?.Low || 0) / 1000;
+    const change = currentPrice > 0 && lastClose > 0 ? currentPrice - lastClose : 0;
+    const changePct = lastClose > 0 ? (change / lastClose) * 100 : 0;
+    const floatShares = Number(finance?.float_shares || 0);
+    const volumeShares = Number(quote?.TotalHand || 0) * 100;
+    const turnover = floatShares > 0 && volumeShares > 0 ? (volumeShares / floatShares) * 100 : 0;
+    const list = klineResp?.List || klineResp?.list || [];
+    const avgVolume = list.length > 1
+        ? list.slice(Math.max(0, list.length - 6), list.length - 1).reduce((sum, item) => sum + Number(item.Volume ?? 0), 0) / Math.max(1, Math.min(5, list.length - 1))
+        : 0;
+    const volumeRatio = avgVolume > 0 ? (Number(list[list.length - 1]?.Volume || 0) / avgVolume) : 0;
+    const industry = industryMap?.get(code) || '--';
+    const quoteTitle = watchlistQuoteDialogState.title || quote?.Name || quote?.name || code;
+    if (titleNode) titleNode.textContent = quoteTitle;
+
+    if (metaNode) {
+        metaNode.textContent = `${exchangeName} · ${industry} · ${period === 'minute' ? '分时' : watchlistQuotePeriodToHqPeriod(period).toUpperCase()}`;
+    }
+    if (priceNode) priceNode.textContent = currentPrice > 0 ? currentPrice.toFixed(2) : '--';
+    if (changeNode) {
+        changeNode.textContent = currentPrice > 0 ? formatWatchlistSigned(change) : '--';
+        changeNode.className = `quote-summary-change ${change >= 0 ? 'watchlist-up' : 'watchlist-down'}`;
+    }
+    if (changePctNode) {
+        changePctNode.textContent = currentPrice > 0 ? formatWatchlistSigned(changePct, '%') : '--';
+        changePctNode.className = `quote-summary-change-pct ${change >= 0 ? 'watchlist-up' : 'watchlist-down'}`;
+    }
+    metricsNode.innerHTML = [
+        { label: '今开', value: openPrice > 0 ? openPrice.toFixed(2) : '--' },
+        { label: '最高', value: highPrice > 0 ? highPrice.toFixed(2) : '--' },
+        { label: '最低', value: lowPrice > 0 ? lowPrice.toFixed(2) : '--' },
+        { label: '昨收', value: lastClose > 0 ? lastClose.toFixed(2) : '--' },
+        { label: '成交量', value: quote?.TotalHand ? formatAmount(Number(quote.TotalHand) * 100) : '--' },
+        { label: '成交额', value: quote?.Amount ? formatAmount(quote.Amount) : '--' },
+        { label: '换手率', value: turnover > 0 ? formatWatchlistPercent(turnover) : '--' },
+        { label: '量比', value: volumeRatio > 0 ? formatWatchlistPlain(volumeRatio) : '--' },
+        { label: '委比', value: watchlistBidAskRatio(quote) }
+    ].map(item => `
+        <div class="quote-summary-item">
+            <span>${escapeHTML(item.label)}</span>
+            <strong>${escapeHTML(item.value)}</strong>
+        </div>
+    `).join('');
+
+    sellNode.innerHTML = (quote?.SellLevel || []).slice().reverse().map((item, idx) => `
+        <tr>
+            <td>卖${5 - idx}</td>
+            <td>${escapeHTML(formatWatchlistPrice(Number(item?.Price || 0) / 1000))}</td>
+            <td>${escapeHTML(item?.Number ? String(Math.round(Number(item.Number) / 100)) : '--')}</td>
+        </tr>
+    `).join('') || '<tr><td>卖五</td><td>--</td><td>--</td></tr>';
+    buyNode.innerHTML = (quote?.BuyLevel || []).map((item, idx) => `
+        <tr>
+            <td>买${idx + 1}</td>
+            <td>${escapeHTML(formatWatchlistPrice(Number(item?.Price || 0) / 1000))}</td>
+            <td>${escapeHTML(item?.Number ? String(Math.round(Number(item.Number) / 100)) : '--')}</td>
+        </tr>
+    `).join('') || '<tr><td>买一</td><td>--</td><td>--</td></tr>';
 }
 
 function switchWorkspace(name, button) {
@@ -141,7 +847,7 @@ function switchWorkspace(name, button) {
             if (window.TDXHQChart) window.TDXHQChart.resize();
         }, 50);
     }
-    if (name === 'market') refreshDecisionDesk();
+    if (name === 'market') renderWatchlist();
     if (name === 'dataCenter') loadDataCenter();
     if (name === 'selectionResults') loadSelectionResults();
     if (name === 'dailyReview') loadDailyReview();
@@ -154,6 +860,7 @@ function switchWorkspace(name, button) {
     }
     if (name === 'strategies') loadStrategyCenter();
     if (name === 'automations') loadAutomationData();
+    if (name === 'aiConfigs') loadAIConfigData();
     if (name === 'webhooks') loadWebhooks();
 }
 
@@ -226,6 +933,23 @@ function renderHQKLine(containerId, symbol, period = 'day', options = {}) {
     });
     if (!ok) {
         container.innerHTML = '<div class="data-item">HQChart 初始化失败</div>';
+    }
+    return ok;
+}
+
+function renderHQMinute(containerId, symbol, options = {}) {
+    const container = document.getElementById(containerId);
+    if (!container) return false;
+    if (!window.TDXHQChart || !window.TDXHQChart.isAvailable()) {
+        container.innerHTML = '<div class="data-item">HQChart 未加载，无法显示图表</div>';
+        return false;
+    }
+    const ok = window.TDXHQChart.renderMinute(container, {
+        symbol: normalizeSymbol(symbol),
+        ...options
+    });
+    if (!ok) {
+        container.innerHTML = '<div class="data-item">HQChart 分时图初始化失败</div>';
     }
     return ok;
 }
@@ -332,6 +1056,143 @@ function renderJsonPanel(title, data) {
         </div>
     `;
 }
+
+function hikyuuTaskItem(task) {
+    const statusClass = String(task.status || '').replace(/[^a-z0-9_-]/gi, '');
+    const request = task.request || {};
+    const progress = Number.isFinite(Number(task.progress)) ? `${Math.max(0, Math.min(100, Number(task.progress)))}%` : '';
+    const options = [
+        request.day ? '日线' : '',
+        request.min ? '1分钟' : '',
+        request.min5 ? '5分钟' : '',
+        request.stock ? '股票' : '',
+        request.fund ? '基金' : '',
+        request.weight ? '权息' : '',
+        request.finance ? '财务' : '',
+        request.block ? '板块' : ''
+    ].filter(Boolean).join(' · ');
+    return `
+        <div class="data-item hikyuu-task-item ${statusClass}">
+            <div class="data-item-title">${escapeHTML(task.type || '--')} <span class="tag">${escapeHTML(task.status || '--')}</span></div>
+            <div class="data-item-meta">${escapeHTML(task.started_at || '--')}${task.ended_at ? ` · 结束：${escapeHTML(task.ended_at)}` : ''}${task.exit_code !== null && task.exit_code !== undefined ? ` · 退出码：${escapeHTML(task.exit_code)}` : ''}</div>
+            <div class="data-item-meta">任务号：${escapeHTML(task.id || '--')}</div>
+            <div class="data-item-meta">参数：${escapeHTML(options || '--')}${task.stage ? ` · 阶段：${escapeHTML(task.stage)}` : ''}${progress ? ` · 进度：${escapeHTML(progress)}` : ''}${task.error ? ` · ${escapeHTML(task.error)}` : ''}</div>
+            ${Array.isArray(task.log_tail) && task.log_tail.length ? `<pre class="json-output hikyuu-log-tail">${escapeHTML(task.log_tail.join('\n'))}</pre>` : ''}
+        </div>
+    `;
+}
+
+function hikyuuSyncPayload() {
+    return {
+        day: document.getElementById('hikyuuDay')?.checked ?? true,
+        min: document.getElementById('hikyuuMin')?.checked ?? true,
+        min5: document.getElementById('hikyuuMin5')?.checked ?? true,
+        stock: document.getElementById('hikyuuStock')?.checked ?? true,
+        fund: document.getElementById('hikyuuFund')?.checked ?? true,
+        weight: document.getElementById('hikyuuWeight')?.checked ?? true,
+        finance: document.getElementById('hikyuuFinance')?.checked ?? true,
+        block: document.getElementById('hikyuuBlock')?.checked ?? true
+    };
+}
+
+async function loadHikyuuData(force = false) {
+    if (hikyuuDataLoaded && !force) return;
+    hikyuuDataLoaded = true;
+    await Promise.allSettled([loadHikyuuStatus(), loadHikyuuTasks()]);
+    startHikyuuPollingIfNeeded();
+}
+
+function updateHikyuuProgress(tasks) {
+    const wrap = document.getElementById('hikyuuProgressWrap');
+    const bar = document.getElementById('hikyuuProgressBar');
+    const text = document.getElementById('hikyuuProgressText');
+    if (!wrap || !bar || !text) return;
+
+    const task = (tasks || []).find(item => item.status === 'running' || item.status === 'pending');
+    if (!task) {
+        hikyuuSyncActiveTaskID = '';
+        wrap.style.display = 'none';
+        bar.classList.remove('indeterminate');
+        bar.style.width = '0%';
+        text.textContent = '--';
+        return;
+    }
+
+    hikyuuSyncActiveTaskID = task.id || '';
+    wrap.style.display = 'block';
+    const progress = Number(task.progress);
+    if (Number.isFinite(progress)) {
+        bar.classList.remove('indeterminate');
+        bar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+        text.textContent = `${task.stage || '同步中'} · ${Math.round(progress)}%${task.message ? ` · ${task.message}` : ''}`;
+    } else {
+        bar.classList.add('indeterminate');
+        bar.style.width = '35%';
+        text.textContent = `${task.stage || '同步中'}${task.message ? ` · ${task.message}` : ''}`;
+    }
+}
+
+function startHikyuuPollingIfNeeded() {
+    if (hikyuuSyncPollTimer || !hikyuuSyncActiveTaskID) return;
+    hikyuuSyncPollTimer = setInterval(async () => {
+        await Promise.allSettled([loadHikyuuStatus(), loadHikyuuTasks()]);
+        if (!hikyuuSyncActiveTaskID) {
+            clearInterval(hikyuuSyncPollTimer);
+            hikyuuSyncPollTimer = null;
+        }
+    }, 5000);
+}
+
+async function loadHikyuuStatus() {
+    setLoadingText('hikyuuStatusStats');
+    const hint = document.getElementById('hikyuuStatusHint');
+    try {
+        const data = await apiFetch('/api/hikyuu/health');
+        if (hint) hint.textContent = data.scheduler_enabled ? `定时任务启用 · ${data.after_close_cron}` : '定时任务已停用';
+        renderMetricCards('hikyuuStatusStats', [
+            { label: '服务状态', value: data.service || 'hikyuu-data-service', note: data.time || '--' },
+            { label: '数据目录', value: data.stocks_dir || '--', note: data.config_dir || '--' },
+            { label: '日志目录', value: data.log_dir || '--', note: data.active_task_id ? `当前任务 ${data.active_task_id}` : '空闲' },
+            { label: '定时器', value: data.scheduler_enabled ? '启用' : '停用', note: data.after_close_cron || '--' }
+        ]);
+    } catch (error) {
+        if (hint) hint.textContent = '数据服务连接异常';
+        setErrorText('hikyuuStatusStats', error);
+    }
+}
+
+async function loadHikyuuTasks() {
+    const list = document.getElementById('hikyuuTaskList');
+    if (!list) return;
+    list.innerHTML = '<div class="data-item">正在加载任务...</div>';
+    try {
+        const data = await apiFetch('/api/hikyuu/tasks');
+        const items = Array.isArray(data) ? data.slice(0, 8) : [];
+        list.innerHTML = items.length ? items.map(hikyuuTaskItem).join('') : '<div class="data-item">暂无任务</div>';
+        updateHikyuuProgress(items);
+    } catch (error) {
+        list.innerHTML = `<div class="data-item">${escapeHTML(error.message || error)}</div>`;
+        updateHikyuuProgress([]);
+    }
+}
+
+async function startHikyuuSync(mode) {
+    const url = mode === 'after-close-sync' ? '/api/hikyuu/tasks/after-close-sync' : '/api/hikyuu/tasks/full-sync';
+    try {
+        const task = await apiFetch(url, { method: 'POST', body: JSON.stringify(hikyuuSyncPayload()) });
+        hikyuuSyncActiveTaskID = task?.id || '';
+        await loadHikyuuData(true);
+        startHikyuuPollingIfNeeded();
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+window.addEventListener('beforeunload', (event) => {
+    if (!hikyuuSyncActiveTaskID) return;
+    event.preventDefault();
+    event.returnValue = 'Hikyuu 行情数据正在同步，确认刷新页面吗？后台任务不会因页面刷新自动停止。';
+});
 
 // 搜索股票
 async function searchStock() {
@@ -553,7 +1414,7 @@ function getActiveKlineType() {
 // 加载分时数据
 async function loadMinute(code) {
     try {
-        renderHQKLine('minuteChart', code, 'minute1', { count: 240, pageSize: 80, dataWidth: 8 });
+        renderHQMinute('minuteChart', code);
     } catch (error) {
         console.error('加载分时数据失败:', error);
     }
@@ -636,19 +1497,22 @@ function switchTab(evt, tabName) {
         }
         if (tabName === 'minute' && window.TDXHQChart) {
             setTimeout(() => {
-                if (currentStock) renderHQKLine('minuteChart', currentStock, 'minute1', { count: 240, pageSize: 80, dataWidth: 8 });
+                if (currentStock) renderHQMinute('minuteChart', currentStock);
                 window.TDXHQChart.resize(document.getElementById('minuteChart'));
             }, 50);
         }
     });
 }
 
-// 监听回车键搜索
-document.getElementById('stockCode').addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-        searchStock();
-    }
-});
+// 监听旧版搜索框回车键；自选页不再渲染该输入框。
+const stockCodeInput = document.getElementById('stockCode');
+if (stockCodeInput) {
+    stockCodeInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            searchStock();
+        }
+    });
+}
 
 // 窗口大小改变时重新渲染图表
 let resizeTimer;
@@ -817,6 +1681,242 @@ function editSelectedHQFormula() {
     }
     openFormulaDialog();
     fillFormula(id);
+}
+
+async function loadAIConfigData() {
+    const list = document.getElementById('aiConfigList');
+    if (list) list.innerHTML = '<div class="data-item">正在加载 AI 模型配置...</div>';
+    try {
+        const [providers, credentials] = await Promise.all([
+            apiFetch('/api/ai/providers'),
+            apiFetch('/api/ai/credentials')
+        ]);
+        aiProviders = providers || [];
+        aiCredentials = credentials || [];
+        renderAIProviderOptions();
+        renderAICredentials();
+    } catch (error) {
+        if (list) list.innerHTML = `<div class="data-item">${escapeHTML(error.message || error)}</div>`;
+        setAIConfigStatus(error.message || error, 'error');
+    }
+}
+
+function renderAIProviderOptions() {
+    const select = document.getElementById('aiConfigProvider');
+    if (!select) return;
+    const current = select.value || 'deepseek';
+    select.innerHTML = aiProviders.map(provider => `
+        <option value="${escapeHTML(provider.id)}">${escapeHTML(provider.name || provider.id)}</option>
+    `).join('');
+    if (aiProviders.some(provider => provider.id === current)) {
+        select.value = current;
+    }
+    if (!select.value && aiProviders[0]) select.value = aiProviders[0].id;
+    updateAIModelOptions(select.value);
+}
+
+function updateAIModelOptions(providerID) {
+    const provider = aiProviders.find(item => item.id === providerID) || {};
+    const baseURLInput = document.getElementById('aiConfigBaseURL');
+    const modelInput = document.getElementById('aiConfigModel');
+    const datalist = document.getElementById('aiConfigModelOptions');
+    const models = provider.default_models || [];
+    if (baseURLInput && !baseURLInput.value.trim() && provider.default_base_url) {
+        baseURLInput.value = provider.default_base_url;
+    }
+    if (modelInput && !modelInput.value.trim() && models[0]) {
+        modelInput.value = models[0].id;
+    }
+    if (datalist) {
+        datalist.innerHTML = models.map(model => `
+            <option value="${escapeHTML(model.id)}">${escapeHTML(model.name || model.id)}</option>
+        `).join('');
+    }
+}
+
+function onAIProviderChange() {
+    const providerID = document.getElementById('aiConfigProvider')?.value || 'deepseek';
+    const provider = aiProviders.find(item => item.id === providerID) || {};
+    const nameInput = document.getElementById('aiConfigName');
+    const baseURLInput = document.getElementById('aiConfigBaseURL');
+    const modelInput = document.getElementById('aiConfigModel');
+    if (baseURLInput) baseURLInput.value = provider.default_base_url || '';
+    if (modelInput) modelInput.value = provider.default_models?.[0]?.id || '';
+    if (nameInput && !nameInput.value.trim()) nameInput.value = provider.name || providerID;
+    updateAIModelOptions(providerID);
+}
+
+function renderAICredentials() {
+    const list = document.getElementById('aiConfigList');
+    const summary = document.getElementById('aiConfigSummary');
+    if (summary) {
+        const enabledCount = aiCredentials.filter(item => item.enabled).length;
+        summary.textContent = `${aiCredentials.length} 个配置 · ${enabledCount} 个启用`;
+    }
+    if (!list) return;
+    list.innerHTML = aiCredentials.map(item => {
+        const providerName = aiProviderName(item.provider);
+        const model = item.model || defaultAIModel(item.provider);
+        const sourceLabel = item.source === 'env' ? '<span class="tag warning">环境变量</span>' : '<span class="tag">本地保存</span>';
+        const enabledLabel = item.enabled ? '<span class="tag success">启用</span>' : '<span class="tag muted">停用</span>';
+        const editButton = item.source === 'env' ? '' : `<button onclick="editAIConfig('${escapeJSString(item.id)}')">编辑</button>`;
+        const deleteButton = item.source === 'env' ? '' : `<button onclick="deleteAIConfig('${escapeJSString(item.id)}')">删除</button>`;
+        return `
+            <div class="data-item ai-config-item ${item.enabled ? '' : 'disabled'}">
+                <div class="data-item-title">${escapeHTML(item.name || providerName)} ${sourceLabel} ${enabledLabel}</div>
+                <div class="ai-config-meta-grid">
+                    <span>供应商：${escapeHTML(providerName)}</span>
+                    <span>模型：${escapeHTML(model)}</span>
+                    <span>Key：${escapeHTML(item.api_key_masked || (item.has_api_key ? '已配置' : '未配置'))}</span>
+                </div>
+                <div class="data-item-meta">${escapeHTML(item.base_url || defaultAIBaseURL(item.provider) || '--')}</div>
+                <div class="item-actions">
+                    ${editButton}
+                    <button class="primary" onclick="testStoredAIConfig('${escapeJSString(item.id)}')">测试</button>
+                    ${deleteButton}
+                </div>
+            </div>
+        `;
+    }).join('') || '<div class="data-item">暂无 AI 配置。可以新建一条，或通过环境变量提供 API Key。</div>';
+}
+
+function aiProviderName(providerID) {
+    return aiProviders.find(item => item.id === providerID)?.name || providerID || '--';
+}
+
+function defaultAIBaseURL(providerID) {
+    return aiProviders.find(item => item.id === providerID)?.default_base_url || '';
+}
+
+function defaultAIModel(providerID) {
+    return aiProviders.find(item => item.id === providerID)?.default_models?.[0]?.id || '';
+}
+
+function resetAIConfigForm() {
+    const title = document.getElementById('aiConfigFormTitle');
+    if (title) title.textContent = '添加 AI 模型';
+    ['aiConfigID', 'aiConfigName', 'aiConfigBaseURL', 'aiConfigModel', 'aiConfigAPIKey', 'aiConfigAPISecret'].forEach(id => {
+        const node = document.getElementById(id);
+        if (node) node.value = '';
+    });
+    const extra = document.getElementById('aiConfigExtraJSON');
+    if (extra) extra.value = '{}';
+    const enabled = document.getElementById('aiConfigEnabled');
+    if (enabled) enabled.checked = true;
+    renderAIProviderOptions();
+    setAIConfigStatus('新增配置后可以测试连接。');
+}
+
+async function editAIConfig(id) {
+    try {
+        const item = await apiFetch(`/api/ai/credentials/${encodeURIComponent(id)}`);
+        const title = document.getElementById('aiConfigFormTitle');
+        if (title) title.textContent = '编辑 AI 模型';
+        document.getElementById('aiConfigID').value = item.id || '';
+        document.getElementById('aiConfigName').value = item.name || '';
+        document.getElementById('aiConfigProvider').value = item.provider || 'deepseek';
+        document.getElementById('aiConfigBaseURL').value = item.base_url || defaultAIBaseURL(item.provider);
+        document.getElementById('aiConfigModel').value = item.model || defaultAIModel(item.provider);
+        document.getElementById('aiConfigAPIKey').value = '';
+        document.getElementById('aiConfigAPISecret').value = '';
+        document.getElementById('aiConfigExtraJSON').value = item.extra_json || '{}';
+        document.getElementById('aiConfigEnabled').checked = item.enabled !== false;
+        updateAIModelOptions(item.provider || 'deepseek');
+        setAIConfigStatus('正在编辑：' + (item.name || item.id));
+    } catch (error) {
+        setAIConfigStatus(error.message || error, 'error');
+    }
+}
+
+function aiConfigPayload(includeEmptySecrets = false) {
+    const extraJSON = document.getElementById('aiConfigExtraJSON')?.value.trim() || '{}';
+    JSON.parse(extraJSON);
+    const payload = {
+        id: document.getElementById('aiConfigID')?.value.trim() || '',
+        name: document.getElementById('aiConfigName')?.value.trim() || '',
+        provider: document.getElementById('aiConfigProvider')?.value || 'deepseek',
+        base_url: document.getElementById('aiConfigBaseURL')?.value.trim() || '',
+        model: document.getElementById('aiConfigModel')?.value.trim() || '',
+        extra_json: extraJSON,
+        enabled: !!document.getElementById('aiConfigEnabled')?.checked
+    };
+    const apiKey = document.getElementById('aiConfigAPIKey')?.value.trim() || '';
+    const apiSecret = document.getElementById('aiConfigAPISecret')?.value.trim() || '';
+    if (includeEmptySecrets || apiKey) payload.api_key = apiKey;
+    if (includeEmptySecrets || apiSecret) payload.api_secret = apiSecret;
+    if (!payload.name) throw new Error('请填写配置名称');
+    if (!payload.provider) throw new Error('请选择供应商');
+    if (!payload.model) payload.model = defaultAIModel(payload.provider);
+    if (!payload.id && !payload.api_key) throw new Error('新建配置需要填写 API Key');
+    return payload;
+}
+
+async function saveAIConfig() {
+    try {
+        const payload = aiConfigPayload(false);
+        const url = payload.id ? `/api/ai/credentials/${encodeURIComponent(payload.id)}` : '/api/ai/credentials';
+        const method = payload.id ? 'PUT' : 'POST';
+        await apiFetch(url, { method, body: JSON.stringify(payload) });
+        setAIConfigStatus('配置已保存。', 'success');
+        resetAIConfigForm();
+        await loadAIConfigData();
+    } catch (error) {
+        setAIConfigStatus(error.message || error, 'error');
+    }
+}
+
+async function testAIConfig() {
+    try {
+        const payload = aiConfigPayload(false);
+        if (!payload.id) throw new Error('请先保存配置，再测试连接');
+        const data = await apiFetch(`/api/ai/credentials/${encodeURIComponent(payload.id)}/test`, {
+            method: 'POST',
+            body: JSON.stringify({ provider: payload.provider, model: payload.model })
+        });
+        renderAITestOutput(data);
+        setAIConfigStatus('连接测试成功。', 'success');
+    } catch (error) {
+        renderAITestOutput({ ok: false, error: error.message || String(error) });
+        setAIConfigStatus(error.message || error, 'error');
+    }
+}
+
+async function testStoredAIConfig(id) {
+    try {
+        const item = aiCredentials.find(v => v.id === id) || {};
+        const data = await apiFetch(`/api/ai/credentials/${encodeURIComponent(id)}/test`, {
+            method: 'POST',
+            body: JSON.stringify({ provider: item.provider, model: item.model || defaultAIModel(item.provider) })
+        });
+        renderAITestOutput(data);
+        setAIConfigStatus('连接测试成功。', 'success');
+    } catch (error) {
+        renderAITestOutput({ ok: false, error: error.message || String(error) });
+        setAIConfigStatus(error.message || error, 'error');
+    }
+}
+
+async function deleteAIConfig(id) {
+    if (!confirm('确认删除这个 AI 配置？')) return;
+    try {
+        await apiFetch(`/api/ai/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        setAIConfigStatus('配置已删除。', 'success');
+        await loadAIConfigData();
+    } catch (error) {
+        setAIConfigStatus(error.message || error, 'error');
+    }
+}
+
+function renderAITestOutput(data) {
+    const node = document.getElementById('aiConfigTestOutput');
+    if (node) node.textContent = prettyJSON(data);
+}
+
+function setAIConfigStatus(message, type = '') {
+    const node = document.getElementById('aiConfigFormStatus');
+    if (!node) return;
+    node.textContent = message || '';
+    node.className = `status-note ${type}`.trim();
 }
 
 function openFormulaDialog() {
@@ -1007,6 +2107,13 @@ function strategyFactorEditHint(factorID) {
         ma_trend: '在“评分条件 / 均线多头”里勾选并设置均线和权重。',
         volume_up: '在“评分条件 / 阶段放量”里勾选并设置天数、倍数和权重。',
         break_high: '在“评分条件 / 突破新高”里勾选并设置回看天数和权重。',
+        macd_golden_cross: '在“评分条件 / MACD金叉”里勾选并设置快慢线参数。',
+        macd_dead_cross: '在“评分条件 / MACD死叉”里勾选并设置快慢线参数。',
+        kdj_golden_cross: '在“评分条件 / KDJ金叉”里勾选并设置平滑参数。',
+        rsi_oversold: '在“评分条件 / RSI超卖”里勾选并设置周期和阈值。',
+        boll_breakout: '在“评分条件 / BOLL突破”里勾选并设置周期和标准差倍数。',
+        volume_breakout: '在“评分条件 / 放量突破”里勾选并设置高点回看、量比和涨幅。',
+        local_rocket: '在“评分条件 / 本地火箭发射”里勾选并调整启动参数。',
         formula: '在“评分条件 / 公式因子”里勾选并选择公式。'
     };
     return map[factorID] || '在策略编辑区勾选并调整参数。';
@@ -1082,6 +2189,23 @@ function defaultStrategyConfig() {
     };
 }
 
+function currentStrategyBacktestPayload() {
+    return {
+        start_date: document.getElementById('strategyBacktestStart')?.value || '',
+        end_date: document.getElementById('strategyBacktestEnd')?.value || '',
+        history_count: numberFromInput('strategyBacktestHistoryCount', 520),
+        symbol_limit: numberFromInput('strategyBacktestSymbolLimit', 80),
+        initial_cash: numberFromInput('strategyBacktestInitialCash', 100000),
+        stop_loss: numberFromInput('strategyBacktestStopLoss', 8) / 100,
+        profit_trigger: numberFromInput('strategyBacktestProfitTrigger', 12) / 100,
+        trailing_stop: numberFromInput('strategyBacktestTrailingStop', 10) / 100,
+        max_hold: numberFromInput('strategyBacktestMaxHold', 40),
+        exit_ma: numberFromInput('strategyBacktestExitMA', 20),
+        buy_cost: numberFromInput('strategyBacktestBuyCost', 0.05) / 100,
+        sell_cost: numberFromInput('strategyBacktestSellCost', 0.10) / 100
+    };
+}
+
 function strategyRule(cfg, factor) {
     return [...(cfg.filters || []), ...(cfg.scores || [])].find(rule => rule.factor === factor) || null;
 }
@@ -1117,6 +2241,13 @@ function renderStrategyVisualEditor(cfg = {}) {
     const maTrend = strategyRule(cfg, 'ma_trend');
     const volumeUp = strategyRule(cfg, 'volume_up');
     const breakHigh = strategyRule(cfg, 'break_high');
+    const macdGolden = strategyRule(cfg, 'macd_golden_cross');
+    const macdDead = strategyRule(cfg, 'macd_dead_cross');
+    const kdjGolden = strategyRule(cfg, 'kdj_golden_cross');
+    const rsiOversold = strategyRule(cfg, 'rsi_oversold');
+    const bollBreakout = strategyRule(cfg, 'boll_breakout');
+    const volumeBreakout = strategyRule(cfg, 'volume_breakout');
+    const localRocket = strategyRule(cfg, 'local_rocket');
     const formulaRule = strategyRule(cfg, 'formula');
     const universe = cfg.universe || 'pool';
     const poolID = cfg.pool_id || (universe === 'market' ? 'market-all-a' : 'watchlist');
@@ -1196,6 +2327,49 @@ function renderStrategyVisualEditor(cfg = {}) {
             ${renderStrategyCheckRow('scoreBreakHigh', '突破新高', !!breakHigh, `
                 ${weightInput('scoreBreakWeight', breakHigh?.weight ?? 15)}
                 <label>回看天数<input id="scoreBreakDays" type="number" value="${Number(breakHigh?.params?.days ?? 20)}" min="1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreMACDGolden', 'MACD金叉', !!macdGolden, `
+                ${weightInput('scoreMACDGoldenWeight', macdGolden?.weight ?? 20)}
+                <label>快线<input id="scoreMACDFast" type="number" value="${Number(macdGolden?.params?.fast ?? 12)}" min="1"></label>
+                <label>慢线<input id="scoreMACDSlow" type="number" value="${Number(macdGolden?.params?.slow ?? 26)}" min="2"></label>
+                <label>信号<input id="scoreMACDSignal" type="number" value="${Number(macdGolden?.params?.signal ?? 9)}" min="1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreKDJGolden', 'KDJ金叉', !!kdjGolden, `
+                ${weightInput('scoreKDJWeight', kdjGolden?.weight ?? 15)}
+                <label>RSV周期<input id="scoreKDJN" type="number" value="${Number(kdjGolden?.params?.n ?? 9)}" min="1"></label>
+                <label>K平滑<input id="scoreKDJK" type="number" value="${Number(kdjGolden?.params?.k ?? 3)}" min="1"></label>
+                <label>D平滑<input id="scoreKDJD" type="number" value="${Number(kdjGolden?.params?.d ?? 3)}" min="1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreRSIOversold', 'RSI超卖', !!rsiOversold, `
+                ${weightInput('scoreRSIWeight', rsiOversold?.weight ?? 10)}
+                <label>周期<input id="scoreRSIPeriod" type="number" value="${Number(rsiOversold?.params?.period ?? 6)}" min="1"></label>
+                <label>阈值<input id="scoreRSIThreshold" type="number" value="${Number(rsiOversold?.params?.threshold ?? 30)}" min="1" max="100"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreBOLLBreakout', 'BOLL突破', !!bollBreakout, `
+                ${weightInput('scoreBOLLWeight', bollBreakout?.weight ?? 15)}
+                <label>周期<input id="scoreBOLLPeriod" type="number" value="${Number(bollBreakout?.params?.period ?? 20)}" min="2"></label>
+                <label>标准差倍数<input id="scoreBOLLWidth" type="number" value="${Number(bollBreakout?.params?.width ?? 2)}" min="0.1" step="0.1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreVolumeBreakout', '放量突破', !!volumeBreakout, `
+                ${weightInput('scoreVolumeBreakoutWeight', volumeBreakout?.weight ?? 20)}
+                <label>回看天数<input id="scoreVolumeBreakoutDays" type="number" value="${Number(volumeBreakout?.params?.days ?? 20)}" min="1"></label>
+                <label>放量倍数<input id="scoreVolumeBreakoutRatio" type="number" value="${Number(volumeBreakout?.params?.ratio ?? 1.5)}" min="0" step="0.1"></label>
+                <label>最低涨幅 %<input id="scoreVolumeBreakoutChange" type="number" value="${Number(volumeBreakout?.params?.min_change ?? 2)}" step="0.1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreLocalRocket', '本地火箭发射', !!localRocket, `
+                ${weightInput('scoreLocalRocketWeight', localRocket?.weight ?? 30)}
+                <label>突破回看<input id="scoreLocalRocketLookback" type="number" value="${Number(localRocket?.params?.lookback ?? 20)}" min="1"></label>
+                <label>均量天数<input id="scoreLocalRocketVolumeDays" type="number" value="${Number(localRocket?.params?.volume_days ?? 5)}" min="1"></label>
+                <label>放量倍数<input id="scoreLocalRocketVolumeRatio" type="number" value="${Number(localRocket?.params?.volume_ratio ?? 1.8)}" min="0" step="0.1"></label>
+                <label>最低涨幅 %<input id="scoreLocalRocketChange" type="number" value="${Number(localRocket?.params?.min_change ?? 3)}" step="0.1"></label>
+                <label>短均线<input id="scoreLocalRocketShortMA" type="number" value="${Number(localRocket?.params?.short_ma ?? 5)}" min="1"></label>
+                <label>中均线<input id="scoreLocalRocketMidMA" type="number" value="${Number(localRocket?.params?.mid_ma ?? 10)}" min="1"></label>
+            `)}
+            ${renderStrategyCheckRow('scoreMACDDead', 'MACD死叉', !!macdDead, `
+                ${weightInput('scoreMACDDeadWeight', macdDead?.weight ?? 10)}
+                <label>快线<input id="scoreMACDDeadFast" type="number" value="${Number(macdDead?.params?.fast ?? 12)}" min="1"></label>
+                <label>慢线<input id="scoreMACDDeadSlow" type="number" value="${Number(macdDead?.params?.slow ?? 26)}" min="2"></label>
+                <label>信号<input id="scoreMACDDeadSignal" type="number" value="${Number(macdDead?.params?.signal ?? 9)}" min="1"></label>
             `)}
             ${renderStrategyCheckRow('scoreFormula', '公式因子', !!formulaRule, `
                 ${weightInput('scoreFormulaWeight', formulaRule?.weight ?? 30)}
@@ -1333,6 +2507,27 @@ function collectStrategyVisualConfig() {
     }
     if (checked('scoreBreakHigh')) {
         cfg.scores.push({ id: 'break_high', factor: 'break_high', weight: numberFromInput('scoreBreakWeight', 15), params: { days: numberFromInput('scoreBreakDays', 20) } });
+    }
+    if (checked('scoreMACDGolden')) {
+        cfg.scores.push({ id: 'macd_golden_cross', factor: 'macd_golden_cross', weight: numberFromInput('scoreMACDGoldenWeight', 20), params: { fast: numberFromInput('scoreMACDFast', 12), slow: numberFromInput('scoreMACDSlow', 26), signal: numberFromInput('scoreMACDSignal', 9) } });
+    }
+    if (checked('scoreKDJGolden')) {
+        cfg.scores.push({ id: 'kdj_golden_cross', factor: 'kdj_golden_cross', weight: numberFromInput('scoreKDJWeight', 15), params: { n: numberFromInput('scoreKDJN', 9), k: numberFromInput('scoreKDJK', 3), d: numberFromInput('scoreKDJD', 3) } });
+    }
+    if (checked('scoreRSIOversold')) {
+        cfg.scores.push({ id: 'rsi_oversold', factor: 'rsi_oversold', weight: numberFromInput('scoreRSIWeight', 10), params: { period: numberFromInput('scoreRSIPeriod', 6), threshold: numberFromInput('scoreRSIThreshold', 30) } });
+    }
+    if (checked('scoreBOLLBreakout')) {
+        cfg.scores.push({ id: 'boll_breakout', factor: 'boll_breakout', weight: numberFromInput('scoreBOLLWeight', 15), params: { period: numberFromInput('scoreBOLLPeriod', 20), width: numberFromInput('scoreBOLLWidth', 2) } });
+    }
+    if (checked('scoreVolumeBreakout')) {
+        cfg.scores.push({ id: 'volume_breakout', factor: 'volume_breakout', weight: numberFromInput('scoreVolumeBreakoutWeight', 20), params: { days: numberFromInput('scoreVolumeBreakoutDays', 20), ratio: numberFromInput('scoreVolumeBreakoutRatio', 1.5), min_change: numberFromInput('scoreVolumeBreakoutChange', 2) } });
+    }
+    if (checked('scoreLocalRocket')) {
+        cfg.scores.push({ id: 'local_rocket', factor: 'local_rocket', weight: numberFromInput('scoreLocalRocketWeight', 30), params: { lookback: numberFromInput('scoreLocalRocketLookback', 20), volume_days: numberFromInput('scoreLocalRocketVolumeDays', 5), volume_ratio: numberFromInput('scoreLocalRocketVolumeRatio', 1.8), min_change: numberFromInput('scoreLocalRocketChange', 3), short_ma: numberFromInput('scoreLocalRocketShortMA', 5), mid_ma: numberFromInput('scoreLocalRocketMidMA', 10) } });
+    }
+    if (checked('scoreMACDDead')) {
+        cfg.scores.push({ id: 'macd_dead_cross', factor: 'macd_dead_cross', weight: numberFromInput('scoreMACDDeadWeight', 10), params: { fast: numberFromInput('scoreMACDDeadFast', 12), slow: numberFromInput('scoreMACDDeadSlow', 26), signal: numberFromInput('scoreMACDDeadSignal', 9) } });
     }
     if (checked('scoreFormula')) {
         const formulaID = document.getElementById('scoreFormulaID')?.value || '';
@@ -1483,6 +2678,7 @@ async function runCurrentStrategy() {
                     <div class="result-symbol">${escapeHTML(item.symbol)}</div>
                     <div class="data-item-meta">评分 <span class="result-latest">${Number(item.score || 0).toFixed(2)}</span> · 最新价 ${Number(item.latest || 0).toFixed(2)}</div>
                     <div class="strategy-reasons">${(item.reasons || []).slice(0, 4).map(reason => `<span>${escapeHTML(reason)}</span>`).join('')}</div>
+                    ${renderStrategyFactorResults(item.factor_results || [])}
                     <div class="item-actions">
                         <button class="primary" onclick="openResultChart('${escapeJSString(item.symbol)}')">打开图表</button>
                         <button onclick="addSymbolToPool('watchlist', '${escapeJSString(item.symbol)}')">观察</button>
@@ -1495,6 +2691,122 @@ async function runCurrentStrategy() {
         finishStrategyRunUI('failed', error.message);
         alert(error.message);
     }
+}
+
+async function runCurrentStrategyBacktest() {
+    const id = document.getElementById('strategyName').dataset.id || selectedStrategyID;
+    if (!id) {
+        alert('请先保存或选择一个策略');
+        return;
+    }
+    const summary = document.getElementById('strategyBacktestSummary');
+    const metrics = document.getElementById('strategyBacktestMetrics');
+    const trades = document.getElementById('strategyBacktestTrades');
+    startStrategyBacktestUI(id);
+    if (summary) summary.textContent = '正在回测...';
+    if (metrics) metrics.innerHTML = '';
+    if (trades) trades.innerHTML = '';
+    try {
+        const run = await apiFetch(`/api/strategies/${id}/backtest`, {
+            method: 'POST',
+            body: JSON.stringify(currentStrategyBacktestPayload())
+        });
+        const m = run.metrics || {};
+        finishStrategyBacktestUI('success', `完成 · 标的 ${m.symbols || 0} · 交易 ${m.trades || 0} · 胜率 ${(Number(m.win_rate || 0) * 100).toFixed(2)}%`);
+        if (summary) summary.textContent = `回测完成：${run.strategy?.name || ''}`;
+        if (metrics) {
+            metrics.innerHTML = [
+                metricItem('标的', m.symbols || 0),
+                metricItem('交易', m.trades || 0),
+                metricItem('胜率', `${(Number(m.win_rate || 0) * 100).toFixed(2)}%`),
+                metricItem('总收益', `${(Number(m.total_return || 0) * 100).toFixed(2)}%`),
+                metricItem('年化', `${(Number(m.cagr || 0) * 100).toFixed(2)}%`),
+                metricItem('最大回撤', `${(Number(m.max_drawdown || 0) * 100).toFixed(2)}%`),
+                metricItem('盈亏比', Number.isFinite(Number(m.profit_factor)) ? Number(m.profit_factor).toFixed(2) : '--'),
+                metricItem('单笔均值', `${(Number(m.avg_trade || 0) * 100).toFixed(2)}%`)
+            ].join('');
+        }
+        if (trades) {
+            const list = Array.isArray(run.trades) ? run.trades : [];
+            trades.innerHTML = list.slice(0, 80).map(item => `
+                <div class="data-item">
+                    <div class="data-item-title">${escapeHTML(item.symbol || '--')} <span class="tag">${escapeHTML(item.reason || '--')}</span></div>
+                    <div class="data-item-meta">买入 ${escapeHTML(item.entry_date || '--')} ${Number(item.entry_price || 0).toFixed(2)} · 卖出 ${escapeHTML(item.exit_date || '--')} ${Number(item.exit_price || 0).toFixed(2)}</div>
+                    <div class="data-item-meta">收益 ${(Number(item.return || 0) * 100).toFixed(2)}% · 持有 ${Number(item.hold_days || 0)} 天</div>
+                    <div class="strategy-reasons">${(item.entry_reasons || []).slice(0, 4).map(reason => `<span>${escapeHTML(reason)}</span>`).join('')}</div>
+                </div>
+            `).join('') || '<div class="data-item">没有生成交易</div>';
+        }
+    } catch (error) {
+        finishStrategyBacktestUI('failed', error.message);
+        alert(error.message);
+    }
+}
+
+function metricItem(label, value) {
+    return `
+        <div class="metric-item">
+            <span>${escapeHTML(label)}</span>
+            <strong>${escapeHTML(String(value))}</strong>
+        </div>
+    `;
+}
+
+function startStrategyBacktestUI(strategyID) {
+    strategyBacktestState = {
+        running: true,
+        strategyID,
+        timer: null,
+        message: '准备历史数据',
+        progress: 10,
+        status: ''
+    };
+    setStrategyEditorLocked(true);
+    renderStrategyBacktestSummary();
+}
+
+function finishStrategyBacktestUI(status, message) {
+    strategyBacktestState.running = false;
+    strategyBacktestState.message = message;
+    strategyBacktestState.progress = status === 'success' ? 100 : strategyBacktestState.progress;
+    strategyBacktestState.status = status;
+    setStrategyEditorLocked(false);
+    renderStrategyBacktestSummary();
+}
+
+function renderStrategyBacktestSummary() {
+    const summary = document.getElementById('strategyBacktestSummary');
+    if (!summary) return;
+    if (!strategyBacktestState.running) {
+        summary.className = `data-item strategy-run-summary ${strategyBacktestState.status || ''}`;
+        summary.textContent = strategyBacktestState.message || '暂无回测';
+        return;
+    }
+    summary.className = 'data-item strategy-run-summary running';
+    summary.innerHTML = `
+        <div class="strategy-progress-head">
+            <strong>回测中：${escapeHTML(strategyBacktestState.message)}</strong>
+            <span>${strategyBacktestState.progress}%</span>
+        </div>
+        <div class="strategy-progress-bar"><i style="width:${strategyBacktestState.progress}%"></i></div>
+    `;
+}
+
+function renderStrategyFactorResults(factorResults = []) {
+    if (!Array.isArray(factorResults) || !factorResults.length) {
+        return '';
+    }
+    return `
+        <div class="strategy-factor-results">
+            ${factorResults.slice(0, 6).map(factor => `
+                <div class="strategy-factor-row ${factor.hit ? 'hit' : 'miss'}">
+                    <span>${escapeHTML(factor.factor || factor.id || '--')}</span>
+                    <strong>${factor.hit ? '命中' : '未命中'}</strong>
+                    <em>${escapeHTML(compactValue(factor.value ?? factor.Value ?? factor.score ?? factor.Score ?? ''))}</em>
+                </div>
+            `).join('')}
+        </div>
+    `;
 }
 
 function startStrategyRunUI(strategyID) {
@@ -1578,6 +2890,8 @@ function setStrategyEditorLocked(locked) {
         'strategySaveButton',
         'strategyCloneButton',
         'strategyRunButton',
+        'strategyBacktestButton',
+        'strategyBacktestRunButton',
         'strategyDeleteButton',
         'strategyApplyJSONButton',
         'strategySyncJSONButton',
@@ -1593,7 +2907,12 @@ function setStrategyEditorLocked(locked) {
     });
     const runButton = document.getElementById('strategyRunButton');
     if (runButton) runButton.textContent = locked ? '运行中...' : '运行';
+    const backtestButton = document.getElementById('strategyBacktestRunButton');
+    if (backtestButton) backtestButton.textContent = locked ? '回测中...' : '回测';
     document.querySelectorAll('#strategyVisualEditor input, #strategyVisualEditor select, #strategyVisualEditor textarea, #strategyVisualEditor button, .advanced-json-panel button').forEach(node => {
+        node.disabled = locked;
+    });
+    document.querySelectorAll('.strategy-backtest-form input, .strategy-backtest-form button').forEach(node => {
         node.disabled = locked;
     });
     const editor = document.querySelector('.strategy-editor-card');
@@ -2356,8 +3675,10 @@ function renderReviewCard(item) {
 async function selectReviewItem(id) {
     const review = reviewItems.find(item => item.result?.id === id);
     if (!review?.result) return;
-    switchWorkspace('market', document.querySelectorAll('.workspace-tab')[0]);
-    await selectDecisionResult(review.result.id);
+    const symbol = normalizeSymbol(review.result.symbol);
+    const hqInput = document.getElementById('hqSymbol');
+    if (hqInput) hqInput.value = symbol;
+    switchWorkspace('proChart', document.querySelectorAll('.workspace-tab')[1]);
 }
 
 function cloneTradingState(value) {
@@ -3140,9 +4461,7 @@ function formatDecisionTime(value) {
 }
 
 function openResultChart(symbol) {
-    document.getElementById('hqSymbol').value = symbol;
-    switchWorkspace('proChart', document.querySelectorAll('.workspace-tab')[1]);
-    loadHQChart();
+    openWatchlistQuoteDialog(symbol);
 }
 
 function showResultDetail(id) {
@@ -3237,7 +4556,8 @@ async function loadDataCenter() {
         loadMarketOverview(),
         loadStockProfile(),
         loadHistoryData('tdx'),
-        loadBlockData()
+        loadBlockData(),
+        loadHikyuuData()
     ]);
 }
 
@@ -3617,14 +4937,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderTradingSystem();
         await refreshSystemStatus();
         setInterval(refreshSystemStatus, 30000);
-        if (!currentStock) {
-            loadQuickStock('000001');
-        }
-        await Promise.all([loadFormulaList(), loadPools(), loadWebhooks()]);
+        renderWatchlist();
+        await Promise.all([loadFormulaList(), loadWebhooks()]);
         await loadAutomations();
         await loadRuns();
         await loadSelectionResults();
-        await refreshDecisionDesk();
         await loadHQChart();
     } catch (error) {
         console.warn('初始化自动化页面失败:', error);

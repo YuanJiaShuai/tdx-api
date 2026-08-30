@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票数据查询系统</title>
-    <link rel="stylesheet" href="style.css?v=trading-system-ui-20260827">
+    <link rel="stylesheet" href="style.css?v=watchlist-minute-chart-20260830">
     <style>
         /* 确保图表容器占满宽度 */
         #klineChart, #minuteChart {
@@ -29,19 +29,25 @@
                 </div>
             </div>
             <div class="system-strip" id="systemStrip">
-                <div class="system-item">
-                    <span class="system-label">服务</span>
-                    <strong id="serviceStatusText">检测中</strong>
+                <div class="system-item system-services">
+                    <div class="system-item-heading">
+                        <span class="system-label">服务总览</span>
+                        <strong id="serviceStatusText">检测中</strong>
+                    </div>
+                    <div class="service-status-list" id="serviceStatusList" aria-live="polite">
+                        <span class="service-status-loading">正在检查服务...</span>
+                    </div>
                 </div>
-                <div class="system-item">
+                <div class="system-item system-time">
                     <span class="system-label">更新时间</span>
                     <strong id="systemTimeText">--</strong>
+                    <span class="system-time-note">每 30 秒自动检查</span>
                 </div>
             </div>
         </header>
 
         <div class="workspace-tabs">
-            <button class="workspace-tab active" onclick="switchWorkspace('market', this)">行情</button>
+            <button class="workspace-tab active" onclick="switchWorkspace('market', this)">自选</button>
             <button class="workspace-tab" onclick="switchWorkspace('proChart', this)">专业行情</button>
             <button class="workspace-tab" onclick="switchWorkspace('dataCenter', this)">数据中心</button>
             <button class="workspace-tab" onclick="switchWorkspace('selectionResults', this)">选股结果</button>
@@ -49,10 +55,55 @@
             <button class="workspace-tab" onclick="switchWorkspace('tradingSystem', this)">交易系统</button>
             <button class="workspace-tab" onclick="switchWorkspace('strategies', this)">策略中心</button>
             <button class="workspace-tab" onclick="switchWorkspace('automations', this)">自动化</button>
+            <button class="workspace-tab" onclick="switchWorkspace('aiConfigs', this)">AI 模型</button>
             <button class="workspace-tab" onclick="switchWorkspace('webhooks', this)">Webhook</button>
         </div>
 
         <section id="marketWorkspace" class="workspace active">
+            <div class="card watchlist-card">
+                <div class="card-header">
+                    <div>
+                        <h3>自选列表</h3>
+                        <p class="card-subtitle" id="watchlistStatus">暂无自选股票</p>
+                    </div>
+                    <div class="item-actions compact-actions">
+                        <button class="primary" type="button" onclick="renderWatchlist()">刷新</button>
+                    </div>
+                </div>
+                <div class="watchlist-scroll" id="watchlistScroll">
+                    <table class="watchlist-table">
+                        <colgroup>
+                            <col class="watchlist-col-index">
+                            <col class="watchlist-col-code">
+                            <col class="watchlist-col-name">
+                            <col span="13" class="watchlist-col-data">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th class="watchlist-fixed watchlist-index">序号</th>
+                                <th class="watchlist-fixed watchlist-code">代码</th>
+                                <th class="watchlist-fixed watchlist-name">名称</th>
+                                <th>涨幅 %</th>
+                                <th>现价</th>
+                                <th>成交量</th>
+                                <th>成交额</th>
+                                <th>涨速 %</th>
+                                <th>涨跌</th>
+                                <th>主力净量</th>
+                                <th>主力净流入</th>
+                                <th>所属行业</th>
+                                <th>换手 %</th>
+                                <th>分类标示</th>
+                                <th>委比 %</th>
+                                <th>量比</th>
+                            </tr>
+                        </thead>
+                        <tbody id="watchlistTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="legacy-market-content">
             <div class="market-hero">
                 <div class="market-hero-main">
                     <div class="section-kicker">DECISION DESK</div>
@@ -289,6 +340,7 @@
                 </div>
             </div>
             </div>
+            </div>
         </section>
 
         <section id="proChartWorkspace" class="workspace">
@@ -388,6 +440,79 @@
             </div>
         </div>
 
+        <div id="watchlistQuoteDialog" class="modal-shell" aria-hidden="true">
+            <div class="modal-backdrop" onclick="closeWatchlistQuoteDialog()"></div>
+            <div class="modal-panel quote-modal-panel" role="dialog" aria-modal="true" aria-labelledby="watchlistQuoteTitle">
+                <div class="modal-header quote-modal-header">
+                    <div class="quote-modal-heading">
+                        <div class="quote-modal-title-row">
+                            <h3 id="watchlistQuoteTitle">--</h3>
+                            <span id="watchlistQuoteCode" class="stock-code">--</span>
+                        </div>
+                        <div id="watchlistQuoteMeta" class="quote-modal-meta">--</div>
+                    </div>
+                    <div class="quote-modal-head-right">
+                        <div class="item-actions compact-actions">
+                            <button type="button" onclick="closeWatchlistQuoteDialog()">关闭</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="quote-modal-toolbar">
+                    <div class="quote-period-tabs">
+                        <button class="tab-btn active" type="button" data-period="minute" onclick="switchWatchlistQuotePeriod('minute', this)">分时</button>
+                        <button class="tab-btn" type="button" data-period="day" onclick="switchWatchlistQuotePeriod('day', this)">日K</button>
+                        <button class="tab-btn" type="button" data-period="week" onclick="switchWatchlistQuotePeriod('week', this)">周K</button>
+                        <button class="tab-btn" type="button" data-period="month" onclick="switchWatchlistQuotePeriod('month', this)">月K</button>
+                        <button class="tab-btn" type="button" data-period="minute120" onclick="switchWatchlistQuotePeriod('minute120', this)">120分</button>
+                        <button class="tab-btn" type="button" data-period="minute60" onclick="switchWatchlistQuotePeriod('minute60', this)">60分</button>
+                        <button class="tab-btn" type="button" data-period="minute30" onclick="switchWatchlistQuotePeriod('minute30', this)">30分</button>
+                        <button class="tab-btn" type="button" data-period="minute15" onclick="switchWatchlistQuotePeriod('minute15', this)">15分</button>
+                    </div>
+                    <div class="quote-modal-tools">
+                        <button class="btn-secondary compact" type="button" onclick="refreshWatchlistQuoteDialog()">刷新</button>
+                    </div>
+                </div>
+                <div class="quote-modal-body">
+                    <div class="quote-modal-main">
+                        <div class="quote-indicator-toolbar">
+                            <span class="quote-indicator-label">指标</span>
+                            <div class="quote-indicator-controls" id="watchlistQuoteIndicatorControls"></div>
+                        </div>
+                        <div class="quote-indicator-menu" id="watchlistQuoteIndicatorMenu" aria-hidden="true"></div>
+                        <div id="watchlistQuoteChart" class="quote-modal-chart"></div>
+                    </div>
+                    <aside class="quote-modal-side">
+                        <section class="quote-summary-card">
+                            <div class="quote-summary-main">
+                                <div class="quote-summary-price-wrap">
+                                    <span class="quote-summary-label">现价</span>
+                                    <strong id="watchlistQuotePrice" class="quote-summary-price">--</strong>
+                                </div>
+                                <div class="quote-summary-change-wrap">
+                                    <strong id="watchlistQuoteChange" class="quote-summary-change">--</strong>
+                                    <span id="watchlistQuoteChangePct" class="quote-summary-change-pct">--</span>
+                                </div>
+                            </div>
+                            <div id="watchlistQuoteMetrics" class="quote-summary-grid"></div>
+                        </section>
+                        <section class="quote-side-card">
+                            <div class="quote-side-head">
+                                <h4>五档盘口</h4>
+                            </div>
+                            <div class="quote-level-grid">
+                                <table class="quote-table quote-side-table">
+                                    <tbody id="watchlistQuoteSellLevels"></tbody>
+                                </table>
+                                <table class="quote-table quote-side-table">
+                                    <tbody id="watchlistQuoteBuyLevels"></tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </aside>
+                </div>
+            </div>
+        </div>
+
         <section id="dataCenterWorkspace" class="workspace">
             <div class="data-center-grid">
                 <div class="card">
@@ -408,6 +533,39 @@
                         <button class="btn-secondary compact" onclick="loadETFDirectory()">ETF</button>
                     </div>
                     <div id="marketDirectoryOutput" class="data-table-wrap"></div>
+                </div>
+
+                <div class="card hikyuu-data-card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Hikyuu 行情数据</h3>
+                            <p class="card-subtitle" id="hikyuuStatusHint">读取数据服务状态中...</p>
+                        </div>
+                        <button class="btn-secondary" onclick="loadHikyuuData(true)">刷新</button>
+                    </div>
+                    <div id="hikyuuStatusStats" class="metric-grid"></div>
+                    <div id="hikyuuProgressWrap" class="hikyuu-progress-wrap" style="display: none;">
+                        <div class="hikyuu-progress-track">
+                            <div id="hikyuuProgressBar" class="hikyuu-progress-bar"></div>
+                        </div>
+                        <div id="hikyuuProgressText" class="hikyuu-progress-text">--</div>
+                    </div>
+                    <div class="form-row hikyuu-options-row">
+                        <label class="check-line inline-check"><input id="hikyuuDay" type="checkbox" checked> 日线</label>
+                        <label class="check-line inline-check"><input id="hikyuuMin" type="checkbox" checked> 1分钟</label>
+                        <label class="check-line inline-check"><input id="hikyuuMin5" type="checkbox" checked> 5分钟</label>
+                        <label class="check-line inline-check"><input id="hikyuuStock" type="checkbox" checked> 股票</label>
+                        <label class="check-line inline-check"><input id="hikyuuFund" type="checkbox" checked> 基金/ETF</label>
+                        <label class="check-line inline-check"><input id="hikyuuWeight" type="checkbox" checked> 权息</label>
+                        <label class="check-line inline-check"><input id="hikyuuFinance" type="checkbox" checked> 财务</label>
+                        <label class="check-line inline-check"><input id="hikyuuBlock" type="checkbox" checked> 板块</label>
+                    </div>
+                    <div class="item-actions data-actions">
+                        <button class="primary" onclick="startHikyuuSync('full-sync')">全量同步</button>
+                        <button onclick="startHikyuuSync('after-close-sync')">盘后同步</button>
+                        <button onclick="loadHikyuuTasks()">刷新任务</button>
+                    </div>
+                    <div id="hikyuuTaskList" class="data-list"></div>
                 </div>
 
                 <div class="card">
@@ -559,6 +717,7 @@
                             <button id="strategySaveButton" class="primary" onclick="saveStrategy()">保存</button>
                             <button id="strategyCloneButton" onclick="cloneCurrentStrategy()">复制</button>
                             <button id="strategyRunButton" onclick="runCurrentStrategy()">运行</button>
+                            <button id="strategyBacktestButton" onclick="runCurrentStrategyBacktest()">回测</button>
                         </div>
                     </div>
                     <div class="strategy-form-grid">
@@ -589,6 +748,32 @@
                         <h3>运行结果</h3>
                         <div id="strategyRunSummary" class="data-item">暂无运行</div>
                         <div id="strategyRunResults" class="data-list strategy-run-results"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <h3>回测结果</h3>
+                                <p class="card-subtitle">按历史 K 线滚动评估策略</p>
+                            </div>
+                            <button id="strategyBacktestRunButton" class="primary" onclick="runCurrentStrategyBacktest()">回测</button>
+                        </div>
+                        <div class="strategy-backtest-form">
+                            <input id="strategyBacktestStart" type="date" placeholder="开始日期">
+                            <input id="strategyBacktestEnd" type="date" placeholder="结束日期">
+                            <input id="strategyBacktestHistoryCount" type="number" min="120" step="10" value="520" placeholder="历史K线">
+                            <input id="strategyBacktestSymbolLimit" type="number" min="1" step="1" value="80" placeholder="标的数">
+                            <input id="strategyBacktestInitialCash" type="number" min="1000" step="1000" value="100000" placeholder="初始资金">
+                            <input id="strategyBacktestStopLoss" type="number" min="0" step="0.1" value="8" placeholder="止损%">
+                            <input id="strategyBacktestProfitTrigger" type="number" min="0" step="0.1" value="12" placeholder="止盈触发%">
+                            <input id="strategyBacktestTrailingStop" type="number" min="0" step="0.1" value="10" placeholder="回撤止盈%">
+                            <input id="strategyBacktestMaxHold" type="number" min="1" step="1" value="40" placeholder="最大持有天数">
+                            <input id="strategyBacktestExitMA" type="number" min="1" step="1" value="20" placeholder="退出均线">
+                            <input id="strategyBacktestBuyCost" type="number" min="0" step="0.01" value="0.05" placeholder="买入费率%">
+                            <input id="strategyBacktestSellCost" type="number" min="0" step="0.01" value="0.10" placeholder="卖出费率%">
+                        </div>
+                        <div id="strategyBacktestSummary" class="data-item">暂无回测</div>
+                        <div id="strategyBacktestMetrics" class="metric-grid"></div>
+                        <div id="strategyBacktestTrades" class="data-list strategy-backtest-trades"></div>
                     </div>
                 </div>
             </div>
@@ -767,6 +952,80 @@
             </div>
         </section>
 
+        <section id="aiConfigsWorkspace" class="workspace">
+            <div class="ai-config-layout">
+                <div class="card ai-config-editor-card">
+                    <div class="card-header">
+                        <div>
+                            <h3 id="aiConfigFormTitle">添加 AI 模型</h3>
+                            <p class="card-subtitle">配置会加密保存到 AI 服务的数据目录</p>
+                        </div>
+                        <button class="btn-secondary compact" type="button" onclick="resetAIConfigForm()">清空</button>
+                    </div>
+                    <input id="aiConfigID" type="hidden">
+                    <div class="ai-config-form-grid">
+                        <label>
+                            <span>配置名称</span>
+                            <input id="aiConfigName" type="text" placeholder="例如 DeepSeek 主力">
+                        </label>
+                        <label>
+                            <span>供应商</span>
+                            <select id="aiConfigProvider" onchange="onAIProviderChange()"></select>
+                        </label>
+                        <label class="ai-config-wide">
+                            <span>接口地址</span>
+                            <input id="aiConfigBaseURL" type="url" placeholder="https://api.deepseek.com">
+                        </label>
+                        <label>
+                            <span>模型</span>
+                            <input id="aiConfigModel" list="aiConfigModelOptions" type="text" placeholder="deepseek-chat">
+                            <datalist id="aiConfigModelOptions"></datalist>
+                        </label>
+                        <label>
+                            <span>API Key</span>
+                            <input id="aiConfigAPIKey" type="password" autocomplete="new-password" placeholder="新建时必填，编辑时留空表示保留原值">
+                        </label>
+                        <label>
+                            <span>API Secret（可选）</span>
+                            <input id="aiConfigAPISecret" type="password" autocomplete="new-password" placeholder="部分供应商需要">
+                        </label>
+                        <label class="ai-config-wide">
+                            <span>额外 JSON（可选）</span>
+                            <textarea id="aiConfigExtraJSON" rows="3" spellcheck="false" placeholder='例如 {"organization":"demo"}'>{}</textarea>
+                        </label>
+                    </div>
+                    <label class="check-line">
+                        <input id="aiConfigEnabled" type="checkbox" checked>
+                        启用此配置
+                    </label>
+                    <div class="item-actions">
+                        <button class="btn-primary" type="button" onclick="saveAIConfig()">保存配置</button>
+                        <button class="btn-secondary" type="button" onclick="testAIConfig()">测试连接</button>
+                    </div>
+                    <div id="aiConfigFormStatus" class="status-note">新增配置后可以测试连接。</div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>已配置模型</h3>
+                            <p class="card-subtitle" id="aiConfigSummary">加载中</p>
+                        </div>
+                        <button class="btn-secondary compact" type="button" onclick="loadAIConfigData()">刷新</button>
+                    </div>
+                    <div id="aiConfigList" class="data-list ai-config-list"></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h3>连接测试结果</h3>
+                        <p class="card-subtitle">只显示请求状态，不会显示 API Key</p>
+                    </div>
+                </div>
+                <div id="aiConfigTestOutput" class="json-output ai-config-test-output">尚未测试</div>
+            </div>
+        </section>
+
         <div class="modal-shell" id="tradingDialog" aria-hidden="true">
             <div class="modal-backdrop" onclick="closeTradingDialog()"></div>
             <div class="modal-panel trading-modal-panel" role="dialog" aria-modal="true" aria-labelledby="tradingDialogTitle">
@@ -863,9 +1122,9 @@
         </div>
     </div>
 
-    <script src="chart-shim.js?v=trading-system-ui-20260827"></script>
-    <script src="chartlib/umychart.min.js?v=trading-system-ui-20260827"></script>
-    <script src="chart-adapter.js?v=trading-system-ui-20260827"></script>
-    <script src="app.js?v=trading-system-ui-20260827"></script>
+    <script src="chart-shim.js?v=watchlist-minute-chart-20260830"></script>
+    <script src="chartlib/umychart.min.js?v=watchlist-minute-chart-20260830"></script>
+    <script src="chart-adapter.js?v=watchlist-minute-chart-20260830"></script>
+    <script src="app.js?v=watchlist-minute-chart-20260830"></script>
 </body>
 </html>

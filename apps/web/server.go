@@ -803,8 +803,16 @@ func marketAPIHandler(fallback http.HandlerFunc) http.HandlerFunc {
 	return proxyToService("MARKET_SERVICE_URL", fallback)
 }
 
+func hikyuuAPIHandler(fallback http.HandlerFunc) http.HandlerFunc {
+	return proxyToService("HIKYUU_DATA_SERVICE_URL", fallback)
+}
+
 func marketProxyOnly(w http.ResponseWriter, r *http.Request) {
 	errorResponse(w, "该接口需要配置MARKET_SERVICE_URL")
+}
+
+func hikyuuProxyOnly(w http.ResponseWriter, r *http.Request) {
+	errorResponse(w, "该接口需要配置HIKYUU_DATA_SERVICE_URL")
 }
 
 func registerMarketRoutes() {
@@ -851,6 +859,13 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/exhq/quote", handleExHqQuote)
 	http.HandleFunc("/api/exhq/bars", handleExHqBars)
 	http.HandleFunc("/api/exhq/trade", handleExHqTrade)
+	http.HandleFunc("/api/hikyuu/kline", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/health", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks/full-sync", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks/after-close-sync", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks/", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/config", hikyuuAPIHandler(hikyuuProxyOnly))
 	http.HandleFunc("/api/tasks/pull-kline", handleCreatePullKlineTask)
 	http.HandleFunc("/api/tasks/pull-trade", handleCreatePullTradeTask)
 	http.HandleFunc("/api/tasks", handleListTasks)
@@ -916,6 +931,14 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/exhq/quote", marketAPIHandler(handleExHqQuote))
 	http.HandleFunc("/api/exhq/bars", marketAPIHandler(handleExHqBars))
 	http.HandleFunc("/api/exhq/trade", marketAPIHandler(handleExHqTrade))
+	http.HandleFunc("/api/services/status", handleServiceStatuses)
+	http.HandleFunc("/api/hikyuu/kline", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/health", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks/full-sync", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks/after-close-sync", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/tasks/", hikyuuAPIHandler(hikyuuProxyOnly))
+	http.HandleFunc("/api/hikyuu/config", hikyuuAPIHandler(hikyuuProxyOnly))
 	http.HandleFunc("/api/tasks/pull-kline", marketAPIHandler(handleCreatePullKlineTask))
 	http.HandleFunc("/api/tasks/pull-trade", marketAPIHandler(handleCreatePullTradeTask))
 	http.HandleFunc("/api/tasks", marketAPIHandler(handleListTasks))
@@ -942,6 +965,7 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/webhooks/", handleWebhookOperations)
 	http.HandleFunc("/api/hqchart/kline", handleHQChartKline)
 	http.HandleFunc("/api/hqchart/history", handleHQChartHistory)
+	http.HandleFunc("/API/KLine3", handleHQChartMinuteCompat)
 	registerAIProxyRoutes()
 }
 
