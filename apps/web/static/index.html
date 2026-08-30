@@ -67,6 +67,7 @@
                         <p class="card-subtitle" id="watchlistStatus">暂无自选股票</p>
                     </div>
                     <div class="item-actions compact-actions">
+                        <button class="btn-primary" type="button" onclick="openWatchlistAnalysisDialog()">自选分析</button>
                         <button class="primary" type="button" onclick="renderWatchlist()">刷新</button>
                     </div>
                 </div>
@@ -510,6 +511,41 @@
                         </section>
                     </aside>
                 </div>
+            </div>
+        </div>
+
+        <div id="watchlistAnalysisDialog" class="modal-shell" aria-hidden="true">
+            <div class="modal-backdrop" onclick="closeWatchlistAnalysisDialog()"></div>
+            <div class="modal-panel watchlist-analysis-panel" role="dialog" aria-modal="true" aria-labelledby="watchlistAnalysisTitle">
+                <div class="modal-header">
+                    <div>
+                        <h3 id="watchlistAnalysisTitle">自选分析</h3>
+                        <p id="watchlistAnalysisScope" class="card-subtitle">将分析当前自选列表</p>
+                    </div>
+                    <button type="button" onclick="closeWatchlistAnalysisDialog()">关闭</button>
+                </div>
+                <div class="watchlist-analysis-controls">
+                    <label>
+                        <span>AI 模型</span>
+                        <select id="watchlistAnalysisCredential" onchange="updateWatchlistAnalysisModelHint()"></select>
+                    </label>
+                    <label>
+                        <span>分析侧重</span>
+                        <select id="watchlistAnalysisFocus">
+                            <option value="综合研判">综合研判</option>
+                            <option value="短线交易">短线交易</option>
+                            <option value="风险排查">风险排查</option>
+                            <option value="趋势跟踪">趋势跟踪</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="watchlistAnalysisModelHint" class="status-note">分析会查询实时行情、近期日K、财务和资讯数据。</div>
+                <div class="item-actions modal-actions">
+                    <button type="button" onclick="closeWatchlistAnalysisDialog()">取消</button>
+                    <button id="watchlistAnalysisSubmit" class="primary" type="button" onclick="runWatchlistAnalysis()">开始分析</button>
+                </div>
+                <div id="watchlistAnalysisStatus" class="status-note" aria-live="polite"></div>
+                <div id="watchlistAnalysisResult" class="watchlist-analysis-result" hidden></div>
             </div>
         </div>
 

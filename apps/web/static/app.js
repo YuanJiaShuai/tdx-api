@@ -34,6 +34,7 @@ let automations = [];
 let webhooks = [];
 let aiProviders = [];
 let aiCredentials = [];
+let watchlistAnalysisBusy = false;
 let selectionResults = [];
 let decisionResults = [];
 let dailyReview = null;
@@ -238,6 +239,257 @@ function renderWatchlist(options = {}) {
     bindWatchlistClick();
     bindWatchlistDrag();
     if (shouldRefreshQuotes && rows.length) refreshWatchlistQuotes();
+}
+
+function watchlistAnalysisCredentials() {
+    return (Array.isArray(aiCredentials) ? aiCredentials : [])
+        .filter(item => item && item.enabled !== false && item.id)
+        .filter((item, index, items) => items.findIndex(value => value.id === item.id) === index);
+}
+
+function renderWatchlistAnalysisCredentials() {
+    const select = document.getElementById('watchlistAnalysisCredential');
+    const submit = document.getElementById('watchlistAnalysisSubmit');
+    const credentials = watchlistAnalysisCredentials();
+    if (!select) return credentials;
+    if (!credentials.length) {
+        select.innerHTML = '<option value="">暂无已启用模型，请先在 AI 模型中配置</option>';
+        select.disabled = true;
+        if (submit) submit.disabled = true;
+        updateWatchlistAnalysisModelHint();
+        return credentials;
+    }
+    const current = select.value;
+    select.disabled = false;
+    select.innerHTML = credentials.map(item => {
+        const provider = aiProviderName(item.provider);
+        const model = item.model || defaultAIModel(item.provider) || '默认模型';
+        return `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || provider)} · ${escapeHTML(model)}</option>`;
+    }).join('');
+    if (credentials.some(item => item.id === current)) select.value = current;
+    if (!select.value) select.value = credentials[0].id;
+    if (submit) submit.disabled = false;
+    updateWatchlistAnalysisModelHint();
+    return credentials;
+}
+
+function updateWatchlistAnalysisModelHint() {
+    const node = document.getElementById('watchlistAnalysisModelHint');
+    const select = document.getElementById('watchlistAnalysisCredential');
+    if (!node) return;
+    const credential = watchlistAnalysisCredentials().find(item => item.id === select?.value);
+    if (!credential) {
+        node.textContent = '请先到“AI 模型”配置并启用一个可用模型。';
+        node.className = 'status-note error';
+        return;
+    }
+    node.textContent = `${aiProviderName(credential.provider)} · ${credential.model || defaultAIModel(credential.provider) || '默认模型'}。分析会查询实时行情、近期日K、财务和资讯数据。`;
+    node.className = 'status-note';
+}
+
+async function openWatchlistAnalysisDialog() {
+    const dialog = document.getElementById('watchlistAnalysisDialog');
+    if (!dialog) return;
+    const rows = Array.isArray(watchlistRows) ? watchlistRows : [];
+    const scope = document.getElementById('watchlistAnalysisScope');
+    const result = document.getElementById('watchlistAnalysisResult');
+    const status = document.getElementById('watchlistAnalysisStatus');
+    if (scope) scope.textContent = rows.length ? `当前自选 ${rows.length} 只，最多分析 20 只` : '当前没有自选股票';
+    if (result) {
+        result.hidden = true;
+        result.innerHTML = '';
+    }
+    if (status) {
+        status.textContent = '';
+        status.className = 'status-note';
+    }
+    dialog.classList.add('open');
+    dialog.setAttribute('aria-hidden', 'false');
+    if (!aiCredentials.length) {
+        try {
+            await loadAIConfigData();
+        } catch (error) {
+            if (status) {
+                status.textContent = error.message || String(error);
+                status.className = 'status-note error';
+            }
+        }
+    }
+    renderWatchlistAnalysisCredentials();
+}
+
+function closeWatchlistAnalysisDialog() {
+    const dialog = document.getElementById('watchlistAnalysisDialog');
+    if (!dialog || watchlistAnalysisBusy) return;
+    dialog.classList.remove('open');
+    dialog.setAttribute('aria-hidden', 'true');
+}
+
+function setWatchlistAnalysisStatus(message, type = '') {
+    const node = document.getElementById('watchlistAnalysisStatus');
+    if (!node) return;
+    node.textContent = message || '';
+    node.className = `status-note ${type}`.trim();
+}
+
+function watchlistAnalysisList(value) {
+    if (Array.isArray(value)) return value.filter(item => item !== null && item !== undefined && String(item).trim());
+    if (value === null || value === undefined || value === '') return [];
+    return [value];
+}
+
+function renderWatchlistAnalysisList(title, values, className = '') {
+    const items = watchlistAnalysisList(values);
+    if (!items.length) return '';
+    return `
+        <section class="watchlist-analysis-section ${className}">
+            <h4>${escapeHTML(title)}</h4>
+            <ul>${items.map(item => `<li>${escapeHTML(typeof item === 'object' ? JSON.stringify(item) : item)}</li>`).join('')}</ul>
+        </section>
+    `;
+}
+
+function renderWatchlistStockAnalyses(values) {
+    if (!Array.isArray(values) || !values.length) return '';
+    return `
+        <section class="watchlist-analysis-stock-list">
+            <div class="watchlist-analysis-stock-head">
+                <h4>逐只分析</h4>
+                <span>${values.length} 只</span>
+            </div>
+            <div class="watchlist-analysis-stocks">
+                ${values.map(item => {
+                    const stock = item && typeof item === 'object' ? item : { summary: item };
+                    const title = [stock.name, stock.symbol].filter(Boolean).join(' · ') || '未命名股票';
+                    return `
+                        <article class="watchlist-analysis-stock">
+                            <div class="watchlist-analysis-stock-title">
+                                <strong>${escapeHTML(title)}</strong>
+                                ${stock.strength ? `<span class="tag">${escapeHTML(stock.strength)}</span>` : ''}
+                            </div>
+                            ${stock.summary ? `<p>${escapeHTML(stock.summary)}</p>` : ''}
+                            ${stock.risk ? `<div><b>风险：</b>${escapeHTML(stock.risk)}</div>` : ''}
+                            ${stock.next_check ? `<div><b>待验证：</b>${escapeHTML(stock.next_check)}</div>` : ''}
+                        </article>
+                    `;
+                }).join('')}
+            </div>
+        </section>
+    `;
+}
+
+function renderWatchlistAnalysisResult(data) {
+    const node = document.getElementById('watchlistAnalysisResult');
+    if (!node) return;
+    let result = data?.result || {};
+    if ((!result || typeof result !== 'object' || Array.isArray(result)) && data?.content) {
+        try {
+            result = JSON.parse(data.content);
+        } catch (error) {
+            result = {};
+        }
+    }
+    const summary = result?.summary || data?.content || '模型没有返回可解析的结构化结论。';
+    const confidence = result?.confidence ? ` · 信心：${result.confidence}` : '';
+    const stocks = Array.isArray(data?.input?.stocks) ? data.input.stocks : [];
+    const stockAnalyses = result?.stock_analyses || result?.stock_analysis || [];
+    node.innerHTML = `
+        <div class="watchlist-analysis-overview">
+            <div>
+                <span class="watchlist-analysis-eyebrow">AI 分析结论${escapeHTML(confidence)}</span>
+                <h4>${escapeHTML(summary)}</h4>
+            </div>
+            <span class="tag">${escapeHTML(data?.model || '已配置模型')}</span>
+        </div>
+        <div class="watchlist-analysis-grid">
+            ${renderWatchlistAnalysisList('改善因素', result?.bullish_points, 'is-positive')}
+            ${renderWatchlistAnalysisList('风险因素', result?.risk_points, 'is-risk')}
+            ${renderWatchlistAnalysisList('重点观察', result?.watch_levels)}
+            ${renderWatchlistAnalysisList('下一交易日检查', result?.next_checks)}
+            ${renderWatchlistAnalysisList('交易纪律', result?.discipline_notes)}
+        </div>
+        ${renderWatchlistStockAnalyses(stockAnalyses)}
+        <div class="watchlist-analysis-foot">${escapeHTML(result?.disclaimer || '仅供学习研究和复盘，不构成投资建议')} · 覆盖 ${stocks.length || '当前'} 只股票</div>
+    `;
+    node.hidden = false;
+}
+
+async function runWatchlistAnalysis() {
+    if (watchlistAnalysisBusy) return;
+    const rows = Array.isArray(watchlistRows) ? watchlistRows : [];
+    const symbols = rows.map(row => normalizeSymbol(row.code || row.symbol)).filter(Boolean);
+    if (!symbols.length) {
+        setWatchlistAnalysisStatus('当前没有可分析的自选股票。', 'error');
+        return;
+    }
+    const credentialID = document.getElementById('watchlistAnalysisCredential')?.value || '';
+    const credential = watchlistAnalysisCredentials().find(item => item.id === credentialID);
+    if (!credential) {
+        setWatchlistAnalysisStatus('请先在“AI 模型”中配置并启用一个模型。', 'error');
+        return;
+    }
+    const submit = document.getElementById('watchlistAnalysisSubmit');
+    const result = document.getElementById('watchlistAnalysisResult');
+    watchlistAnalysisBusy = true;
+    if (submit) {
+        submit.disabled = true;
+        submit.textContent = '分析中...';
+    }
+    if (result) {
+        result.hidden = true;
+        result.innerHTML = '';
+    }
+    setWatchlistAnalysisStatus('正在查询自选行情、日K、财务和资讯，请稍候...', '');
+    try {
+        await refreshWatchlistQuotes();
+        const latestRows = Array.isArray(watchlistRows) ? watchlistRows : rows;
+        const formulasForAnalysis = (Array.isArray(formulas) ? formulas : [])
+            .filter(formula => formula && formula.enabled !== false && (formula.type || 'indicator') === 'indicator')
+            .slice(0, 12)
+            .map(formula => ({
+                name: formula.name || '未命名指标',
+                period: formula.period || 'day',
+                script: formula.script || ''
+            }));
+        const data = await apiFetch('/api/ai/analyze/watchlist', {
+            method: 'POST',
+            body: JSON.stringify({
+                provider: credential.provider,
+                model: credential.model || defaultAIModel(credential.provider),
+                credential_id: credential.id,
+                pool_id: 'watchlist',
+                symbols: symbols.slice(0, 20),
+                input: {
+                    analysis_focus: document.getElementById('watchlistAnalysisFocus')?.value || '综合研判',
+                    data_scope: ['实时行情', '60日K线', '财务数据', '近期资讯'],
+                    client_snapshot: latestRows.slice(0, 20).map(row => ({
+                        symbol: normalizeSymbol(row.code || row.symbol),
+                        name: row.name || '',
+                        price: row.price ?? '',
+                        change_percent: row.changePercent ?? '',
+                        volume: row.volume ?? '',
+                        amount: row.amount ?? '',
+                        industry: row.industry ?? '',
+                        turnover: row.turnover ?? '',
+                        volume_ratio: row.volumeRatio ?? ''
+                    })),
+                    custom_indicators: formulasForAnalysis,
+                    instruction: '请先给出自选池整体判断，再逐只指出相对强弱、主要风险和下一交易日需要验证的条件。不要编造未提供的数据。'
+                },
+                options: { max_tokens: 2400 }
+            })
+        });
+        renderWatchlistAnalysisResult(data);
+        setWatchlistAnalysisStatus(`分析完成 · ${data?.provider || credential.provider} / ${data?.model || credential.model || '默认模型'} · ${data?.latency_ms || 0}ms`, 'success');
+    } catch (error) {
+        setWatchlistAnalysisStatus(error.message || String(error), 'error');
+    } finally {
+        watchlistAnalysisBusy = false;
+        if (submit) {
+            submit.disabled = false;
+            submit.textContent = '开始分析';
+        }
+    }
 }
 
 function watchlistChangeClass(value) {

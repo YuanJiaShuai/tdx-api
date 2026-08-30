@@ -758,6 +758,189 @@ textarea::placeholder {
     justify-content: flex-end;
 }
 
+.watchlist-analysis-panel {
+    width: min(960px, calc(100vw - 40px));
+}
+
+.watchlist-analysis-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.watchlist-analysis-controls label {
+    display: grid;
+    gap: 5px;
+}
+
+.watchlist-analysis-controls label > span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.watchlist-analysis-controls select {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #ffffff;
+    color: var(--text-color);
+}
+
+.watchlist-analysis-result {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.watchlist-analysis-overview {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px;
+    border: 1px solid #bfdbfe;
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+}
+
+.watchlist-analysis-eyebrow {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--accent-strong);
+    font-size: 11px;
+    font-weight: 850;
+}
+
+.watchlist-analysis-overview h4 {
+    margin: 0;
+    color: var(--ink);
+    font-size: 17px;
+    line-height: 1.45;
+}
+
+.watchlist-analysis-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.watchlist-analysis-section {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.watchlist-analysis-section h4 {
+    margin: 0 0 7px;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 850;
+}
+
+.watchlist-analysis-section ul {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding-left: 18px;
+    color: var(--text-color);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.watchlist-analysis-section.is-positive {
+    border-color: #bbf7d0;
+    background: var(--success-soft);
+}
+
+.watchlist-analysis-section.is-risk {
+    border-color: #fecaca;
+    background: var(--danger-soft);
+}
+
+.watchlist-analysis-stock-list {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.watchlist-analysis-stock-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.watchlist-analysis-stock-head h4 {
+    margin: 0;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 850;
+}
+
+.watchlist-analysis-stock-head span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.watchlist-analysis-stocks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.watchlist-analysis-stock {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: var(--panel-muted);
+    color: var(--text-color);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.watchlist-analysis-stock-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.watchlist-analysis-stock-title strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ink);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.watchlist-analysis-stock p {
+    margin: 0;
+}
+
+.watchlist-analysis-stock b {
+    color: var(--text-secondary);
+}
+
+.watchlist-analysis-foot {
+    padding-top: 2px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 .decision-hit-list {
     max-height: 430px;
 }
@@ -3473,6 +3656,12 @@ textarea::placeholder {
 
     .ai-config-layout,
     .ai-config-form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .watchlist-analysis-controls,
+    .watchlist-analysis-grid,
+    .watchlist-analysis-stocks {
         grid-template-columns: 1fr;
     }
 

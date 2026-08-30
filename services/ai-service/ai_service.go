@@ -584,7 +584,7 @@ func stockAnalysisMessages(symbol string, input map[string]interface{}) []AIMess
 func watchlistAnalysisMessages(input map[string]interface{}) []AIMessage {
 	return []AIMessage{
 		{Role: "system", Content: aiAnalysisSystemPrompt()},
-		{Role: "user", Content: fmt.Sprintf("请分析这个自选/观察列表，找出优先观察对象、风险对象和下一交易日检查项。输入数据如下：\n%s\n\n只输出JSON。", mustJSON(input))},
+		{Role: "user", Content: fmt.Sprintf("请分析这个自选/观察列表，找出优先观察对象、风险对象和下一交易日检查项。除系统字段外，请额外返回 stock_analyses 数组，每项包含 symbol、name、summary、strength、risk、next_check。输入数据如下：\n%s\n\n只输出JSON。", mustJSON(input))},
 	}
 }
 
