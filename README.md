@@ -1,205 +1,370 @@
 # TDX Workbench
 
-一个本地运行的 A 股行情、公式选股与交易研究工作台。
+一个本地运行的 A 股行情与交易研究工作台。
 
-它从通达信公共行情服务取数，把报价、K 线、分时、分笔、财务、板块、除权除息等数据整理成 API；同时提供 Web 界面，用来查看行情、维护公式、管理股票池、运行选股任务和复盘结果。
+TDX Workbench 把通达信行情、历史 K 线、分时、财务、板块、公式、选股、自动化、交易计划和 AI 辅助分析集中到一个 Web 界面中。它适合用来做个人研究、策略验证、盘后复盘和本地数据服务，不定位为交易终端或投资顾问。
 
-> 本项目仅供学习和研究使用。行情数据可能延迟、缺失或出错，不构成任何投资建议。
+> 行情数据可能延迟、缺失或出错。AI 输出仅供学习研究和复盘，不构成投资建议。
 
-## 服务拆分
+![TDX Workbench 行情工作台](docs/assets/tdx-workbench-market.png)
 
-当前项目已经按多服务方式组织，几个服务可以单独构建、单独启动、单独重启：
+## 你可以用它做什么
 
-| 服务 | 目录 | 容器 | 说明 |
-| --- | --- | --- | --- |
-| Web 工作台 | `apps/web/` | `tdx-workbench-web` | 前端页面、业务 API 网关、公式/选股管理入口 |
-| 行情服务 | `services/market-service/` | `tdx-workbench-market` | 通达信行情、K 线、分时、成交、代码、板块、交易日等 API |
-| Hikyuu 数据服务 | `services/hikyuu-data-service/` | `tdx-workbench-hikyuu-data` | hikyuu 全量/盘后增量下载、定时收盘作业和任务状态 API |
-| 公式引擎 | `services/formula-worker/` | `tdx-workbench-formula` | HQChartPy2 或 fallback 公式执行器 |
-| 指标选股 | `services/selection-worker/` | `tdx-workbench-selection` | Cron 调度、选股运行、运行记录写入 |
-| AI 分析 | `services/ai-service/` | `tdx-workbench-ai` | DeepSeek/OpenAI-compatible 模型调用、股票分析、自选分析 |
-| 通用核心 | `packages/tdx-core/` | 无独立容器 | 通达信协议库、数据模型、扩展拉取逻辑 |
-| 工作台核心 | `packages/workbench-core/` | 无独立容器 | 公式、股票池、策略、自动化记录等共享模型与存储 |
+| 工作区 | 适合做的事 |
+| --- | --- |
+| 自选 | 查看自选列表、实时行情、五档盘口，并打开个股行情弹窗 |
+| 专业行情 | 查看多周期 K 线、分时和自定义指标，支持在 K 线中切换个人公式 |
+| 数据中心 | 查询股票代码、市场概览、财务/F10、股本和收益测算数据 |
+| 选股结果 | 浏览公式选股命中结果，按股票或公式筛选并跳转行情 |
+| 每日复盘 | 沉淀盘后观察、信号和复盘记录 |
+| 交易系统 | 记录交易卡、仓位、无效点、计划亏损和复盘内容 |
+| 策略中心 | 管理策略规则、执行策略和查看回测/运行结果 |
+| 自动化 | 维护股票池，按 Cron 定时运行公式选股或系统同步 |
+| AI 模型 | 配置 DeepSeek、OpenAI-compatible、通义千问、智谱 GLM 等模型 |
+| 自选分析 | 使用已配置的 AI 模型，结合实时行情、日 K、财务和资讯分析自选池 |
+| Webhook | 把选股、策略和自动化任务结果发送到外部通知地址 |
 
-## 目录结构
+## 功能预览
 
-```text
-tdx-workbench/
-├── apps/
-│   └── web/                    # Web 页面、API 网关和工作台后端
-├── services/
-│   ├── market-service/          # 独立 Go 行情服务
-│   ├── formula-worker/          # Python 公式引擎服务
-│   ├── selection-worker/        # 独立 Go 指标选股服务
-│   └── ai-service/              # 独立 Go AI 分析服务
-├── packages/
-│   ├── tdx-core/                # Go 通达信核心库和示例
-│   └── workbench-core/          # Web 和选股服务共享的模型与存储层
-├── deploy/                      # 本地部署辅助脚本
-├── data/                        # 本地数据库和运行数据，Docker 会挂载
-├── reports/                     # 选股、行情跟踪等输出
-├── docs/                        # 项目文档
-├── docker-compose.yml
-└── go.work
-```
+### 行情与研究
 
-## Docker 启动
+![行情工作台](docs/assets/tdx-workbench-market.png)
 
-启动全部服务：
+### 数据中心
+
+![数据中心](docs/assets/tdx-workbench-data-center.png)
+
+### 自动化任务
+
+![自动化任务](docs/assets/tdx-workbench-automation.png)
+
+## 快速启动
+
+### Docker Compose
+
+要求：
+
+- Docker Desktop 或 Docker Engine
+- Docker Compose v2
+
+在项目根目录执行：
 
 ```bash
 docker compose up -d --build
 ```
 
-打开 Web：
+打开 Web 工作台：
 
 ```text
 http://localhost:8080
 ```
 
-宿主机端口：
-
-| 服务 | 容器内端口 | 宿主机端口 |
-| --- | --- | --- |
-| Web 工作台 | `8080` | `8080` |
-| 行情服务 | `8081` | `18081` |
-| 公式引擎 | `8712` | `18712` |
-| Hikyuu 数据服务 | `8091` | `18091` |
-| 指标选股 | `8082` | `18082` |
-| AI 分析 | `8083` | `18083` |
-
-## 单独部署
-
-改了哪个服务，就可以只重建/重启哪个服务：
+检查服务状态：
 
 ```bash
+docker compose ps
+curl http://localhost:8080/api/health
+curl http://localhost:8080/api/services/status
+```
+
+首次启动后，进入页面顶部的 `AI 模型` 工作区，保存一个模型配置，再从 `自选` 工作区点击 `自选分析`。
+
+### 常用 Docker 命令
+
+```bash
+# 只重建某个服务
 docker compose up -d --build stock-web
-docker compose up -d --build market-service
-docker compose up -d --build formula-worker
-docker compose up -d --build hikyuu-data-service
-docker compose up -d --build selection-worker
 docker compose up -d --build ai-service
-```
 
-只重启不重建：
-
-```bash
-docker compose restart stock-web
-docker compose restart market-service
-docker compose restart formula-worker
-docker compose restart hikyuu-data-service
-docker compose restart selection-worker
-docker compose restart ai-service
-```
-
-查看日志：
-
-```bash
+# 查看日志
 docker compose logs -f stock-web
 docker compose logs -f market-service
-docker compose logs -f formula-worker
-docker compose logs -f hikyuu-data-service
-docker compose logs -f selection-worker
 docker compose logs -f ai-service
+
+# 停止服务
+docker compose down
 ```
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    Browser[浏览器 Web 工作台] --> Web[stock-web<br/>页面与 API 网关]
+    Web --> Market[market-service<br/>行情与历史数据]
+    Web --> Formula[formula-worker<br/>公式执行]
+    Web --> Selection[selection-worker<br/>选股与自动化]
+    Web --> AI[ai-service<br/>模型调用与分析]
+    Web --> Hikyuu[hikyuu-data-service<br/>历史数据同步]
+    Selection --> Market
+    Selection --> Formula
+    AI --> Market
+    Market --> TDX[通达信数据源]
+    Hikyuu --> Local[(本地数据目录)]
+    Market --> Local
+    Web --> Local
+    Selection --> Local
+    AI --> Local
+```
+
+项目采用多服务结构，但仍然可以通过一条 Compose 命令启动完整闭环。Web 服务负责页面和统一入口，行情、公式、选股、AI 和历史数据分别由独立服务承担，便于单独构建、重启和排障。
+
+## 服务清单
+
+| 服务 | 目录 | 容器 | 宿主机端口 | 职责 |
+| --- | --- | --- | ---: | --- |
+| Web 工作台 | `apps/web/` | `tdx-workbench-web` | `8080` | 页面、业务 API 和服务代理 |
+| 行情服务 | `services/market-service/` | `tdx-workbench-market` | `18081` | 行情、K 线、分时、成交、代码、财务和板块 |
+| 公式引擎 | `services/formula-worker/` | `tdx-workbench-formula` | `18712` | HQChartPy2 或 fallback 公式执行 |
+| 指标选股 | `services/selection-worker/` | `tdx-workbench-selection` | `18082` | 股票池、公式选股、策略和自动化任务 |
+| AI 分析 | `services/ai-service/` | `tdx-workbench-ai` | `18083` | 模型配置、聊天、单股分析和自选分析 |
+| Hikyuu 数据 | `services/hikyuu-data-service/` | `tdx-workbench-hikyuu-data` | `18091` | 全量数据、盘后增量同步和任务状态 |
+
+共享代码位于：
+
+```text
+packages/tdx-core/        # 通达信协议、数据模型和基础拉取逻辑
+packages/workbench-core/  # 公式、股票池、策略、任务和存储模型
+```
+
+## 三条核心工作流
+
+### 1. 看行情与做研究
+
+1. 在自选列表中查看实时行情。
+2. 点击股票代码或整行，打开行情弹窗。
+3. 在分时、日 K、周 K、月 K 等周期之间切换。
+4. 点击 K 线上的指标名称，选择自己的自定义指标。
+5. 需要时跳转到专业行情工作区继续研究。
+
+### 2. 公式选股与自动化
+
+1. 在公式管理中创建选股公式或图表指标。
+2. 在自动化工作区创建股票池。
+3. 选择公式、股票池和执行时间。
+4. 手动运行或启用 Cron 调度。
+5. 在选股结果中查看命中股票，并回到行情页面复核。
+
+公式 worker 会优先尝试使用 HQChartPy2；如果扩展不可用或单次执行失败，会回退到内置 Python 执行器。fallback 支持常见的 `MA`、`EMA`、`SMA`、`REF`、`LLV`、`HHV`、`CROSS`、`SUM`、`STD`、`IF`、`MAX` 和 `MIN`。
+
+示例公式：
+
+```text
+CROSS(MA(C,5),MA(C,20));
+```
+
+### 3. AI 辅助分析
+
+AI 分析不是单独的一套数据源，而是建立在行情服务的结构化上下文之上。
+
+自选分析会按当前自选代码查询：
+
+- 实时行情和五档相关数据
+- 近期日 K，默认最多 60 根
+- 财务快照
+- 本地已采集资讯，默认最多 10 条
+- 页面当前已经刷新的行情快照
+- 已启用的自定义指标元数据
+
+配置方式：
+
+1. 打开 `AI 模型` 工作区。
+2. 新建并启用一个模型配置，API Key 会加密保存。
+3. 回到 `自选`，点击 `自选分析`。
+4. 选择模型和分析侧重，开始分析。
+
+支持的内置 provider 包括 DeepSeek、OpenAI、通义千问、智谱 GLM 和自定义 OpenAI-compatible 接口。AI 服务会保存分析运行记录，但 API Key 只返回脱敏结果。
+
+## 数据与持久化
+
+Docker Compose 会把项目中的 `data/` 挂载到容器。重建镜像不会主动清空这些数据。
+
+常见数据包括：
+
+```text
+data/
+├── database/                 # SQLite、行情和工作台数据
+├── hikyuu/stocks/            # Hikyuu 历史数据
+├── hikyuu/config/            # Hikyuu 配置
+├── hikyuu/logs/              # 同步日志
+└── ...                       # 运行快照和任务结果
+```
+
+建议把 `data/` 纳入本地备份范围，不要在没有备份的情况下执行：
+
+```bash
+rm -rf data/
+```
+
+## 配置要点
+
+Compose 已经提供了服务间默认地址。需要长期使用或部署到其他环境时，建议在 `.env` 或部署环境中显式设置：
+
+| 变量 | 用途 |
+| --- | --- |
+| `AI_CREDENTIAL_SECRET` | 加密保存 AI 凭据的密钥 |
+| `AI_SERVICE_TOKEN` | Web 与 AI 服务之间的可选访问令牌 |
+| `DEEPSEEK_API_KEY` | 通过环境变量提供 DeepSeek API Key |
+| `DEEPSEEK_BASE_URL` | DeepSeek 接口地址，默认 `https://api.deepseek.com` |
+| `MARKET_SERVICE_URL` | AI 服务访问行情服务的地址 |
+| `FORMULA_WORKER_URL` | Web/选股服务访问公式 worker 的地址 |
+| `MARKET_SYNC_ON_START` | 行情服务启动时是否同步基础代码和交易日 |
+| `AUTOMATION_SCHEDULER_ENABLED` | 是否启用自动化调度 |
+
+通过环境变量提供的 AI 凭据会以 `env:` 开头显示，并且不能从页面删除。长期部署时请固定 `AI_CREDENTIAL_SECRET`，否则更换密钥后历史凭据可能无法解密。
+
+## 常用 API
+
+Web 工作台默认代理以下常用接口：
+
+```bash
+# 实时行情
+curl "http://localhost:8080/api/quote?code=000001"
+
+# 历史 K 线
+curl "http://localhost:8080/api/kline-history?code=000001&type=day&limit=120"
+
+# 标准分析上下文
+curl "http://localhost:8080/api/analysis/context?codes=000001,600519&kline_limit=60&news_limit=10"
+
+# 公式健康状态
+curl "http://localhost:8080/api/formula/health"
+
+# AI provider 列表
+curl "http://localhost:8080/api/ai/providers"
+```
+
+AI 分析接口示例：
+
+```bash
+curl -X POST "http://localhost:8080/api/ai/analyze/stock" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"deepseek","symbol":"603171"}'
+```
+
+```bash
+curl -X POST "http://localhost:8080/api/ai/analyze/watchlist" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"deepseek","pool_id":"watchlist","symbols":["601899","603171"]}'
+```
+
+完整参数、响应格式和错误码见 [API 参考](docs/api-reference.md)。
 
 ## 源码运行
 
-要求 Go 1.23+，Python 用于公式 worker。
+要求：
+
+- Go 1.23+
+- Python 3
+- SQLite
+- 如果需要完整公式能力，准备 HQChartPy2 构建环境
+
+推荐优先使用 Docker。源码运行时需要分别启动依赖服务：
+
+下面每组命令都应在独立终端中运行；这些服务启动后会持续占用当前终端。
 
 ```bash
+# 公式服务
 python3 services/formula-worker/worker.py
+
+# 行情服务
 cd services/market-service
 go run .
+
+# Hikyuu 数据服务
 cd ../hikyuu-data-service
 python3 -m pip install -r requirements.txt
 uvicorn app:app --host 0.0.0.0 --port 8091
+
+# 选股服务
 cd ../selection-worker
 go run .
-cd ../../services/ai-service
+
+# AI 服务
+cd ../ai-service
 go run .
+
+# Web 工作台
 cd ../../apps/web
 go run .
 ```
 
-根目录有 `go.work`，所以也可以在根目录统一管理多个 Go module。
+如果 `8080` 已被占用：
+
+```bash
+cd apps/web
+PORT=18080 go run .
+```
 
 ## 开发验证
 
 ```bash
-cd packages/tdx-core
-GOPROXY=https://goproxy.cn,direct go test ./...
+# Compose 配置
+docker compose config --quiet
 
-cd ../workbench-core
-GOPROXY=https://goproxy.cn,direct go test ./...
+# JavaScript 语法
+node --check apps/web/static/app.js
 
-cd ../../apps/web
-GOPROXY=https://goproxy.cn,direct go test ./...
-GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-workbench-web .
-
-cd ../../services/market-service
-GOPROXY=https://goproxy.cn,direct go test ./...
-GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-market-service .
-
-cd ../selection-worker
-GOPROXY=https://goproxy.cn,direct go test ./...
-GOPROXY=https://goproxy.cn,direct go build -o /tmp/tdx-selection-worker .
-
-cd ../ai-service
-GOPROXY=https://goproxy.cn,direct go test ./...
+# Go 模块测试
+cd packages/tdx-core && go test ./...
+cd ../workbench-core && go test ./...
+cd ../../apps/web && go test ./...
+cd ../../services/market-service && go test ./...
+cd ../selection-worker && go test ./...
+cd ../ai-service && go test ./...
 ```
 
-Docker 配置检查：
+服务状态检查：
 
 ```bash
-docker compose config --quiet
+docker compose ps
+curl http://localhost:8080/api/services/status
 ```
 
-## 常用 API
+## 项目结构
 
-| 接口 | 说明 | 示例 |
-| --- | --- | --- |
-| `GET /api/quote` | 五档行情 | `/api/quote?code=000001` |
-| `GET /api/kline` | K 线，日线默认前复权 | `/api/kline?code=000001&type=day` |
-| `GET /api/minute` | 分时走势 | `/api/minute?code=000001` |
-| `GET /api/trade` | 分笔成交 | `/api/trade?code=000001` |
-| `GET /api/search` | 股票搜索 | `/api/search?keyword=平安` |
-| `GET /api/stock-info` | 行情、K 线、分时综合信息 | `/api/stock-info?code=000001` |
-| `POST /api/batch-quote` | 批量行情 | `{"codes":["000001","600519"]}` |
-| `GET /api/formula/health` | 公式 worker 状态 | `/api/formula/health` |
-| `GET /api/hikyuu/health` | Hikyuu 数据服务状态 | `http://localhost:18091/api/hikyuu/health` |
-| `POST /api/hikyuu/tasks/full-sync` | 启动 hikyuu 首次全量下载 | `http://localhost:18091/api/hikyuu/tasks/full-sync` |
-| `POST /api/hikyuu/tasks/after-close-sync` | 启动 hikyuu 盘后增量下载 | `http://localhost:18091/api/hikyuu/tasks/after-close-sync` |
-| `POST /api/formula/run` | 直接执行公式 | `{"symbol":"000001","script":"T:MA(C,5);"}` |
-| `GET /api/automations` | 自动化任务列表 | `/api/automations` |
-| `GET /api/selection-results` | 选股命中结果 | `/api/selection-results?limit=100` |
-| `GET /api/ai/providers` | AI 供应商列表 | `/api/ai/providers` |
-| `POST /api/ai/analyze/stock` | 单股 AI 分析 | `{"provider":"deepseek","symbol":"603171"}` |
-| `POST /api/ai/analyze/watchlist` | 自选/观察池 AI 分析 | `{"provider":"deepseek","pool_id":"watchlist"}` |
+```text
+tdx-api/
+├── apps/web/                    # Web 页面、API 网关和工作台后端
+├── services/
+│   ├── market-service/          # 独立行情服务
+│   ├── formula-worker/          # 公式执行服务
+│   ├── selection-worker/        # 选股、策略和自动化服务
+│   ├── ai-service/              # AI 模型与分析服务
+│   └── hikyuu-data-service/     # Hikyuu 数据服务
+├── packages/
+│   ├── tdx-core/                # 通达信核心库
+│   └── workbench-core/          # 工作台共享模型和存储
+├── data/                        # 本地数据库和同步数据
+├── docs/                        # 使用、部署、API 和算法文档
+├── scripts/                     # 示例脚本和日常工具
+├── docker-compose.yml
+└── go.work
+```
 
-在 Docker 模式下，`selection-worker` 的行情请求默认转发给
-`market-service`。只有显式设置 `SELECTION_MARKET_FALLBACK_DIRECT=true` 时，
-worker 才会在行情服务失败后尝试直接连接通达信。
+## 文档导航
 
-完整接口见 [API 参考](docs/api-reference.md)。
-
-## 文档
-
-| 文档 | 说明 |
+| 文档 | 内容 |
 | --- | --- |
-| [部署指南](docs/deployment-guide.md) | Docker、本地运行、验证和排障 |
 | [Web 使用指南](docs/web-guide.md) | 页面入口、功能区域和操作流程 |
+| [部署指南](docs/deployment-guide.md) | Docker、本地运行、验证和排障 |
 | [API 参考](docs/api-reference.md) | REST API 参数、响应和示例 |
-| [除权除息与复权算法](docs/gbbq-adjustment.md) | gbbq 数据结构和复权计算说明 |
-| [文档历史](docs/document-history.md) | 旧文档和阶段性说明的去向摘要 |
+| [交易系统说明](docs/TRADING_SYSTEM_V1.md) | 交易卡、仓位和复盘规则 |
+| [除权除息与复权算法](docs/gbbq-adjustment.md) | gbbq 数据结构和复权计算 |
+| [文档历史](docs/document-history.md) | 阶段性文档的整理记录 |
 
-## 开源组件
+## 开源组件与致谢
 
-| 项目 | 用途 | 说明 |
-| --- | --- | --- |
-| [oficcejo/tdx-api](https://github.com/oficcejo/tdx-api) | 原始项目基础 | 本项目在其基础上继续扩展 Web、API、自动化和部署能力 |
-| [injoyai/tdx](https://github.com/injoyai/tdx) | 通达信协议库 | 当前整理为 `packages/tdx-core/` 的通用核心 |
-| [jones2000/HQChart](https://github.com/jones2000/HQChart) | 专业行情展示 | 用于专业 K 线、指标和图表展示 |
-| [jones2000/hqchartPy2](https://github.com/jones2000/hqchartPy2) | 公式计算引擎 | 用于接入通达信/麦语法风格公式解析与批量选股 |
+本项目在以下开源项目或协议库的基础上进行集成和扩展：
 
-Docker 公式 worker 会自动检测 `HQChartPy2`：检测到时报告 `engine=hqchartpy2`，未安装时使用内置 fallback 公式执行器，保证本地流程仍能跑通。
+| 项目 | 用途 |
+| --- | --- |
+| [oficcejo/tdx-api](https://github.com/oficcejo/tdx-api) | 原始项目基础 |
+| [injoyai/tdx](https://github.com/injoyai/tdx) | 通达信协议库 |
+| [jones2000/HQChart](https://github.com/jones2000/HQChart) | K 线与专业行情展示 |
+| [jones2000/hqchartPy2](https://github.com/jones2000/hqchartPy2) | 公式计算引擎 |
+
+具体许可信息和第三方代码说明以各项目仓库及本仓库内的许可证文件为准。
+
+## 免责声明
+
+本项目仅用于学习、研究、数据整理和策略验证。项目作者不对行情准确性、数据连续性、策略结果、AI 输出或任何投资决策造成的损失负责。使用本项目连接第三方模型或数据服务时，请自行确认对应服务的隐私、计费和使用条款。
