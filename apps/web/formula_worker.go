@@ -93,7 +93,7 @@ func (c *FormulaWorkerClient) HealthInfo(ctx context.Context) (map[string]interf
 func (c *FormulaWorkerClient) Run(ctx context.Context, reqData FormulaRunRequest) (FormulaRunResponse, error) {
 	var respData FormulaRunResponse
 	if len(reqData.Data) == 0 {
-		data, err := buildFormulaData(reqData.Symbols, reqData.Symbol, reqData.Period, reqData.CalcCount)
+		data, err := buildFormulaData(ctx, reqData.Symbols, reqData.Symbol, reqData.Period, reqData.CalcCount)
 		if err != nil {
 			return respData, err
 		}
@@ -136,10 +136,7 @@ func (c *FormulaWorkerClient) Run(ctx context.Context, reqData FormulaRunRequest
 	return respData, nil
 }
 
-func buildFormulaData(symbols []string, symbol, period string, calcCount int) (map[string][]FormulaKline, error) {
-	if err := initMarketRuntime(false, false); err != nil {
-		return nil, err
-	}
+func buildFormulaData(ctx context.Context, symbols []string, symbol, period string, calcCount int) (map[string][]FormulaKline, error) {
 	if len(symbols) == 0 && symbol != "" {
 		symbols = []string{symbol}
 	}
@@ -153,7 +150,7 @@ func buildFormulaData(symbols []string, symbol, period string, calcCount int) (m
 
 	result := make(map[string][]FormulaKline, len(symbols))
 	for _, s := range symbols {
-		resp, err := loadFormulaKline(s, period, calcCount)
+		resp, err := loadFormulaKlineWithContext(ctx, s, period, calcCount)
 		if err != nil {
 			return nil, fmt.Errorf("%s K线加载失败: %w", s, err)
 		}
@@ -163,7 +160,27 @@ func buildFormulaData(symbols []string, symbol, period string, calcCount int) (m
 }
 
 func loadFormulaKline(symbol, period string, calcCount int) ([]FormulaKline, error) {
+	return loadFormulaKlineWithContext(context.Background(), symbol, period, calcCount)
+}
+
+func loadFormulaKlineWithContext(ctx context.Context, symbol, period string, calcCount int) ([]FormulaKline, error) {
 	klineType := formulaPeriodToKlineType(period)
+	if useMarketService() {
+		resp, err := marketServiceKlineHistory(ctx, symbol, klineType, calcCount)
+		if err == nil {
+			if resp == nil || len(resp.List) == 0 {
+				return nil, errors.New("K线为空")
+			}
+			return protocolKlinesToFormulaRows(resp.List, calcCount), nil
+		}
+		if !allowDirectMarketFallback() {
+			return nil, err
+		}
+	}
+	if err := ensureLocalMarketRuntime(); err != nil {
+		return nil, err
+	}
+
 	var resp *protocol.KlineResp
 	var err error
 

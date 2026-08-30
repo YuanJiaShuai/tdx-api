@@ -8,14 +8,17 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HQCHARTPY2 = None
+USE_HQCHARTPY2 = os.getenv("FORMULA_WORKER_USE_HQCHARTPY2", "0").strip().lower() in ("1", "true", "yes", "on")
 ENGINE_STATUS = {
-    "engine": "fallback",
-    "hqchartpy2_available": False,
-    "message": "HQChartPy2 not installed; using fallback evaluator",
-    "error": "",
+	"engine": "fallback",
+	"hqchartpy2_available": False,
+	"message": "HQChartPy2 not installed; using fallback evaluator",
+	"error": "",
 }
 
 try:
+    if not USE_HQCHARTPY2:
+        raise RuntimeError("HQChartPy2 disabled by FORMULA_WORKER_USE_HQCHARTPY2")
     import HQChartPy2
     HQCHARTPY2 = HQChartPy2
     try:
@@ -477,24 +480,68 @@ def normalize_expr(expr):
     expr = expr.strip()
     expr = re.sub(r"\bAND\b", "&", expr, flags=re.IGNORECASE)
     expr = re.sub(r"\bOR\b", "|", expr, flags=re.IGNORECASE)
+    expr = expr.replace("<>", "!=")
+    expr = re.sub(r"(?<![<>=!])=(?!=)", "==", expr)
     return expr
+
+
+STYLE_TOKEN_RE = re.compile(
+    r"^(COLOR[0-9A-F]{6}|COLOR[A-Z]+|LINETHICK\d+|CROSSDOT|POINTDOT|CIRCLEDOT|DOTLINE|LINESTICK|STICK|VOLSTICK|COLORSTICK|NODRAW|DRAWABOVE)$",
+    re.IGNORECASE,
+)
+DRAW_FUNC_RE = re.compile(
+    r"^(DRAWICON|DRAWTEXT|DRAWNUMBER|DRAWKLINE|DRAWCOLORKLINE|DRAWBAND|DRAWLINE|DRAWTEXT_FIX|DRAWNUMBER_FIX|STICKLINE)\s*\(",
+    re.IGNORECASE,
+)
+
+
+def split_top_level_commas(expr):
+    parts = []
+    start = 0
+    depth = 0
+    for index, ch in enumerate(expr):
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(expr[start:index].strip())
+            start = index + 1
+    parts.append(expr[start:].strip())
+    return parts
+
+
+def strip_style_tokens(expr):
+    parts = split_top_level_commas(expr)
+    while len(parts) > 1 and STYLE_TOKEN_RE.match(parts[-1] or ""):
+        parts.pop()
+    return ",".join(parts)
 
 
 def eval_script(script, rows, args=None, out_count=1):
     length = len(rows)
+    close = Series([r.get("close", 0) for r in rows])
+    open_ = Series([r.get("open", 0) for r in rows])
+    high = Series([r.get("high", 0) for r in rows])
+    low = Series([r.get("low", 0) for r in rows])
+    vol = Series([r.get("vol", 0) for r in rows])
     env = {
         "DATE": Series([r.get("date", 0) for r in rows]),
         "TIME": Series([r.get("time", 0) for r in rows]),
-        "C": Series([r.get("close", 0) for r in rows]),
-        "CLOSE": Series([r.get("close", 0) for r in rows]),
-        "O": Series([r.get("open", 0) for r in rows]),
-        "OPEN": Series([r.get("open", 0) for r in rows]),
-        "H": Series([r.get("high", 0) for r in rows]),
-        "HIGH": Series([r.get("high", 0) for r in rows]),
-        "L": Series([r.get("low", 0) for r in rows]),
-        "LOW": Series([r.get("low", 0) for r in rows]),
-        "V": Series([r.get("vol", 0) for r in rows]),
-        "VOL": Series([r.get("vol", 0) for r in rows]),
+        "MINUTE": Series([0] * length),
+        "C": close,
+        "CLOSE": close,
+        "INDEXC": close,
+        "O": open_,
+        "OPEN": open_,
+        "H": high,
+        "HIGH": high,
+        "INDEXH": high,
+        "L": low,
+        "LOW": low,
+        "INDEXL": low,
+        "V": vol,
+        "VOL": vol,
         "AMOUNT": Series([r.get("amount", 0) for r in rows]),
     }
     env.update(SAFE_FUNCS)
@@ -516,6 +563,9 @@ def eval_script(script, rows, args=None, out_count=1):
             visible = True
         if name:
             name = name.strip().upper()
+        expr = strip_style_tokens(expr)
+        if DRAW_FUNC_RE.match(expr):
+            continue
         expr = normalize_expr(expr)
         value = eval(expr, {"__builtins__": {}}, env)
         if not isinstance(value, Series):

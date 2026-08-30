@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -984,6 +985,18 @@ func handleGetIncome(w http.ResponseWriter, r *http.Request) {
 }
 
 func getAllCodeModels() ([]*tdx.CodeModel, error) {
+	if marketServiceBaseURL() != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
+		defer cancel()
+		if list, err := marketServiceCodeModels(ctx); err == nil {
+			if len(list) > 0 {
+				return list, nil
+			}
+			log.Printf("market-service 代码列表为空")
+		} else if err != nil {
+			log.Printf("从 market-service 读取代码失败: %v", err)
+		}
+	}
 	if tdx.DefaultCodes != nil {
 		if list, err := tdx.DefaultCodes.GetCodes(true); err == nil && len(list) > 0 {
 			return list, nil

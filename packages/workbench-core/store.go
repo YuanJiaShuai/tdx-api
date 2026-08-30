@@ -357,13 +357,40 @@ func (s *AppStore) seedDefaults() error {
 		}
 	}
 	now := NowText()
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO formulas
-		(id,name,type,script,args_json,period,right,enabled,description,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		"default-ma-overlay", "MA均线叠加", "indicator",
-		"MA5:MA(C,5);\nMA10:MA(C,10);\nMA20:MA(C,20);", "[]", "day", 1, 1,
-		"默认图表指标：在专业行情K线上叠加5/10/20日均线。", now, now); err != nil {
-		return err
+	defaultFormulas := []Formula{
+		{
+			ID: "default-ma-overlay", Name: "MA均线叠加", Type: "indicator",
+			Script: "MA5:MA(C,5);\nMA10:MA(C,10);\nMA20:MA(C,20);", ArgsJSON: "[]", Period: "day", Right: 1, Enabled: true,
+			Description: "默认图表指标：在专业行情K线上叠加5/10/20日均线。",
+		},
+		{
+			ID: "default-macd-golden", Name: "MACD金叉", Type: "selection",
+			Script: "DIF:EMA(C,12)-EMA(C,26);\nDEA:EMA(DIF,9);\nMACD:CROSS(DIF,DEA);", ArgsJSON: "[]", Period: "day", Right: 1, Enabled: true,
+			Description: "默认选股公式：MACD DIF上穿DEA。",
+		},
+		{
+			ID: "default-kdj-golden", Name: "KDJ金叉", Type: "selection",
+			Script: "RSV:=(C-LLV(L,9))/(HHV(H,9)-LLV(L,9))*100;\nK:SMA(RSV,3,1);\nD:SMA(K,3,1);\nKDJ:CROSS(K,D);", ArgsJSON: "[]", Period: "day", Right: 1, Enabled: true,
+			Description: "默认选股公式：KDJ的K线上穿D线。",
+		},
+		{
+			ID: "default-rsi-oversold", Name: "RSI超卖", Type: "selection",
+			Script: "U:=MAX(C-REF(C,1),0);\nD:=MAX(REF(C,1)-C,0);\nRSI:100*MA(U,6)/(MA(U,6)+MA(D,6));", ArgsJSON: "[]", Period: "day", Right: 1, Enabled: true,
+			Description: "默认选股公式：RSI低位反弹观察。",
+		},
+		{
+			ID: "default-boll-breakout", Name: "BOLL突破", Type: "selection",
+			Script: "MID:MA(C,20);\nUP:MID+2*STD(C,20);\nBOLL:C>UP;", ArgsJSON: "[]", Period: "day", Right: 1, Enabled: true,
+			Description: "默认选股公式：收盘价突破BOLL上轨。",
+		},
+	}
+	for _, item := range defaultFormulas {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO formulas
+			(id,name,type,script,args_json,period,right,enabled,description,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			item.ID, item.Name, item.Type, item.Script, item.ArgsJSON, item.Period, item.Right, boolInt(item.Enabled), item.Description, now, now); err != nil {
+			return err
+		}
 	}
 
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM stock_pools`).Scan(&count); err != nil {
@@ -399,6 +426,22 @@ func defaultStrategyTemplates() []Strategy {
 			Name:        "A股V3强势启动",
 			Description: "内置模板：硬过滤成交额/排除池，使用趋势、放量、突破和主力拉升公式进行加权评分。",
 			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}}],"scores":[{"id":"ma_trend","factor":"ma_trend","weight":20,"params":{"short":5,"mid":10,"long":20}},{"id":"volume_up","factor":"volume_up","weight":15,"params":{"days":5,"ratio":1.3}},{"id":"break_high","factor":"break_high","weight":15,"params":{"days":20}},{"id":"main_force","factor":"formula","weight":30,"params":{"formula_name":"主力拉升"}}],"pass":{"min_score":60,"top_n":50}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-macd-trend",
+			Name:        "MACD趋势启动",
+			Description: "本地指标模板：MACD金叉配合均线多头和放量突破。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":80000000}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":25,"params":{"fast":12,"slow":26,"signal":9}},{"id":"ma_trend","factor":"ma_trend","weight":20,"params":{"short":5,"mid":10,"long":20}},{"id":"volume_breakout","factor":"volume_breakout","weight":20,"params":{"days":20,"ratio":1.5,"min_change":2}}],"pass":{"min_score":45,"top_n":50}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-local-rocket",
+			Name:        "本地火箭发射",
+			Description: "本地自定义模板：涨幅、放量、突破与均线共振。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}}],"scores":[{"id":"local_rocket","factor":"local_rocket","weight":35,"params":{"lookback":20,"volume_days":5,"volume_ratio":1.8,"min_change":3,"short_ma":5,"mid_ma":10}},{"id":"macd_golden","factor":"macd_golden_cross","weight":15,"params":{"fast":12,"slow":26,"signal":9}},{"id":"boll_breakout","factor":"boll_breakout","weight":10,"params":{"period":20,"width":2}}],"pass":{"min_score":40,"top_n":50}}`,
 			Enabled:     true,
 			Readonly:    true,
 		},

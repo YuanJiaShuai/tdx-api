@@ -14,6 +14,7 @@
 | --- | --- | --- | --- |
 | Web 工作台 | `apps/web/` | `tdx-workbench-web` | 前端页面、业务 API 网关、公式/选股管理入口 |
 | 行情服务 | `services/market-service/` | `tdx-workbench-market` | 通达信行情、K 线、分时、成交、代码、板块、交易日等 API |
+| Hikyuu 数据服务 | `services/hikyuu-data-service/` | `tdx-workbench-hikyuu-data` | hikyuu 全量/盘后增量下载、定时收盘作业和任务状态 API |
 | 公式引擎 | `services/formula-worker/` | `tdx-workbench-formula` | HQChartPy2 或 fallback 公式执行器 |
 | 指标选股 | `services/selection-worker/` | `tdx-workbench-selection` | Cron 调度、选股运行、运行记录写入 |
 | AI 分析 | `services/ai-service/` | `tdx-workbench-ai` | DeepSeek/OpenAI-compatible 模型调用、股票分析、自选分析 |
@@ -63,6 +64,7 @@ http://localhost:8080
 | Web 工作台 | `8080` | `8080` |
 | 行情服务 | `8081` | `18081` |
 | 公式引擎 | `8712` | `18712` |
+| Hikyuu 数据服务 | `8091` | `18091` |
 | 指标选股 | `8082` | `18082` |
 | AI 分析 | `8083` | `18083` |
 
@@ -74,6 +76,7 @@ http://localhost:8080
 docker compose up -d --build stock-web
 docker compose up -d --build market-service
 docker compose up -d --build formula-worker
+docker compose up -d --build hikyuu-data-service
 docker compose up -d --build selection-worker
 docker compose up -d --build ai-service
 ```
@@ -84,6 +87,7 @@ docker compose up -d --build ai-service
 docker compose restart stock-web
 docker compose restart market-service
 docker compose restart formula-worker
+docker compose restart hikyuu-data-service
 docker compose restart selection-worker
 docker compose restart ai-service
 ```
@@ -94,6 +98,7 @@ docker compose restart ai-service
 docker compose logs -f stock-web
 docker compose logs -f market-service
 docker compose logs -f formula-worker
+docker compose logs -f hikyuu-data-service
 docker compose logs -f selection-worker
 docker compose logs -f ai-service
 ```
@@ -106,6 +111,9 @@ docker compose logs -f ai-service
 python3 services/formula-worker/worker.py
 cd services/market-service
 go run .
+cd ../hikyuu-data-service
+python3 -m pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8091
 cd ../selection-worker
 go run .
 cd ../../services/ai-service
@@ -159,6 +167,9 @@ docker compose config --quiet
 | `GET /api/stock-info` | 行情、K 线、分时综合信息 | `/api/stock-info?code=000001` |
 | `POST /api/batch-quote` | 批量行情 | `{"codes":["000001","600519"]}` |
 | `GET /api/formula/health` | 公式 worker 状态 | `/api/formula/health` |
+| `GET /api/hikyuu/health` | Hikyuu 数据服务状态 | `http://localhost:18091/api/hikyuu/health` |
+| `POST /api/hikyuu/tasks/full-sync` | 启动 hikyuu 首次全量下载 | `http://localhost:18091/api/hikyuu/tasks/full-sync` |
+| `POST /api/hikyuu/tasks/after-close-sync` | 启动 hikyuu 盘后增量下载 | `http://localhost:18091/api/hikyuu/tasks/after-close-sync` |
 | `POST /api/formula/run` | 直接执行公式 | `{"symbol":"000001","script":"T:MA(C,5);"}` |
 | `GET /api/automations` | 自动化任务列表 | `/api/automations` |
 | `GET /api/selection-results` | 选股命中结果 | `/api/selection-results?limit=100` |

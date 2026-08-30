@@ -16,6 +16,7 @@ services:
       - PORT=8081
       - MARKET_SYNC_ON_START=true
       - MARKET_DATA_DIR=/app/data/database
+      - HIKYUU_DATA_SERVICE_URL=http://hikyuu-data-service:8091
     dns:
       - 223.5.5.5
       - 119.29.29.29
@@ -49,6 +50,39 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+
+  hikyuu-data-service:
+    build:
+      context: .
+      dockerfile: services/hikyuu-data-service/Dockerfile
+    container_name: tdx-workbench-hikyuu-data
+    ports:
+      - "18091:8091"
+    volumes:
+      - ./data/hikyuu/stocks:/root/stocks
+      - ./data/hikyuu/config:/root/.hikyuu
+      - ./data/hikyuu/logs:/app/logs
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=8091
+      - HIKYUU_STOCKS_DIR=/root/stocks
+      - HIKYUU_CONFIG_DIR=/root/.hikyuu
+      - HIKYUU_LOG_DIR=/app/logs
+      - HIKYUU_SCHEDULER_ENABLED=true
+      - HIKYUU_AFTER_CLOSE_CRON=30 16 * * 1-5
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+      - 8.8.8.8
+    networks:
+      - stock-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8091/api/hikyuu/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
 
   selection-worker:
     build:
@@ -128,6 +162,7 @@ services:
       - TDX_APP_ROLE=web
       - PORT=8080
       - MARKET_SERVICE_URL=http://market-service:8081
+      - HIKYUU_DATA_SERVICE_URL=http://hikyuu-data-service:8091
       - AI_SERVICE_URL=http://ai-service:8083
       - AI_SERVICE_TOKEN=${AI_SERVICE_TOKEN:-}
       - FORMULA_WORKER_URL=http://formula-worker:8712

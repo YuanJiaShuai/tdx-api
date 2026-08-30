@@ -122,7 +122,7 @@ func NewOpenAICompatibleClient() *OpenAICompatibleClient {
 
 func (c *OpenAICompatibleClient) Chat(ctx context.Context, req AIChatRequest, credential AICredential) (AIChatResponse, error) {
 	provider := normalizeAIProvider(req.Provider)
-	model := chooseAIModel(provider, req.Model)
+	model := chooseAIModel(provider, chooseNonEmpty(req.Model, credential.Model))
 	baseURL := chooseAIBaseURL(provider, credential.BaseURL)
 	if err := requireNonEmpty(credential.APIKey, "AI API key未配置"); err != nil {
 		return AIChatResponse{}, err
@@ -380,7 +380,7 @@ func handleAITestConnection(w http.ResponseWriter, r *http.Request) {
 	successResponse(w, map[string]interface{}{
 		"ok":         true,
 		"provider":   normalizeAIProvider(req.Provider),
-		"model":      chooseAIModel(req.Provider, req.Model),
+		"model":      chooseAIModel(req.Provider, chooseNonEmpty(req.Model, credential.Model)),
 		"credential": credential.ID,
 	})
 }
@@ -405,7 +405,7 @@ func handleAITestConnectionWithCredential(w http.ResponseWriter, r *http.Request
 		errorResponse(w, err.Error())
 		return
 	}
-	successResponse(w, map[string]interface{}{"ok": true, "provider": req.Provider, "credential": id})
+	successResponse(w, map[string]interface{}{"ok": true, "provider": req.Provider, "model": chooseAIModel(req.Provider, chooseNonEmpty(req.Model, credential.Model)), "credential": id})
 }
 
 func handleAIChat(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +514,7 @@ func runAIAnalysis(ctx context.Context, taskType string, req AIAnalyzeRequest, i
 	if provider == "" {
 		provider = credential.Provider
 	}
-	model := chooseAIModel(provider, req.Model)
+	model := chooseAIModel(provider, chooseNonEmpty(req.Model, credential.Model))
 	options := req.Options
 	options.JSONMode = true
 	if options.MaxTokens == 0 {
@@ -723,6 +723,7 @@ func envAICredentials() []AICredential {
 			Name:            provider + " 环境变量",
 			Provider:        provider,
 			BaseURL:         baseURL,
+			Model:           chooseAIModel(provider, ""),
 			APIKeyMasked:    maskAISecret(key),
 			APISecretMasked: maskAISecret(envAISecret(provider)),
 			HasAPIKey:       true,

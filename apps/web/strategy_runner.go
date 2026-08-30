@@ -65,6 +65,7 @@ type StrategyFactorResult struct {
 	Factor string  `json:"factor"`
 	Hit    bool    `json:"hit"`
 	Score  float64 `json:"score"`
+	Value  any     `json:"value,omitempty"`
 	Reason string  `json:"reason"`
 }
 
@@ -111,6 +112,9 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 50
 	}
+	if cfg.BatchSize > 200 {
+		cfg.BatchSize = 200
+	}
 	symbols, err := r.strategyUniverse(cfg)
 	if err != nil {
 		return StrategyRunResult{}, err
@@ -142,7 +146,14 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 			return result, ctx.Err()
 		default:
 		}
-		item, ok := r.evaluateStrategySymbol(strategy, &result, symbol)
+		item, ok, err := r.evaluateStrategySymbol(ctx, strategy, &result, symbol)
+		if err != nil {
+			result.Errors[symbol] = err.Error()
+			if !result.Config.ContinueOnError {
+				return result, err
+			}
+			continue
+		}
 		if !ok {
 			continue
 		}
@@ -225,19 +236,42 @@ func (r *AutomationRunner) prepareStrategyFormulas(ctx context.Context, result *
 		if _, ok := result.FormulaCache[formula.ID]; ok {
 			continue
 		}
-		resp, err := r.worker.Run(ctx, FormulaRunRequest{
-			Symbols:   symbols,
-			Script:    formula.Script,
-			Args:      json.RawMessage(formula.ArgsJSON),
-			Period:    chooseString(result.Config.Period, formula.Period),
-			Right:     chooseInt(result.Config.Right, formula.Right),
-			OutCount:  1,
-			CalcCount: result.Config.CalcCount,
-		})
-		if err != nil {
-			return err
+		allData := map[string]interface{}{}
+		for _, batch := range chunkSymbols(symbols, result.Config.BatchSize) {
+			resp, err := r.worker.Run(ctx, FormulaRunRequest{
+				Symbols:   batch,
+				Script:    formula.Script,
+				Args:      json.RawMessage(formula.ArgsJSON),
+				Period:    chooseString(result.Config.Period, formula.Period),
+				Right:     chooseInt(result.Config.Right, formula.Right),
+				OutCount:  1,
+				CalcCount: result.Config.CalcCount,
+			})
+			if err == nil {
+				mergeFormulaData(allData, resp.Data)
+				continue
+			}
+			if !result.Config.ContinueOnError {
+				return err
+			}
+			for _, symbol := range batch {
+				singleResp, singleErr := r.worker.Run(ctx, FormulaRunRequest{
+					Symbols:   []string{symbol},
+					Script:    formula.Script,
+					Args:      json.RawMessage(formula.ArgsJSON),
+					Period:    chooseString(result.Config.Period, formula.Period),
+					Right:     chooseInt(result.Config.Right, formula.Right),
+					OutCount:  1,
+					CalcCount: result.Config.CalcCount,
+				})
+				if singleErr != nil {
+					result.Errors[symbol] = fmt.Sprintf("公式%s执行失败: %v", formula.Name, singleErr)
+					continue
+				}
+				mergeFormulaData(allData, singleResp.Data)
+			}
 		}
-		hits, details := formulaResponseMaps(resp.Data)
+		hits, details := formulaResponseMaps(allData)
 		result.FormulaCache[formula.ID] = hits
 		result.FormulaDetail[formula.ID] = details
 	}
@@ -265,12 +299,11 @@ func (r *AutomationRunner) strategyFormula(rule StrategyFactorRule) (Formula, er
 	return Formula{}, fmt.Errorf("公式不存在: %s", formulaName)
 }
 
-func (r *AutomationRunner) evaluateStrategySymbol(strategy Strategy, result *StrategyRunResult, symbol string) (StrategySelectionItem, bool) {
+func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy Strategy, result *StrategyRunResult, symbol string) (StrategySelectionItem, bool, error) {
 	item := StrategySelectionItem{Symbol: symbol, Hit: true}
-	rows, err := r.strategyKline(result, symbol)
+	rows, err := r.strategyKline(ctx, result, symbol)
 	if err != nil {
-		result.Errors[symbol] = err.Error()
-		return item, false
+		return item, false, err
 	}
 	if len(rows) > 0 {
 		item.Latest = rows[len(rows)-1].Close
@@ -281,7 +314,7 @@ func (r *AutomationRunner) evaluateStrategySymbol(strategy Strategy, result *Str
 		item.Reasons = append(item.Reasons, fr.Reason)
 		if !fr.Hit {
 			item.Hit = false
-			return item, false
+			return item, false, nil
 		}
 	}
 	score := 0.0
@@ -300,18 +333,18 @@ func (r *AutomationRunner) evaluateStrategySymbol(strategy Strategy, result *Str
 	}
 	item.Hit = score >= minScore
 	if !item.Hit {
-		return item, false
+		return item, false, nil
 	}
-	return item, true
+	return item, true, nil
 }
 
-func (r *AutomationRunner) strategyKline(result *StrategyRunResult, symbol string) ([]FormulaKline, error) {
+func (r *AutomationRunner) strategyKline(ctx context.Context, result *StrategyRunResult, symbol string) ([]FormulaKline, error) {
 	if rows, ok := result.KlineCache[symbol]; ok {
 		return rows, nil
 	}
-	rows, err := loadFormulaKline(symbol, result.Config.Period, result.Config.CalcCount)
+	rows, err := loadFormulaKlineWithContext(ctx, symbol, result.Config.Period, result.Config.CalcCount)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s K线加载失败: %w", symbol, err)
 	}
 	result.KlineCache[symbol] = rows
 	return rows, nil
@@ -328,17 +361,20 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		poolID := stringParam(rule.Params, "pool_id", DecisionExcludePoolID)
 		inPool := r.strategyPoolContains(result, poolID, symbol)
 		fr.Hit = !inPool
+		fr.Value = inPool
 		fr.Reason = fmt.Sprintf("不在%s: %t", poolID, fr.Hit)
 	case "min_amount":
 		value := floatParam(rule.Params, "value", 0)
 		amount := latest(rows).Amount
 		fr.Hit = amount >= value
+		fr.Value = amount
 		fr.Reason = fmt.Sprintf("成交额 %.0f >= %.0f", amount, value)
 	case "price_range":
 		minValue := floatParam(rule.Params, "min", 0)
 		maxValue := floatParam(rule.Params, "max", math.MaxFloat64)
 		closePrice := latest(rows).Close
 		fr.Hit = closePrice >= minValue && closePrice <= maxValue
+		fr.Value = closePrice
 		fr.Reason = fmt.Sprintf("收盘价 %.2f 在 %.2f-%.2f", closePrice, minValue, maxValue)
 	case "change_range":
 		minValue := floatParam(rule.Params, "min", -math.MaxFloat64)
@@ -349,6 +385,7 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 			change = (row.Close - row.YClose) * 100 / row.YClose
 		}
 		fr.Hit = change >= minValue && change <= maxValue
+		fr.Value = change
 		fr.Reason = fmt.Sprintf("涨跌幅 %.2f%% 在 %.2f-%.2f", change, minValue, maxValue)
 	case "ma_trend":
 		short := intParam(rule.Params, "short", 5)
@@ -357,6 +394,7 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		maShort, maMid, maLong := ma(rows, short), ma(rows, mid), ma(rows, long)
 		closePrice := latest(rows).Close
 		fr.Hit = closePrice >= maShort && maShort >= maMid && maMid >= maLong
+		fr.Value = map[string]float64{"close": closePrice, "short": maShort, "mid": maMid, "long": maLong}
 		fr.Reason = fmt.Sprintf("均线多头 C %.2f / MA%d %.2f / MA%d %.2f / MA%d %.2f", closePrice, short, maShort, mid, maMid, long, maLong)
 	case "volume_up":
 		days := intParam(rule.Params, "days", 5)
@@ -364,13 +402,36 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		avg := strategyAvgVol(rows, days)
 		vol := latest(rows).Vol
 		fr.Hit = avg > 0 && vol >= avg*ratio
+		fr.Value = map[string]float64{"volume": vol, "avg_volume": avg}
 		fr.Reason = fmt.Sprintf("放量 %.0f >= %.2fx %d日均量 %.0f", vol, ratio, days, avg)
 	case "break_high":
 		days := intParam(rule.Params, "days", 20)
 		high := highestHigh(rows, days)
 		closePrice := latest(rows).Close
 		fr.Hit = high > 0 && closePrice >= high
+		fr.Value = map[string]float64{"close": closePrice, "high": high}
 		fr.Reason = fmt.Sprintf("突破%d日高点 C %.2f / H %.2f", days, closePrice, high)
+	case "macd_golden_cross":
+		fr.Hit, fr.Score, fr.Reason = evaluateMACDSignal(rows, rule, true)
+		fr.Value = fr.Score
+	case "macd_dead_cross":
+		fr.Hit, fr.Score, fr.Reason = evaluateMACDSignal(rows, rule, false)
+		fr.Value = fr.Score
+	case "kdj_golden_cross":
+		fr.Hit, fr.Score, fr.Reason = evaluateKDJGoldenCross(rows, rule)
+		fr.Value = fr.Score
+	case "rsi_oversold":
+		fr.Hit, fr.Score, fr.Reason = evaluateRSIOversold(rows, rule)
+		fr.Value = fr.Score
+	case "boll_breakout":
+		fr.Hit, fr.Score, fr.Reason = evaluateBOLLBreakout(rows, rule)
+		fr.Value = fr.Score
+	case "volume_breakout":
+		fr.Hit, fr.Score, fr.Reason = evaluateVolumeBreakout(rows, rule)
+		fr.Value = fr.Score
+	case "local_rocket":
+		fr.Hit, fr.Score, fr.Reason = evaluateLocalRocket(rows, rule)
+		fr.Value = fr.Score
 	case "formula":
 		formula, err := r.strategyFormula(rule)
 		if err != nil {
@@ -380,6 +441,7 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		}
 		hits := result.FormulaCache[formula.ID]
 		fr.Hit = hits[strategyNormalizeSymbol(symbol)]
+		fr.Value = formula.Name
 		fr.Reason = fmt.Sprintf("公式%s命中: %t", formula.Name, fr.Hit)
 	default:
 		fr.Hit = false

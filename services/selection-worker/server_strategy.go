@@ -208,6 +208,70 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			ID: "macd_golden_cross", Name: "MACD金叉", Kind: "score",
+			Description: "本地根据收盘价计算MACD，判断DIF向上穿越DEA。",
+			Params: []StrategyFactorParamDef{
+				{Name: "fast", Label: "快线周期", Type: "number", Default: 12},
+				{Name: "slow", Label: "慢线周期", Type: "number", Default: 26},
+				{Name: "signal", Label: "信号周期", Type: "number", Default: 9},
+			},
+		},
+		{
+			ID: "macd_dead_cross", Name: "MACD死叉", Kind: "score",
+			Description: "本地根据收盘价计算MACD，判断DIF向下穿越DEA。",
+			Params: []StrategyFactorParamDef{
+				{Name: "fast", Label: "快线周期", Type: "number", Default: 12},
+				{Name: "slow", Label: "慢线周期", Type: "number", Default: 26},
+				{Name: "signal", Label: "信号周期", Type: "number", Default: 9},
+			},
+		},
+		{
+			ID: "kdj_golden_cross", Name: "KDJ金叉", Kind: "score",
+			Description: "本地根据最高价、最低价和收盘价计算KDJ金叉。",
+			Params: []StrategyFactorParamDef{
+				{Name: "n", Label: "RSV周期", Type: "number", Default: 9},
+				{Name: "k", Label: "K平滑", Type: "number", Default: 3},
+				{Name: "d", Label: "D平滑", Type: "number", Default: 3},
+			},
+		},
+		{
+			ID: "rsi_oversold", Name: "RSI超卖", Kind: "score",
+			Description: "本地计算RSI，最新值低于设定阈值时命中。",
+			Params: []StrategyFactorParamDef{
+				{Name: "period", Label: "RSI周期", Type: "number", Default: 6},
+				{Name: "threshold", Label: "超卖阈值", Type: "number", Default: 30},
+			},
+		},
+		{
+			ID: "boll_breakout", Name: "BOLL突破", Kind: "score",
+			Description: "本地计算布林带，最新收盘价突破上轨时命中。",
+			Params: []StrategyFactorParamDef{
+				{Name: "period", Label: "BOLL周期", Type: "number", Default: 20},
+				{Name: "width", Label: "标准差倍数", Type: "number", Default: 2},
+			},
+		},
+		{
+			ID: "volume_breakout", Name: "放量突破", Kind: "score",
+			Description: "收盘突破前N日高点，同时成交量达到均量倍数且涨幅达标。",
+			Params: []StrategyFactorParamDef{
+				{Name: "days", Label: "回看天数", Type: "number", Default: 20},
+				{Name: "ratio", Label: "放量倍数", Type: "number", Default: 1.5},
+				{Name: "min_change", Label: "最低涨幅", Type: "number", Default: 2},
+			},
+		},
+		{
+			ID: "local_rocket", Name: "本地火箭发射", Kind: "score",
+			Description: "自定义本地规则：涨幅、放量、突破近期高点并保持均线向上。",
+			Params: []StrategyFactorParamDef{
+				{Name: "lookback", Label: "突破回看天数", Type: "number", Default: 20},
+				{Name: "volume_days", Label: "均量天数", Type: "number", Default: 5},
+				{Name: "volume_ratio", Label: "放量倍数", Type: "number", Default: 1.8},
+				{Name: "min_change", Label: "最低涨幅", Type: "number", Default: 3},
+				{Name: "short_ma", Label: "短均线", Type: "number", Default: 5},
+				{Name: "mid_ma", Label: "中均线", Type: "number", Default: 10},
+			},
+		},
+		{
 			ID:          "formula",
 			Name:        "公式因子",
 			Kind:        "score",

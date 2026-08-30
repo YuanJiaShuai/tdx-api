@@ -26,6 +26,8 @@ go run .
 - `MARKET_QUOTE_POLL_INTERVAL_SECONDS`：SSE 行情订阅后台轮询间隔，默认 `3` 秒，最大 `60` 秒
 - `MARKET_QUOTE_CACHE_TTL_SECONDS`：行情缓存视为新鲜的时长，默认 `15` 秒
 - `MARKET_QUOTE_CACHE_STALE_SECONDS`：行情允许回落到陈旧缓存的最长时长，默认 `300` 秒
+- `HIKYUU_DATA_SERVICE_URL`：hikyuu 历史数据服务地址，Compose 默认配置为
+  `http://hikyuu-data-service:8091`。未配置时历史 K 线继续使用原有数据源。
 
 `market-service` 还提供后台任务接口：
 
@@ -39,6 +41,8 @@ go run .
 - `GET /api/quote?code=600519,000001`：兼容原有的通达信行情响应
 - `GET /api/quote/standard?codes=600519.SH,000001.SZ`：返回带标准代码、市场、来源和获取时间的行情快照
 - `GET /api/stream/quotes?codes=600519.SH,000001.SZ`：SSE 行情订阅，盘中默认每 3 秒轮询并只推送变化数据
+- `GET /api/kline?code=600519&type=day`：历史 K 线，优先使用 hikyuu，失败时回退原有数据源
+- `GET /api/kline-history?code=600519&type=day&limit=120`：指定数量的历史 K 线，优先使用 hikyuu，失败时回退原有数据源
 - `GET /api/finance/standard?code=600519.SH`：标准财务快照，失败时读取本地缓存
 - `GET /api/news?symbol=600519.SH&limit=20`：查询去重后的资讯
 - `POST /api/news`：写入一条或多条已解析资讯

@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestNormalizeMinuteDate(t *testing.T) {
 	tests := []struct {
@@ -29,5 +33,30 @@ func TestNormalizeMinuteDate(t *testing.T) {
 func TestNormalizeMinuteDateRejectsInvalidInput(t *testing.T) {
 	if _, err := normalizeMinuteDate("2026/06/10"); err == nil {
 		t.Fatal("normalizeMinuteDate() expected error for invalid date")
+	}
+}
+
+func TestGetAllCodeModelsPrefersMarketService(t *testing.T) {
+	t.Setenv("MARKET_SERVICE_URL", "")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/codes" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"codes":[{"code":"000001","name":"平安银行","exchange":"sz"},{"code":"600000","name":"浦发银行","exchange":"sh"}]}}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("MARKET_SERVICE_URL", server.URL)
+	models, err := getAllCodeModels()
+	if err != nil {
+		t.Fatalf("getAllCodeModels() error = %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("getAllCodeModels() len = %d, want 2", len(models))
+	}
+	if models[0].Exchange == "" || models[1].Exchange == "" {
+		t.Fatal("expected exchange to be populated")
 	}
 }

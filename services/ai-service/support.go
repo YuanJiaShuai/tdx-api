@@ -156,11 +156,12 @@ func (s *AppStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS ai_credentials (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
-			provider TEXT NOT NULL,
-			base_url TEXT NOT NULL DEFAULT '',
-			api_key_encrypted TEXT NOT NULL DEFAULT '',
-			api_secret_encrypted TEXT NOT NULL DEFAULT '',
-			extra_json TEXT NOT NULL DEFAULT '{}',
+				provider TEXT NOT NULL,
+				base_url TEXT NOT NULL DEFAULT '',
+				model TEXT NOT NULL DEFAULT '',
+				api_key_encrypted TEXT NOT NULL DEFAULT '',
+				api_secret_encrypted TEXT NOT NULL DEFAULT '',
+				extra_json TEXT NOT NULL DEFAULT '{}',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
@@ -185,7 +186,36 @@ func (s *AppStore) migrate() error {
 			return err
 		}
 	}
+	if err := s.ensureColumn("ai_credentials", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *AppStore) ensureColumn(table, column, definition string) error {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
+	return err
 }
 
 func requireNonEmpty(value, message string) error {

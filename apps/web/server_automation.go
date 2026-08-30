@@ -1137,6 +1137,38 @@ func handleHQChartHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleHQChartMinuteCompat(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+
+	code := normalizeStockCode(firstNonEmpty(r.FormValue("symbol"), r.FormValue("code")))
+	if code == "" {
+		errorResponse(w, "symbol不能为空")
+		return
+	}
+
+	count, _ := strconv.Atoi(firstNonEmpty(r.FormValue("count"), r.FormValue("limit")))
+	if count <= 0 {
+		count = 800
+	}
+	period := firstNonEmpty(r.FormValue("period"), "minute1")
+	rows, err := loadFormulaKline(code, period, count)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+
+	chartRows := formulaRowsToHQChartRows(rows)
+	successResponse(w, map[string]interface{}{
+		"symbol": toHQChartSymbol(code),
+		"name":   toHQChartSymbol(code),
+		"data":   chartRows,
+		"ver":    2,
+	})
+}
+
 func loadHQChartIndexKline(symbol, period string, calcCount int) ([]FormulaKline, error) {
 	code := normalizeStockCode(symbol)
 	if code == "" {
@@ -1258,6 +1290,15 @@ func toHQChartSymbol(code string) string {
 		market = "sh"
 	}
 	return c + "." + market
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func pathParts(path, prefix string) []string {

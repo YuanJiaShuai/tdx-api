@@ -135,6 +135,13 @@ func handleGetKlineHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, int(limit)); hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
+		successResponse(w, hikyuuResp)
+		return
+	} else if hikyuuErr != nil && hikyuuClient != nil && hikyuuClient.Enabled() {
+		log.Printf("hikyuu 历史K线查询失败(%s,%s)，回退原有数据源: %v", code, klineType, hikyuuErr)
+	}
+
 	var resp *protocol.KlineResp
 	var err error
 

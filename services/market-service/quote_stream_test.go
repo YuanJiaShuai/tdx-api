@@ -57,7 +57,7 @@ func TestCachedQuoteProviderFallsBackToCache(t *testing.T) {
 	}
 	provider.mu.Unlock()
 
-	snapshots, err := provider.FetchQuotes(t.Context(), []Symbol{symbol})
+	snapshots, err := provider.FetchQuotes(context.Background(), []Symbol{symbol})
 	if err != nil {
 		t.Fatal(err)
 	}

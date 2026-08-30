@@ -21,6 +21,7 @@ var (
 	client          *tdx.Client
 	manager         *tdx.Manage
 	marketStore     *MarketStore
+	hikyuuClient    *HikyuuDataServiceClient
 	taskManager     = NewTaskManager()
 	startupWarnings []string
 	marketRuntimeMu sync.Mutex
@@ -45,6 +46,10 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		return fmt.Errorf("连接服务器失败: %w", err)
 	}
 	log.Println("成功连接到通达信服务器")
+	hikyuuClient = NewHikyuuDataServiceClient()
+	if hikyuuClient.Enabled() {
+		log.Printf("已配置 hikyuu 数据服务: %s", hikyuuClient.baseURL)
+	}
 	initMarketProviders()
 
 	// 初始化代码缓存
@@ -177,6 +182,13 @@ func handleGetKline(w http.ResponseWriter, r *http.Request) {
 
 	var resp *protocol.KlineResp
 	var err error
+
+	if hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, 0); hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
+		successResponse(w, hikyuuResp)
+		return
+	} else if hikyuuErr != nil && hikyuuClient != nil && hikyuuClient.Enabled() {
+		log.Printf("hikyuu K线查询失败(%s,%s)，回退原有数据源: %v", code, klineType, hikyuuErr)
+	}
 
 	switch klineType {
 	case "minute1":

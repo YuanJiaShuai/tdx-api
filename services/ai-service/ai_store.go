@@ -13,6 +13,7 @@ type AICredential struct {
 	Name            string `json:"name"`
 	Provider        string `json:"provider"`
 	BaseURL         string `json:"base_url"`
+	Model           string `json:"model"`
 	APIKey          string `json:"api_key,omitempty"`
 	APISecret       string `json:"api_secret,omitempty"`
 	APIKeyMasked    string `json:"api_key_masked"`
@@ -44,6 +45,7 @@ func normalizeAICredential(c AICredential) AICredential {
 	c.Name = strings.TrimSpace(c.Name)
 	c.Provider = normalizeAIProvider(c.Provider)
 	c.BaseURL = strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+	c.Model = strings.TrimSpace(c.Model)
 	c.APIKey = strings.TrimSpace(c.APIKey)
 	c.APISecret = strings.TrimSpace(c.APISecret)
 	c.ExtraJSON = strings.TrimSpace(c.ExtraJSON)
@@ -57,7 +59,7 @@ func normalizeAICredential(c AICredential) AICredential {
 }
 
 func (s *AppStore) ListAICredentials() ([]AICredential, error) {
-	rows, err := s.db.Query(`SELECT id,name,provider,base_url,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at FROM ai_credentials ORDER BY provider,name`)
+	rows, err := s.db.Query(`SELECT id,name,provider,base_url,model,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at FROM ai_credentials ORDER BY provider,name`)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +70,7 @@ func (s *AppStore) ListAICredentials() ([]AICredential, error) {
 		var c AICredential
 		var apiKeyEncrypted, apiSecretEncrypted string
 		var enabled int
-		if err := rows.Scan(&c.ID, &c.Name, &c.Provider, &c.BaseURL, &apiKeyEncrypted, &apiSecretEncrypted, &c.ExtraJSON, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &apiKeyEncrypted, &apiSecretEncrypted, &c.ExtraJSON, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		apiKey, _ := decryptAISecret(apiKeyEncrypted)
@@ -88,8 +90,8 @@ func (s *AppStore) GetAICredential(id string) (AICredential, error) {
 	var c AICredential
 	var apiKeyEncrypted, apiSecretEncrypted string
 	var enabled int
-	err := s.db.QueryRow(`SELECT id,name,provider,base_url,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at FROM ai_credentials WHERE id=?`, id).
-		Scan(&c.ID, &c.Name, &c.Provider, &c.BaseURL, &apiKeyEncrypted, &apiSecretEncrypted, &c.ExtraJSON, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id,name,provider,base_url,model,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at FROM ai_credentials WHERE id=?`, id).
+		Scan(&c.ID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &apiKeyEncrypted, &apiSecretEncrypted, &c.ExtraJSON, &enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return c, err
 	}
@@ -120,12 +122,19 @@ func (s *AppStore) UpsertAICredential(c AICredential) (AICredential, error) {
 	if c.Provider == "" {
 		return c, errors.New("provider不能为空")
 	}
-	if c.APIKey == "" && c.APISecret == "" && c.ID != "" {
+	if c.ID != "" && (c.APIKey == "" || c.APISecret == "") {
 		old, err := s.GetAICredential(c.ID)
 		if err == nil {
-			c.APIKey = old.APIKey
-			c.APISecret = old.APISecret
+			if c.APIKey == "" {
+				c.APIKey = old.APIKey
+			}
+			if c.APISecret == "" {
+				c.APISecret = old.APISecret
+			}
 		}
+	}
+	if c.Model == "" {
+		c.Model = chooseAIModel(c.Provider, "")
 	}
 	if c.APIKey == "" {
 		return c, errors.New("api_key不能为空")
@@ -158,13 +167,13 @@ func (s *AppStore) UpsertAICredential(c AICredential) (AICredential, error) {
 		return c, err
 	}
 	_, err = s.db.Exec(`INSERT INTO ai_credentials
-		(id,name,provider,base_url,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+		(id,name,provider,base_url,model,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
-			name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,
+			name=excluded.name,provider=excluded.provider,base_url=excluded.base_url,model=excluded.model,
 			api_key_encrypted=excluded.api_key_encrypted,api_secret_encrypted=excluded.api_secret_encrypted,
 			extra_json=excluded.extra_json,enabled=excluded.enabled,updated_at=excluded.updated_at`,
-		c.ID, c.Name, c.Provider, c.BaseURL, apiKeyEncrypted, apiSecretEncrypted, c.ExtraJSON, boolInt(c.Enabled), c.CreatedAt, c.UpdatedAt)
+		c.ID, c.Name, c.Provider, c.BaseURL, c.Model, apiKeyEncrypted, apiSecretEncrypted, c.ExtraJSON, boolInt(c.Enabled), c.CreatedAt, c.UpdatedAt)
 	if err != nil {
 		return c, err
 	}
@@ -187,9 +196,9 @@ func (s *AppStore) FindEnabledAICredential(provider string) (AICredential, error
 	var c AICredential
 	var apiKeyEncrypted, apiSecretEncrypted string
 	var enabled int
-	err := s.db.QueryRow(`SELECT id,name,provider,base_url,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at
+	err := s.db.QueryRow(`SELECT id,name,provider,base_url,model,api_key_encrypted,api_secret_encrypted,extra_json,enabled,created_at,updated_at
 		FROM ai_credentials WHERE provider=? AND enabled=1 ORDER BY updated_at DESC LIMIT 1`, provider).
-		Scan(&c.ID, &c.Name, &c.Provider, &c.BaseURL, &apiKeyEncrypted, &apiSecretEncrypted, &c.ExtraJSON, &enabled, &c.CreatedAt, &c.UpdatedAt)
+		Scan(&c.ID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &apiKeyEncrypted, &apiSecretEncrypted, &c.ExtraJSON, &enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return c, err
 	}
