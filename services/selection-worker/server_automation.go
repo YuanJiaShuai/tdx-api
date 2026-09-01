@@ -507,6 +507,15 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			PayloadJSON: `{"scope":"all","tables":["day"],"limit":4,"max_codes":200,"block_files":["gn","fg","zs","hy","block"],"with_index":true,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
+	case "market_info_sync":
+		return AutomationTask{
+			Name:        "市场信息同步",
+			Type:        "system_sync",
+			Cron:        "0 0 18 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+		}, nil
 	default:
 		return AutomationTask{}, fmt.Errorf("未知任务模板: %s", name)
 	}

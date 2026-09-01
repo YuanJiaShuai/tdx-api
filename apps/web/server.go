@@ -449,7 +449,7 @@ func handleSearchCode(w http.ResponseWriter, r *http.Request) {
 
 	for _, model := range codeModels {
 		fullCode := model.FullCode()
-		if !protocol.IsStock(fullCode) {
+		if !protocol.IsStock(fullCode) && !protocol.IsETF(fullCode) {
 			continue
 		}
 		if _, ok := seen[model.Code]; ok {
@@ -459,10 +459,15 @@ func handleSearchCode(w http.ResponseWriter, r *http.Request) {
 		codeUpper := strings.ToUpper(model.Code)
 		nameUpper := strings.ToUpper(model.Name)
 		if strings.Contains(codeUpper, keywordUpper) || strings.Contains(nameUpper, keywordUpper) {
+			securityType := "股票"
+			if protocol.IsETF(fullCode) {
+				securityType = "ETF"
+			}
 			results = append(results, map[string]string{
 				"code":     model.Code,
 				"name":     model.Name,
 				"exchange": strings.ToLower(model.Exchange),
+				"type":     securityType,
 			})
 			seen[model.Code] = struct{}{}
 		}
@@ -815,6 +820,13 @@ func hikyuuProxyOnly(w http.ResponseWriter, r *http.Request) {
 	errorResponse(w, "该接口需要配置HIKYUU_DATA_SERVICE_URL")
 }
 
+func staticDir() string {
+	if _, err := os.Stat("./static-react/index.html"); err == nil {
+		return "./static-react"
+	}
+	return "./static"
+}
+
 func registerMarketRoutes() {
 	http.HandleFunc("/api/quote", handleGetQuote)
 	http.HandleFunc("/api/kline", handleGetKline)
@@ -879,7 +891,7 @@ func registerWebRoutes() {
 	}
 
 	// 静态文件服务
-	http.Handle("/", http.FileServer(http.Dir("./static")))
+	http.Handle("/", http.FileServer(http.Dir(staticDir())))
 
 	// API路由
 	http.HandleFunc("/api/quote", marketAPIHandler(handleGetQuote))
@@ -917,6 +929,11 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/finance/standard", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/news", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/news/sync", marketAPIHandler(marketProxyOnly))
+	http.HandleFunc("/api/long-tiger", marketAPIHandler(handleLongTiger))
+	http.HandleFunc("/api/market/research", marketAPIHandler(handleMarketResearch))
+	http.HandleFunc("/api/market/notice", marketAPIHandler(handleMarketNotice))
+	http.HandleFunc("/api/market/hot-money", marketAPIHandler(handleMarketHotMoney))
+	http.HandleFunc("/api/market/sync", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/analysis/context", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/company/categories", marketAPIHandler(handleGetCompanyCategories))
 	http.HandleFunc("/api/company/content", marketAPIHandler(handleGetCompanyContent))

@@ -28,6 +28,8 @@ coverage.out
 *.dylib
 *.log
 /apps/web/web
+/apps/web/frontend/node_modules/
+/apps/web/frontend/*.tsbuildinfo
 /services/ai-service/ai-service
 /services/market-service/market-service
 /services/selection-worker/selection-worker

@@ -60,6 +60,7 @@ const (
 	DecisionWatchPoolID   = "watchlist"
 	DecisionExcludePoolID = "exclude"
 	FixedCloseSyncTaskID  = "fixed-close-sync"
+	MarketInfoSyncTaskID  = "market-info-sync"
 )
 
 type AutomationTask struct {
@@ -161,6 +162,7 @@ type TradingTrade struct {
 	ID            string  `json:"id"`
 	StockName     string  `json:"stockName"`
 	StockCode     string  `json:"stockCode"`
+	Direction     string  `json:"direction"`
 	Status        string  `json:"status"`
 	EntryDate     string  `json:"entryDate"`
 	EntryPrice    float64 `json:"entryPrice"`
@@ -416,6 +418,9 @@ func (s *AppStore) seedDefaults() error {
 	if err := s.ensureFixedAutomationTasks(); err != nil {
 		return err
 	}
+	if err := s.ensureMarketInfoAutomationTask(); err != nil {
+		return err
+	}
 	return s.ensureTradingSystemState()
 }
 
@@ -509,6 +514,30 @@ func (s *AppStore) ensureFixedAutomationTasks() error {
 	return err
 }
 
+func marketInfoAutomationTask() AutomationTask {
+	return AutomationTask{
+		ID:          MarketInfoSyncTaskID,
+		Name:        "市场信息同步",
+		Type:        "system_sync",
+		Cron:        "0 0 18 * * 1-5",
+		Enabled:     true,
+		PayloadJSON: `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`,
+		WebhookIDs:  "[]",
+		System:      true,
+	}
+}
+
+func (s *AppStore) ensureMarketInfoAutomationTask() error {
+	task := marketInfoAutomationTask()
+	now := NowText()
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
+		(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
+		"", "", "", "", now, now)
+	return err
+}
+
 func DefaultTradingSystemState() TradingSystemState {
 	return TradingSystemState{
 		Account: TradingAccount{
@@ -536,6 +565,7 @@ func DefaultTradingSystemState() TradingSystemState {
 				ID:            "serveyou-2026-08-26",
 				StockName:     "税友股份",
 				StockCode:     "603171",
+				Direction:     "buy",
 				Status:        "active",
 				EntryDate:     "2026-08-26",
 				EntryPrice:    40.80,
@@ -1003,6 +1033,10 @@ func normalizeTradingSystemState(state TradingSystemState) TradingSystemState {
 		}
 		trade.StockName = strings.TrimSpace(trade.StockName)
 		trade.StockCode = strings.TrimSpace(trade.StockCode)
+		trade.Direction = strings.ToLower(strings.TrimSpace(trade.Direction))
+		if trade.Direction != "sell" {
+			trade.Direction = "buy"
+		}
 		trade.Status = strings.TrimSpace(trade.Status)
 		if trade.Status == "" {
 			trade.Status = "active"
@@ -1079,6 +1113,9 @@ func (s *AppStore) GetTradingSystemState() (TradingSystemState, error) {
 
 func (s *AppStore) UpsertTradingSystemState(state TradingSystemState) (TradingSystemState, error) {
 	state = normalizeTradingSystemState(state)
+	if err := validateTradingDirections(state.Trades); err != nil {
+		return state, err
+	}
 	now := NowText()
 	old, err := s.GetTradingSystemState()
 	if err == nil {
@@ -1098,6 +1135,30 @@ func (s *AppStore) UpsertTradingSystemState(state TradingSystemState) (TradingSy
 			state_json=excluded.state_json,updated_at=excluded.updated_at`,
 		TradingSystemStateID, string(raw), state.CreatedAt, state.UpdatedAt)
 	return state, err
+}
+
+func validateTradingDirections(trades []TradingTrade) error {
+	holdings := make(map[string]float64)
+	for _, trade := range trades {
+		if trade.Direction == "sell" || trade.Status != "active" {
+			continue
+		}
+		holdings[trade.StockCode] += trade.Shares
+	}
+	for _, trade := range trades {
+		if trade.Direction != "sell" {
+			continue
+		}
+		if trade.Shares < 0 {
+			return fmt.Errorf("%s 卖出数量不能为负数", trade.StockName)
+		}
+		available := holdings[trade.StockCode]
+		if trade.Shares > available+0.000001 {
+			return fmt.Errorf("%s 卖出数量 %.0f 股超过当前可用仓位 %.0f 股", trade.StockName, trade.Shares, available)
+		}
+		holdings[trade.StockCode] = available - trade.Shares
+	}
+	return nil
 }
 
 func (s *AppStore) SetDecisionStatus(symbol, status string) error {

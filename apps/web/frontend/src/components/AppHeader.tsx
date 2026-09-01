@@ -1,4 +1,4 @@
-import { Alert, Badge, Card, Space, Spin, Typography } from 'antd';
+import { Alert, Badge, Space, Spin, Typography } from 'antd';
 import { ApiOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import type { ServiceStatusResult } from '../types';
 import { localTime } from '../lib/format';
@@ -20,14 +20,14 @@ export function AppHeader({ status, loading, error }: AppHeaderProps) {
       <div className="brand-block">
         <div className="brand-mark">TDX</div>
         <div>
-          <Text className="eyebrow">LOCAL STOCK DATA WORKBENCH</Text>
+          <Text className="eyebrow">TDX / MARKET OPERATIONS</Text>
           <Title level={1}>股票数据终端</Title>
-          <Text className="subtitle">行情查询、专业图表、公式选股与自动化任务中心</Text>
+          <Text className="subtitle">行情 · 研究 · 交易计划</Text>
         </div>
       </div>
 
       <div className="status-grid">
-        <Card className="status-card service-card" size="small">
+        <section className="status-card service-card">
           <div className="status-card-head">
             <Text className="status-label">
               <ApiOutlined /> 服务总览
@@ -59,15 +59,15 @@ export function AppHeader({ status, loading, error }: AppHeaderProps) {
               {!status?.services?.length && !loading ? <Text type="secondary">暂无服务数据</Text> : null}
             </Space>
           )}
-        </Card>
+        </section>
 
-        <Card className="status-card time-card" size="small">
+        <section className="status-card time-card">
           <Text className="status-label">
             <ClockCircleOutlined /> 更新时间
           </Text>
           <strong>{localTime(status?.checked_at)}</strong>
           <span>每 30 秒自动检查</span>
-        </Card>
+        </section>
       </div>
     </header>
   );

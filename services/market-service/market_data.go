@@ -116,6 +116,16 @@ func openMarketStore() (*MarketStore, error) {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_news_published_at ON news_items(published_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_news_source_external ON news_items(source, external_id)`,
+		`CREATE TABLE IF NOT EXISTS long_tiger_cache (
+			trade_date TEXT PRIMARY KEY, data_json TEXT NOT NULL, fetched_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS market_snapshots (
+			kind TEXT NOT NULL, data_key TEXT NOT NULL, trade_date TEXT NOT NULL,
+			data_json TEXT NOT NULL, fetched_at TEXT NOT NULL,
+			PRIMARY KEY(kind, data_key, trade_date)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_market_snapshots_latest
+			ON market_snapshots(kind, data_key, fetched_at DESC)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			_ = db.Close()
@@ -123,6 +133,48 @@ func openMarketStore() (*MarketStore, error) {
 		}
 	}
 	return store, nil
+}
+
+type marketSnapshotRow struct {
+	Data      []byte
+	TradeDate string
+	FetchedAt string
+}
+
+func (s *MarketStore) getMarketSnapshot(kind, dataKey, tradeDate string) (marketSnapshotRow, error) {
+	var row marketSnapshotRow
+	err := s.db.QueryRow(
+		`SELECT data_json, trade_date, fetched_at
+		 FROM market_snapshots
+		 WHERE kind=? AND data_key=? AND trade_date=?
+		 LIMIT 1`,
+		kind, dataKey, tradeDate,
+	).Scan(&row.Data, &row.TradeDate, &row.FetchedAt)
+	return row, err
+}
+
+func (s *MarketStore) getLatestMarketSnapshot(kind, dataKey string) (marketSnapshotRow, error) {
+	var row marketSnapshotRow
+	err := s.db.QueryRow(
+		`SELECT data_json, trade_date, fetched_at
+		 FROM market_snapshots
+		 WHERE kind=? AND data_key=?
+		 ORDER BY trade_date DESC, fetched_at DESC
+		 LIMIT 1`,
+		kind, dataKey,
+	).Scan(&row.Data, &row.TradeDate, &row.FetchedAt)
+	return row, err
+}
+
+func (s *MarketStore) saveMarketSnapshot(kind, dataKey, tradeDate string, data []byte, fetchedAt string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO market_snapshots(kind, data_key, trade_date, data_json, fetched_at)
+		 VALUES(?,?,?,?,?)
+		 ON CONFLICT(kind, data_key, trade_date) DO UPDATE SET
+		 data_json=excluded.data_json, fetched_at=excluded.fetched_at`,
+		kind, dataKey, tradeDate, data, fetchedAt,
+	)
+	return err
 }
 
 func closeMarketStore() {

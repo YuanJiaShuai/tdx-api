@@ -2052,6 +2052,123 @@ textarea::placeholder {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.trading-symbol-field {
+    position: relative;
+    min-width: 0;
+}
+
+.trading-symbol-field > label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.trading-symbol-field > input {
+    width: 100%;
+}
+
+.trading-symbol-suggestions {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: auto;
+    left: 0;
+    z-index: 10020;
+    display: grid;
+    width: min(420px, calc(100vw - 56px));
+    max-height: min(292px, 42vh);
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+    overscroll-behavior: contain;
+}
+
+.trading-symbol-suggestions[hidden] {
+    display: none;
+}
+
+.trading-symbol-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line-soft);
+    background: #ffffff;
+    color: var(--text-color);
+    cursor: pointer;
+    text-align: left;
+}
+
+.trading-symbol-option:last-child {
+    border-bottom: 0;
+}
+
+.trading-symbol-option:hover,
+.trading-symbol-option.active {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+.trading-symbol-option strong {
+    overflow: hidden;
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 850;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.trading-symbol-option span,
+.trading-symbol-empty {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 750;
+    line-height: 1.4;
+}
+
+.trading-symbol-option span {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.trading-symbol-empty {
+    padding: 10px;
+    background: #ffffff;
+}
+
+.trading-assist-status {
+    min-height: 18px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 750;
+    line-height: 1.5;
+}
+
+.trading-assist-status.loading {
+    color: var(--accent-strong);
+}
+
+.trading-assist-status.success {
+    color: var(--success-color);
+}
+
+.trading-assist-status.warning {
+    color: var(--warning-color);
+}
+
+.trading-assist-status.error {
+    color: var(--danger-color);
+}
+
 .trading-form-grid label,
 .trading-modal-body label {
     display: grid;

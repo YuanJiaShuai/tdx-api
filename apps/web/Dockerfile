@@ -31,6 +31,7 @@ RUN addgroup -g 1000 appuser && \
 WORKDIR /app
 COPY --from=builder /app/stock-web ./stock-web
 COPY apps/web/static ./static
+COPY apps/web/static-react ./static-react
 RUN chown -R appuser:appuser /app
 
 USER appuser

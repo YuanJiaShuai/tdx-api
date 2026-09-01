@@ -15,9 +15,13 @@ export interface ServiceStatusResult {
 export interface QuoteK {
   Last?: number;
   Close?: number;
+  Open?: number;
+  High?: number;
+  Low?: number;
 }
 
 export interface PriceLevel {
+  Price?: number;
   Number?: number;
 }
 
@@ -30,6 +34,77 @@ export interface Quote {
   Rate?: number;
   BuyLevel?: PriceLevel[];
   SellLevel?: PriceLevel[];
+}
+
+export interface LongTigerRank {
+  ACCUM_AMOUNT?: number;
+  BILLBOARD_BUY_AMT?: number;
+  BILLBOARD_DEAL_AMT?: number;
+  BILLBOARD_NET_AMT?: number;
+  BILLBOARD_SELL_AMT?: number;
+  CHANGE_RATE?: number;
+  CLOSE_PRICE?: number;
+  DEAL_AMOUNT_RATIO?: number;
+  DEAL_NET_RATIO?: number;
+  D1_CLOSE_ADJCHRATE?: number;
+  D2_CLOSE_ADJCHRATE?: number;
+  D5_CLOSE_ADJCHRATE?: number;
+  D10_CLOSE_ADJCHRATE?: number;
+  EXPLAIN?: string;
+  EXPLANATION?: string;
+  FREE_MARKET_CAP?: number;
+  SECUCODE?: string;
+  SECURITY_CODE?: string;
+  SECURITY_NAME_ABBR?: string;
+  SECURITY_TYPE_CODE?: string;
+  TRADE_DATE?: string;
+  TURNOVERRATE?: number;
+}
+
+export interface LongTigerResponse {
+  requested_date: string;
+  trade_date: string;
+  items: LongTigerRank[];
+  source: string;
+  cached_at?: string;
+}
+
+export interface MarketResearchReport {
+  title?: string;
+  stockName?: string;
+  stockCode?: string;
+  orgSName?: string;
+  publishDate?: string;
+  infoCode?: string;
+  indvInduName?: string;
+  emRatingName?: string;
+  ratingChange?: number;
+  sRatingName?: string;
+  researcher?: string;
+  market?: string;
+}
+
+export interface MarketNotice {
+  art_code?: string;
+  stock_code?: string;
+  stock_name?: string;
+  title?: string;
+  column_name?: string;
+  notice_date?: string;
+  display_time?: string;
+}
+
+export interface HotMoneyTrade {
+  TRADE_DATE?: string;
+  EXPLANATION?: string;
+  OPERATEDEPT_NAME?: string;
+  BUY_AMT_REAL?: number | null;
+  BUY_RATIO?: number | null;
+  SELL_AMT_REAL?: number | null;
+  SELL_RATIO?: number | null;
+  SECURITY_CODE?: string;
+  SECURITY_NAME_ABBR?: string;
+  SECUCODE?: string;
 }
 
 export interface WatchlistRow {
@@ -209,6 +284,7 @@ export interface TradingTrade {
   id: string;
   stockName: string;
   stockCode: string;
+  direction?: 'buy' | 'sell';
   status: string;
   entryDate: string;
   entryPrice: number;
@@ -277,6 +353,7 @@ export interface AICredential {
 export interface TDXHQChartAPI {
   isAvailable: () => boolean;
   renderKLine: (container: HTMLElement, options: Record<string, unknown>) => boolean;
+  renderMinute?: (container: HTMLElement, options: Record<string, unknown>) => boolean;
   resize?: (container?: HTMLElement | null) => void;
   destroy?: (container?: HTMLElement | null) => void;
   getChart?: (container: HTMLElement) => unknown;

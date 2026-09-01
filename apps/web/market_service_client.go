@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,6 +82,48 @@ func marketServiceGet(ctx context.Context, path string, query url.Values, out in
 		return fmt.Errorf("market-service %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
+	var envelope marketServiceEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return err
+	}
+	if envelope.Code != 0 {
+		if envelope.Message == "" {
+			envelope.Message = "market-service 返回失败"
+		}
+		return errors.New(envelope.Message)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(envelope.Data, out)
+}
+
+func marketServicePost(ctx context.Context, path string, payload interface{}, out interface{}) error {
+	baseURL := marketServiceBaseURL()
+	if baseURL == "" {
+		return errors.New("MARKET_SERVICE_URL 未配置")
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 20 * time.Minute}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("market-service %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
 	var envelope marketServiceEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return err

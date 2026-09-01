@@ -470,7 +470,7 @@ func handleSearchCode(w http.ResponseWriter, r *http.Request) {
 
 	for _, model := range codeModels {
 		fullCode := model.FullCode()
-		if !protocol.IsStock(fullCode) {
+		if !protocol.IsStock(fullCode) && !protocol.IsETF(fullCode) {
 			continue
 		}
 		if _, ok := seen[model.Code]; ok {
@@ -480,10 +480,15 @@ func handleSearchCode(w http.ResponseWriter, r *http.Request) {
 		codeUpper := strings.ToUpper(model.Code)
 		nameUpper := strings.ToUpper(model.Name)
 		if strings.Contains(codeUpper, keywordUpper) || strings.Contains(nameUpper, keywordUpper) {
+			securityType := "股票"
+			if protocol.IsETF(fullCode) {
+				securityType = "ETF"
+			}
 			results = append(results, map[string]string{
 				"code":     model.Code,
 				"name":     model.Name,
 				"exchange": strings.ToLower(model.Exchange),
+				"type":     securityType,
 			})
 			seen[model.Code] = struct{}{}
 		}
@@ -848,6 +853,11 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/finance/standard", handleStandardFinance)
 	http.HandleFunc("/api/news", handleNews)
 	http.HandleFunc("/api/news/sync", handleNewsSync)
+	http.HandleFunc("/api/long-tiger", handleLongTiger)
+	http.HandleFunc("/api/market/research", handleMarketResearch)
+	http.HandleFunc("/api/market/notice", handleMarketNotice)
+	http.HandleFunc("/api/market/hot-money", handleMarketHotMoney)
+	http.HandleFunc("/api/market/sync", handleMarketInfoSync)
 	http.HandleFunc("/api/analysis/context", handleAnalysisContext)
 	http.HandleFunc("/api/company/categories", handleGetCompanyCategories)
 	http.HandleFunc("/api/company/content", handleGetCompanyContent)

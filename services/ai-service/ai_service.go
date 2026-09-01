@@ -575,6 +575,20 @@ func runAIAnalysis(ctx context.Context, taskType string, req AIAnalyzeRequest, i
 }
 
 func stockAnalysisMessages(symbol string, input map[string]interface{}) []AIMessage {
+	if task, _ := input["task"].(string); task == "trading_levels" {
+		return []AIMessage{
+			{Role: "system", Content: aiAnalysisSystemPrompt() + `
+
+当前任务是 trading_levels。你必须在JSON中额外返回：
+invalid_price: 技术无效点，必须是明确的数值；
+first_observation_level: 第一观察/压力位，必须是明确的价格或价格区间，例如"42.60-43.30"；
+strong_pressure_level: 强压力/止盈区，必须是明确的价格或价格区间，例如"45.00-46.00"；
+level_basis: 用一句话说明区间依据；
+invalid_point_basis: 用一句话说明技术无效点依据。
+只填写基于输入行情数据推导出的价格，不要返回百分比、模糊形容词或确定性买卖结论。`},
+			{Role: "user", Content: fmt.Sprintf("请为标的 %s 生成交易计划中的两个价格区间。输入数据如下：\n%s\n\n只输出JSON。", symbol, mustJSON(input))},
+		}
+	}
 	return []AIMessage{
 		{Role: "system", Content: aiAnalysisSystemPrompt()},
 		{Role: "user", Content: fmt.Sprintf("请分析A股标的 %s。输入数据如下：\n%s\n\n只输出JSON。", symbol, mustJSON(input))},
@@ -609,7 +623,7 @@ func fetchAnalysisContext(ctx context.Context, symbols []string) (map[string]int
 	}
 	query := url.Values{}
 	query.Set("codes", strings.Join(symbols, ","))
-	query.Set("kline_limit", "60")
+	query.Set("kline_limit", "120")
 	query.Set("news_limit", "10")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/analysis/context?"+query.Encode(), nil)
 	if err != nil {

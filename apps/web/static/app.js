@@ -125,6 +125,11 @@ let tradingNextRefreshAt = 0;
 let tradingRefreshing = false;
 let tradingLastRefreshAt = '';
 let tradingRefreshMessage = '交易时段每 3 分钟刷新';
+let tradingAssistRequestID = 0;
+const tradingSymbolSearchState = {
+    name: { timer: null, requestID: 0, results: [], activeIndex: -1 },
+    code: { timer: null, requestID: 0, results: [], activeIndex: -1 }
+};
 
 // 工具函数 - 显示加载
 function showLoading() {
@@ -4580,6 +4585,7 @@ function bindTradingSystem() {
     if (search) search.addEventListener('input', renderTradingCards);
     const importFile = document.getElementById('tradingImportFile');
     if (importFile) importFile.addEventListener('change', importTradingData);
+    bindTradingSymbolSearch();
     const form = document.getElementById('tradingForm');
     if (form) {
         form.addEventListener('submit', event => {
@@ -4587,6 +4593,339 @@ function bindTradingSystem() {
             saveTradingTradeFromForm();
         });
     }
+}
+
+function tradingSymbolSearchField(field) {
+    return field === 'code'
+        ? {
+            input: document.getElementById('tradingStockCode'),
+            suggestions: document.getElementById('tradingStockCodeSuggestions'),
+            otherInput: document.getElementById('tradingStockName')
+        }
+        : {
+            input: document.getElementById('tradingStockName'),
+            suggestions: document.getElementById('tradingStockNameSuggestions'),
+            otherInput: document.getElementById('tradingStockCode')
+        };
+}
+
+function bindTradingSymbolSearch() {
+    ['name', 'code'].forEach(field => {
+        const { input, suggestions } = tradingSymbolSearchField(field);
+        if (!input || !suggestions || input.dataset.symbolSearchBound === 'true') return;
+        input.dataset.symbolSearchBound = 'true';
+        input.addEventListener('input', () => scheduleTradingSymbolSearch(field));
+        input.addEventListener('keydown', event => handleTradingSymbolSearchKeydown(event, field));
+        input.addEventListener('focus', () => {
+            const state = tradingSymbolSearchState[field];
+            if (state.results.length) showTradingSymbolSuggestions(field);
+        });
+        input.addEventListener('blur', () => {
+            window.setTimeout(() => hideTradingSymbolSuggestions(field), 180);
+        });
+    });
+}
+
+function scheduleTradingSymbolSearch(field) {
+    const state = tradingSymbolSearchState[field];
+    const { input, otherInput } = tradingSymbolSearchField(field);
+    if (!state || !input) return;
+    if (state.timer) window.clearTimeout(state.timer);
+    state.requestID += 1;
+    state.results = [];
+    state.activeIndex = -1;
+    hideTradingSymbolSuggestions(field);
+    if (otherInput && otherInput.value.trim()) otherInput.value = '';
+    const keyword = input.value.trim();
+    if (!keyword) return;
+    state.timer = window.setTimeout(() => searchTradingSymbols(field, keyword, state.requestID), 260);
+}
+
+async function searchTradingSymbols(field, keyword, requestID) {
+    const state = tradingSymbolSearchState[field];
+    const { input } = tradingSymbolSearchField(field);
+    if (!state || !input || requestID !== state.requestID || input.value.trim() !== keyword) return;
+    try {
+        const data = await apiFetch(`/api/search?keyword=${encodeURIComponent(keyword)}`);
+        if (requestID !== state.requestID || input.value.trim() !== keyword) return;
+        state.results = Array.isArray(data) ? data.slice(0, 12) : [];
+        state.activeIndex = -1;
+        renderTradingSymbolSuggestions(field);
+        if (field === 'code') {
+            const exact = state.results.find(item => normalizeTradingSymbolCode(item.code) === normalizeTradingSymbolCode(keyword));
+            if (exact) fillTradingSymbol(exact);
+        }
+    } catch (error) {
+        if (requestID !== state.requestID) return;
+        state.results = [];
+        state.activeIndex = -1;
+        renderTradingSymbolSuggestions(field, error.message || '搜索失败');
+    }
+}
+
+function normalizeTradingSymbolCode(value) {
+    return String(value || '').trim().toUpperCase().replace(/^(SH|SZ|BJ)/, '');
+}
+
+function tradingSymbolExchangeLabel(exchange) {
+    switch (String(exchange || '').toLowerCase()) {
+        case 'sh': return '沪市';
+        case 'sz': return '深市';
+        case 'bj': return '北交所';
+        default: return String(exchange || '').toUpperCase();
+    }
+}
+
+function renderTradingSymbolSuggestions(field, message = '') {
+    const state = tradingSymbolSearchState[field];
+    const { suggestions } = tradingSymbolSearchField(field);
+    if (!state || !suggestions) return;
+    if (message) {
+        suggestions.innerHTML = `<div class="trading-symbol-empty">${escapeHTML(message)}</div>`;
+        suggestions.hidden = false;
+        return;
+    }
+    if (!state.results.length) {
+        suggestions.innerHTML = '<div class="trading-symbol-empty">未找到匹配的股票或 ETF</div>';
+        suggestions.hidden = false;
+        return;
+    }
+    suggestions.innerHTML = state.results.map((item, index) => `
+        <button type="button" class="trading-symbol-option ${index === state.activeIndex ? 'active' : ''}" role="option" aria-selected="${index === state.activeIndex ? 'true' : 'false'}" data-trading-symbol-index="${index}">
+            <strong>${escapeHTML(item.name || '--')}</strong>
+            <span>${escapeHTML(item.code || '--')} · ${escapeHTML(tradingSymbolExchangeLabel(item.exchange))}${item.type ? ` · ${escapeHTML(item.type)}` : ''}</span>
+        </button>
+    `).join('');
+    suggestions.hidden = false;
+    suggestions.querySelectorAll('[data-trading-symbol-index]').forEach(button => {
+        button.addEventListener('mousedown', event => event.preventDefault());
+        button.addEventListener('click', () => {
+            const item = state.results[Number(button.dataset.tradingSymbolIndex)];
+            if (item) fillTradingSymbol(item);
+        });
+    });
+}
+
+function showTradingSymbolSuggestions(field) {
+    const { suggestions } = tradingSymbolSearchField(field);
+    if (suggestions && tradingSymbolSearchState[field].results.length) suggestions.hidden = false;
+}
+
+function hideTradingSymbolSuggestions(field) {
+    const { suggestions } = tradingSymbolSearchField(field);
+    if (suggestions) suggestions.hidden = true;
+}
+
+function fillTradingSymbol(item) {
+    const nameInput = document.getElementById('tradingStockName');
+    const codeInput = document.getElementById('tradingStockCode');
+    if (nameInput) nameInput.value = item.name || '';
+    if (codeInput) codeInput.value = item.code || '';
+    const currentPriceInput = document.getElementById('tradingCurrentPrice');
+    const targetOneInput = document.getElementById('tradingTargetOne');
+    const targetTwoInput = document.getElementById('tradingTargetTwo');
+    if (currentPriceInput) currentPriceInput.value = '';
+    if (targetOneInput) targetOneInput.value = '';
+    if (targetTwoInput) targetTwoInput.value = '';
+    hideTradingSymbolSuggestions('name');
+    hideTradingSymbolSuggestions('code');
+    tradingSymbolSearchState.name.results = [];
+    tradingSymbolSearchState.code.results = [];
+    tradingSymbolSearchState.name.activeIndex = -1;
+    tradingSymbolSearchState.code.activeIndex = -1;
+    loadTradingTradeAssist(item).catch(() => {});
+}
+
+function setTradingAssistStatus(message, type = '') {
+    const node = document.getElementById('tradingAssistStatus');
+    if (!node) return;
+    node.textContent = message || '';
+    node.className = `trading-assist-status ${type}`.trim();
+}
+
+function tradingQuotePrice(quote) {
+    const raw = Number(quote?.K?.Close ?? quote?.K?.Last ?? 0);
+    return raw > 0 ? raw / 1000 : 0;
+}
+
+function tradingPriceText(value) {
+    const price = Number(value);
+    return Number.isFinite(price) && price > 0 ? price.toFixed(2) : '';
+}
+
+function tradingLevelText(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object' && !Array.isArray(value)) {
+        const lower = value.lower ?? value.low ?? value.min ?? value.from;
+        const upper = value.upper ?? value.high ?? value.max ?? value.to;
+        if (lower !== undefined || upper !== undefined) {
+            return tradingLevelText([lower, upper].filter(item => item !== undefined));
+        }
+    }
+    const values = Array.isArray(value)
+        ? value.flatMap(item => {
+            const match = String(item ?? '').match(/\d+(?:\.\d+)?/g);
+            return match ? match.map(Number) : [];
+        })
+        : String(value).match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
+    const prices = values.filter(item => Number.isFinite(item) && item > 0).slice(0, 2);
+    if (prices.length >= 2) {
+        const low = Math.min(prices[0], prices[1]);
+        const high = Math.max(prices[0], prices[1]);
+        return `${low.toFixed(2)}-${high.toFixed(2)}`;
+    }
+    return prices.length === 1 ? prices[0].toFixed(2) : '';
+}
+
+function tradingAILevelResult(data) {
+    let result = data?.result;
+    if (!result || typeof result !== 'object' || !Object.keys(result).length) {
+        try {
+            result = JSON.parse(data?.content || '{}');
+        } catch (error) {
+            result = {};
+        }
+    }
+    const first = tradingLevelText(
+        result.first_observation_level
+        ?? result.first_observation
+        ?? result.first_pressure_level
+        ?? result.target_one
+        ?? result.watch_level
+    );
+    const strong = tradingLevelText(
+        result.strong_pressure_level
+        ?? result.strong_pressure
+        ?? result.take_profit_level
+        ?? result.target_two
+        ?? result.profit_zone
+    );
+    return { first, strong, basis: result.level_basis || result.reason || result.summary || '' };
+}
+
+function tradingFallbackLevels(currentPrice, context) {
+    const item = Array.isArray(context?.items) ? context.items[0] : null;
+    const list = Array.isArray(item?.kline_day?.List) ? item.kline_day.List : [];
+    const highs = list
+        .slice(-60)
+        .map(row => Number(row?.High || row?.Close || 0) / 1000)
+        .filter(price => Number.isFinite(price) && price > currentPrice * 1.002);
+    const recentHighs = highs.slice(-20);
+    const firstPivot = recentHighs.length ? Math.min(...recentHighs) : currentPrice * 1.03;
+    const allHigh = highs.length ? Math.max(...highs) : currentPrice * 1.06;
+    const strongPivot = allHigh > firstPivot * 1.01 ? allHigh : Math.max(currentPrice * 1.06, firstPivot * 1.02);
+    const range = pivot => `${(pivot * 0.995).toFixed(2)}-${(pivot * 1.005).toFixed(2)}`;
+    return {
+        first: range(firstPivot),
+        strong: range(strongPivot)
+    };
+}
+
+async function loadTradingTradeAssist(item) {
+    const code = normalizeTradingSymbolCode(item?.code);
+    if (!code) return;
+    const requestID = ++tradingAssistRequestID;
+    const currentPriceInput = document.getElementById('tradingCurrentPrice');
+    const targetOneInput = document.getElementById('tradingTargetOne');
+    const targetTwoInput = document.getElementById('tradingTargetTwo');
+    setTradingAssistStatus('正在查询最新价，并准备分析观察区间...', 'loading');
+
+    let currentPrice = 0;
+    let quoteError = '';
+    try {
+        const quotes = await apiFetch(`/api/quote?code=${encodeURIComponent(code)}`);
+        const quote = Array.isArray(quotes) ? quotes[0] : null;
+        currentPrice = tradingQuotePrice(quote);
+        if (requestID !== tradingAssistRequestID) return;
+        if (currentPrice > 0 && currentPriceInput) currentPriceInput.value = tradingPriceText(currentPrice);
+    } catch (error) {
+        quoteError = error.message || String(error);
+    }
+
+    if (requestID !== tradingAssistRequestID) return;
+    let context = null;
+    try {
+        context = await apiFetch(`/api/analysis/context?codes=${encodeURIComponent(code)}&kline_limit=60&news_limit=0`);
+    } catch (error) {
+        context = null;
+    }
+
+    let aiCredential = (Array.isArray(aiCredentials) ? aiCredentials : [])
+        .find(credential => credential && credential.enabled !== false && credential.has_api_key && credential.id);
+    let aiError = '';
+    if (!aiCredential) {
+        try {
+            await loadAIConfigData();
+            aiCredential = (Array.isArray(aiCredentials) ? aiCredentials : [])
+                .find(credential => credential && credential.enabled !== false && credential.has_api_key && credential.id);
+        } catch (error) {
+            aiError = error.message || String(error);
+        }
+    }
+
+    if (aiCredential) {
+        try {
+            const data = await apiFetch('/api/ai/analyze/stock', {
+                method: 'POST',
+                body: JSON.stringify({
+                    provider: aiCredential.provider,
+                    model: aiCredential.model || defaultAIModel(aiCredential.provider),
+                    credential_id: aiCredential.id,
+                    symbol: code,
+                    input: {
+                        task: 'trading_levels',
+                        name: item.name || '',
+                        current_price: currentPrice,
+                        instruction: '请结合实时行情和近期日K，给出两个可执行的价格区间：第一观察/压力位，以及强压力/止盈区。只返回明确价格或价格区间，不要返回百分比，不要编造数据。'
+                    },
+                    options: { max_tokens: 700 }
+                })
+            });
+            if (requestID !== tradingAssistRequestID) return;
+            const levels = tradingAILevelResult(data);
+            if (levels.first && levels.strong) {
+                if (targetOneInput) targetOneInput.value = levels.first;
+                if (targetTwoInput) targetTwoInput.value = levels.strong;
+                const suffix = levels.basis ? ` · ${levels.basis}` : '';
+                setTradingAssistStatus(`最新价 ${tradingPriceText(currentPrice) || '--'} · AI 已生成价格区间${suffix}`, 'success');
+                return;
+            }
+            aiError = 'AI 未返回有效价格区间';
+        } catch (error) {
+            aiError = error.message || String(error);
+        }
+    }
+
+    const fallback = tradingFallbackLevels(currentPrice, context);
+    if (requestID !== tradingAssistRequestID) return;
+    if (targetOneInput) targetOneInput.value = fallback.first;
+    if (targetTwoInput) targetTwoInput.value = fallback.strong;
+    const priceLabel = currentPrice > 0 ? `最新价 ${tradingPriceText(currentPrice)}` : '最新价获取失败';
+    const reason = aiCredential
+        ? `AI 分析失败，已按近期高点生成区间${aiError ? `：${aiError}` : ''}`
+        : `未配置可用 AI，已按近期高点生成区间${aiError ? `：${aiError}` : ''}`;
+    setTradingAssistStatus(`${priceLabel} · ${reason}${quoteError ? ` · ${quoteError}` : ''}`, currentPrice > 0 ? 'warning' : 'error');
+}
+
+function handleTradingSymbolSearchKeydown(event, field) {
+    const state = tradingSymbolSearchState[field];
+    if (!state.results.length) {
+        if (event.key === 'Escape') hideTradingSymbolSuggestions(field);
+        return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        state.activeIndex = (state.activeIndex + direction + state.results.length) % state.results.length;
+        renderTradingSymbolSuggestions(field);
+        return;
+    }
+    if (event.key === 'Enter' && state.activeIndex >= 0) {
+        event.preventDefault();
+        fillTradingSymbol(state.results[state.activeIndex]);
+        return;
+    }
+    if (event.key === 'Escape') hideTradingSymbolSuggestions(field);
 }
 
 function openTradingDialog(id = '') {
@@ -4598,6 +4937,14 @@ function openTradingDialog(id = '') {
     document.getElementById('tradingTradeId').value = trade?.id || '';
     document.getElementById('tradingStockName').value = trade?.stockName || '';
     document.getElementById('tradingStockCode').value = trade?.stockCode || '';
+    hideTradingSymbolSuggestions('name');
+    hideTradingSymbolSuggestions('code');
+    tradingSymbolSearchState.name.results = [];
+    tradingSymbolSearchState.code.results = [];
+    tradingSymbolSearchState.name.activeIndex = -1;
+    tradingSymbolSearchState.code.activeIndex = -1;
+    tradingAssistRequestID += 1;
+    setTradingAssistStatus('');
     document.getElementById('tradingTradeStatus').value = trade?.status || 'active';
     document.getElementById('tradingEntryDate').value = trade?.entryDate || localDateString();
     document.getElementById('tradingEntryPrice').value = trade?.entryPrice ?? '';

@@ -43,8 +43,10 @@ type StockSelectionPayload struct {
 
 type SystemSyncPayload struct {
 	Scope           string   `json:"scope"`
+	Date            string   `json:"date"`
 	Codes           []string `json:"codes"`
 	Tables          []string `json:"tables"`
+	Kinds           []string `json:"kinds"`
 	BlockFiles      []string `json:"block_files"`
 	Limit           int      `json:"limit"`
 	MaxCodes        int      `json:"max_codes"`
@@ -75,10 +77,12 @@ func NewAutomationRunner(store *AppStore, worker *FormulaWorkerClient) *Automati
 }
 
 func (r *AutomationRunner) Start() error {
+	r.cron.Start()
 	if err := r.Reload(); err != nil {
+		ctx := r.cron.Stop()
+		<-ctx.Done()
 		return err
 	}
-	r.cron.Start()
 	return nil
 }
 
@@ -494,6 +498,24 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 			return nil, 0, err
 		}
 		return map[string]interface{}{"scope": "f10", "path": path, "count": len(rows), "failures": failures}, len(rows), nil
+	case "market_info", "market-information":
+		if !useMarketService() {
+			return nil, 0, errors.New("市场信息同步需要配置MARKET_SERVICE_URL")
+		}
+		request := map[string]interface{}{
+			"date":              payload.Date,
+			"codes":             normalizeSymbols(payload.Codes),
+			"max_codes":         payload.MaxCodes,
+			"kinds":             payload.Kinds,
+			"continue_on_error": payload.ContinueOnError,
+		}
+		var result struct {
+			Success int `json:"success"`
+		}
+		if err := marketClient.post(ctx, "/api/market/sync", request, &result); err != nil {
+			return nil, 0, err
+		}
+		return result, result.Success, nil
 	case "block", "blocks":
 		files := payload.BlockFiles
 		if len(files) == 0 {

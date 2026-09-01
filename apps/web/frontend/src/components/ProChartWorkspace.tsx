@@ -165,7 +165,7 @@ export function ProChartWorkspace() {
     <div className="pro-chart-layout">
       <Card
         className="work-card pro-chart-card"
-        title="专业行情"
+        title="行情图表"
         extra={
           <Button type="primary" icon={<ReloadOutlined />} onClick={renderChart}>
             加载

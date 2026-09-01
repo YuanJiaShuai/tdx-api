@@ -26,6 +26,7 @@ go run .
 - `MARKET_QUOTE_POLL_INTERVAL_SECONDS`：SSE 行情订阅后台轮询间隔，默认 `3` 秒，最大 `60` 秒
 - `MARKET_QUOTE_CACHE_TTL_SECONDS`：行情缓存视为新鲜的时长，默认 `15` 秒
 - `MARKET_QUOTE_CACHE_STALE_SECONDS`：行情允许回落到陈旧缓存的最长时长，默认 `300` 秒
+- `MARKET_INFO_SYNC_INTERVAL_MS`：龙虎榜、游资、研报、公告批量同步时的请求间隔，默认 `300` 毫秒
 - `HIKYUU_DATA_SERVICE_URL`：hikyuu 历史数据服务地址，Compose 默认配置为
   `http://hikyuu-data-service:8091`。未配置时历史 K 线继续使用原有数据源。
 
@@ -47,11 +48,16 @@ go run .
 - `GET /api/news?symbol=600519.SH&limit=20`：查询去重后的资讯
 - `POST /api/news`：写入一条或多条已解析资讯
 - `POST /api/news/sync`：从 RSS/Atom 风格 XML 资讯源采集并去重
+- `POST /api/market/sync`：按交易日批量同步龙虎榜、游资动向、个股研报和公司公告，并写入本地 SQLite 快照
 - `GET /api/analysis/context?codes=600519.SH,000001.SZ`：返回 AI/策略可复用的聚合上下文
 
 财务和资讯数据存储在 `MARKET_DATABASE_PATH` 指定的 SQLite 数据库中，默认是
 `data/database/market.db`。资讯目前采用标准化写入和 RSS 采集适配，具体新闻源的解析与授权
 应在接入时单独配置。
+
+市场信息同步快照存储在同一个数据库的 `market_snapshots` 表中。页面查询会优先读取当天或最近一次
+快照，只有本地没有快照时才回源东方财富。自动化模块会自动创建一个默认的 `market-info-sync`
+任务，工作日 `18:00` 执行，默认同步最多 `120` 个股票代码；任务可以在 Web 的“自动化”页面中启停和编辑。
 
 代码参数支持 `600519`、`SH600519`、`600519.SH` 等形式。标准行情和订阅接口当前支持沪深北交易所的股票、ETF 和指数。
 

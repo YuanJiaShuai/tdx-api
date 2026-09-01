@@ -9,14 +9,14 @@ import { SelectionResultsWorkspace } from './components/SelectionResultsWorkspac
 import { StrategiesWorkspace } from './components/StrategiesWorkspace';
 import { TradingSystemWorkspace } from './components/TradingSystemWorkspace';
 import { WebhooksWorkspace } from './components/WebhooksWorkspace';
-import { ProChartWorkspace } from './components/ProChartWorkspace';
+import { MarketWorkspace } from './components/MarketWorkspace';
 import { WatchlistTable } from './components/WatchlistTable';
 import { apiFetch } from './lib/api';
 import type { ServiceStatusResult } from './types';
 
 const workspaces = [
   { key: 'market', label: '自选' },
-  { key: 'proChart', label: '专业行情' },
+  { key: 'proChart', label: '市场行情' },
   { key: 'dataCenter', label: '数据中心' },
   { key: 'selectionResults', label: '选股结果' },
   { key: 'dailyReview', label: '每日复盘' },
@@ -26,6 +26,19 @@ const workspaces = [
   { key: 'aiConfigs', label: 'AI 模型' },
   { key: 'webhooks', label: 'Webhook' }
 ];
+
+const workspaceCodes: Record<string, string> = {
+  market: 'WATCHLIST',
+  proChart: 'MARKET_DATA',
+  dataCenter: 'DATA_CENTER',
+  selectionResults: 'SIGNAL_RESULTS',
+  dailyReview: 'DAILY_REVIEW',
+  tradingSystem: 'TRADING_PLAN',
+  strategies: 'STRATEGY_LAB',
+  automations: 'RUN_SCHEDULER',
+  aiConfigs: 'MODEL_ROUTER',
+  webhooks: 'WEBHOOKS'
+};
 
 function Placeholder({ name }: { name: string }) {
   return (
@@ -73,7 +86,7 @@ export default function App() {
         children: workspace.key === 'market' ? (
           <WatchlistTable />
         ) : workspace.key === 'proChart' ? (
-          <ProChartWorkspace />
+          <MarketWorkspace />
         ) : workspace.key === 'dataCenter' ? (
           <DataCenterWorkspace />
         ) : workspace.key === 'selectionResults' ? (
@@ -97,10 +110,17 @@ export default function App() {
     []
   );
 
+  const activeWorkspaceLabel = workspaces.find((workspace) => workspace.key === activeWorkspace)?.label || '工作台';
+
   return (
     <Layout className="page-shell">
       <div className="page-container">
         <AppHeader status={serviceStatus} loading={serviceLoading} error={serviceError} />
+        <div className="terminal-bar" aria-label="当前工作区">
+          <span className="terminal-path">TDX://LOCAL/{workspaceCodes[activeWorkspace] || activeWorkspace.toUpperCase()}</span>
+          <strong>{activeWorkspaceLabel}</strong>
+          <span>{serviceStatus?.checked_at ? `CHECKED ${new Date(serviceStatus.checked_at).toLocaleTimeString('zh-CN', { hour12: false })}` : 'CHECKING'}</span>
+        </div>
         <Tabs
           className="workspace-tabs"
           activeKey={activeWorkspace}

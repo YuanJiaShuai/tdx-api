@@ -1,8 +1,9 @@
-import { Button, Card, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Modal, Space, Table, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { BarChartOutlined, ReloadOutlined } from '@ant-design/icons';
+import { BarChartOutlined, CloseOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { HQChartPanel } from './HQChartPanel';
 import {
   formatAmount,
   formatPrice,
@@ -58,6 +59,35 @@ export function WatchlistTable() {
   const [rows, setRows] = useState<WatchlistRow[]>(initialRows);
   const [loading, setLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState('');
+  const [selectedRow, setSelectedRow] = useState<WatchlistRow | null>(null);
+  const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quotePeriod, setQuotePeriod] = useState('day');
+
+  const quotePrice = selectedQuote?.K ? priceFromMilli(selectedQuote.K.Close) : 0;
+  const quotePreviousClose = selectedQuote?.K ? priceFromMilli(selectedQuote.K.Last) : 0;
+  const quoteChange = quotePrice - quotePreviousClose;
+  const quoteChangePercent = quotePreviousClose > 0 ? (quoteChange / quotePreviousClose) * 100 : 0;
+
+  const openQuote = useCallback(async (row: WatchlistRow) => {
+    setSelectedRow(row);
+    setSelectedQuote(null);
+    setQuotePeriod('day');
+    setQuoteLoading(true);
+    try {
+      const quotes = await apiFetch<Quote[]>(`/api/quote?code=${encodeURIComponent(normalizeSymbol(row.code))}`);
+      setSelectedQuote(Array.isArray(quotes) ? quotes[0] || null : null);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '行情加载失败');
+    } finally {
+      setQuoteLoading(false);
+    }
+  }, []);
+
+  const closeQuote = useCallback(() => {
+    setSelectedRow(null);
+    setSelectedQuote(null);
+  }, []);
 
   const refreshQuotes = useCallback(async () => {
     const codes = rows.map((row) => normalizeSymbol(row.code)).filter(Boolean);
@@ -99,7 +129,7 @@ export function WatchlistTable() {
         width: 104,
         fixed: 'left',
         render: (value: string, record) => (
-          <Button type="link" className="code-link" onClick={() => message.info(`${record.name} 行情详情将在下一阶段迁移`)}>
+          <Button type="link" className="code-link" onClick={() => openQuote(record)}>
             {value}
           </Button>
         )
@@ -150,7 +180,7 @@ export function WatchlistTable() {
       { title: '委比 %', dataIndex: 'entrust', width: 100, render: (value?: string) => value || '--' },
       { title: '量比', dataIndex: 'volumeRatio', width: 96, render: (value?: string) => value || '--' }
     ],
-    []
+    [openQuote]
   );
 
   return (
@@ -183,6 +213,112 @@ export function WatchlistTable() {
         pagination={false}
         scroll={{ x: 1740, y: 520 }}
       />
+      <Modal
+        open={Boolean(selectedRow)}
+        onCancel={closeQuote}
+        footer={null}
+        width={1240}
+        centered
+        destroyOnHidden
+        closeIcon={<CloseOutlined />}
+        className="watchlist-quote-modal"
+        title={
+          <div className="quote-dialog-title">
+            <div>
+              <strong>{selectedRow?.name || selectedQuote?.Name || '--'}</strong>
+              <span>{normalizeSymbol(selectedRow?.code || selectedQuote?.Code || '')}</span>
+            </div>
+            <small>实时行情 · 五档盘口</small>
+          </div>
+        }
+      >
+        <div className="quote-dialog-toolbar">
+          <Space wrap>
+            {[
+              ['minute', '分时'],
+              ['day', '日K'],
+              ['week', '周K'],
+              ['month', '月K'],
+              ['minute30', '30分'],
+              ['minute5', '5分']
+            ].map(([value, label]) => (
+              <Button
+                key={value}
+                size="small"
+                type={quotePeriod === value ? 'primary' : 'default'}
+                onClick={() => setQuotePeriod(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </Space>
+          <Button size="small" icon={<ReloadOutlined />} loading={quoteLoading} onClick={() => selectedRow && openQuote(selectedRow)}>
+            刷新
+          </Button>
+        </div>
+        <div className="quote-dialog-grid">
+          <div className="quote-dialog-chart">
+            {selectedRow ? (
+              <HQChartPanel
+                key={`${selectedRow.code}-${quotePeriod}`}
+                symbol={normalizeSymbol(selectedRow.code)}
+                period={quotePeriod}
+                count={800}
+                pageSize={80}
+              />
+            ) : null}
+          </div>
+          <aside className="quote-dialog-side">
+            <section className="quote-dialog-summary">
+              <span>现价</span>
+              <strong className={quoteChange >= 0 ? 'market-up' : 'market-down'}>{quotePrice > 0 ? formatPrice(quotePrice) : '--'}</strong>
+              <div className={quoteChange >= 0 ? 'market-up' : 'market-down'}>
+                {quotePreviousClose > 0 ? `${formatSigned(quoteChange)} · ${formatSigned(quoteChangePercent, '%')}` : '--'}
+              </div>
+            </section>
+            <section className="quote-dialog-metrics">
+              {[
+                ['开盘', selectedQuote?.K?.Open ? formatPrice(priceFromMilli(selectedQuote.K.Open)) : '--'],
+                ['最高', selectedQuote?.K?.High ? formatPrice(priceFromMilli(selectedQuote.K.High)) : '--'],
+                ['最低', selectedQuote?.K?.Low ? formatPrice(priceFromMilli(selectedQuote.K.Low)) : '--'],
+                ['成交量', selectedQuote?.TotalHand ? formatAmount(selectedQuote.TotalHand * 100) : '--'],
+                ['成交额', selectedQuote?.Amount ? formatAmount(selectedQuote.Amount) : '--'],
+                ['涨速', selectedQuote?.Rate ? formatSigned(selectedQuote.Rate, '%') : '--']
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <span>{label}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
+            </section>
+            <section className="quote-dialog-levels">
+              <h4>五档盘口</h4>
+              <div className="quote-dialog-level-columns">
+                <div>
+                  <small>卖盘</small>
+                  {(selectedQuote?.SellLevel || []).slice().reverse().map((level, index) => (
+                    <div className="quote-dialog-level sell" key={`sell-${index}`}>
+                      <span>卖{5 - index}</span>
+                      <b>{level.Price ? formatPrice(priceFromMilli(level.Price)) : '--'}</b>
+                      <em>{level.Number ? Math.round(level.Number / 100) : '--'}</em>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <small>买盘</small>
+                  {(selectedQuote?.BuyLevel || []).map((level, index) => (
+                    <div className="quote-dialog-level buy" key={`buy-${index}`}>
+                      <span>买{index + 1}</span>
+                      <b>{level.Price ? formatPrice(priceFromMilli(level.Price)) : '--'}</b>
+                      <em>{level.Number ? Math.round(level.Number / 100) : '--'}</em>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </Modal>
     </Card>
   );
 }

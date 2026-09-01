@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票数据查询系统</title>
-    <link rel="stylesheet" href="style.css?v=watchlist-minute-chart-20260830">
+    <link rel="stylesheet" href="style.css?v=trading-symbol-search-20260831">
     <style>
         /* 确保图表容器占满宽度 */
         #klineChart, #minuteChart {
@@ -1072,14 +1072,16 @@
                 <form id="tradingForm" class="trading-modal-body">
                     <input id="tradingTradeId" type="hidden">
                     <div class="trading-form-grid three">
-                        <label>
-                            <span>股票名称</span>
-                            <input id="tradingStockName" required>
-                        </label>
-                        <label>
-                            <span>代码</span>
-                            <input id="tradingStockCode" required>
-                        </label>
+                        <div class="trading-symbol-field">
+                            <label for="tradingStockName">股票名称</label>
+                            <input id="tradingStockName" type="text" autocomplete="off" required>
+                            <div id="tradingStockNameSuggestions" class="trading-symbol-suggestions" role="listbox" aria-label="股票名称搜索结果" hidden></div>
+                        </div>
+                        <div class="trading-symbol-field">
+                            <label for="tradingStockCode">代码</label>
+                            <input id="tradingStockCode" type="text" inputmode="numeric" autocomplete="off" required>
+                            <div id="tradingStockCodeSuggestions" class="trading-symbol-suggestions" role="listbox" aria-label="股票代码搜索结果" hidden></div>
+                        </div>
                         <label>
                             <span>状态</span>
                             <select id="tradingTradeStatus">
@@ -1127,6 +1129,7 @@
                             <input id="tradingTargetTwo" placeholder="例如 45-46">
                         </label>
                     </div>
+                    <div id="tradingAssistStatus" class="trading-assist-status" aria-live="polite"></div>
                     <label>
                         <span>交易模式</span>
                         <input id="tradingTradeMode" placeholder="例如 强势股回调支撑试错">
@@ -1158,9 +1161,9 @@
         </div>
     </div>
 
-    <script src="chart-shim.js?v=watchlist-minute-chart-20260830"></script>
-    <script src="chartlib/umychart.min.js?v=watchlist-minute-chart-20260830"></script>
-    <script src="chart-adapter.js?v=watchlist-minute-chart-20260830"></script>
-    <script src="app.js?v=watchlist-minute-chart-20260830"></script>
+    <script src="chart-shim.js?v=trading-symbol-search-20260831"></script>
+    <script src="chartlib/umychart.min.js?v=trading-symbol-search-20260831"></script>
+    <script src="chart-adapter.js?v=trading-symbol-search-20260831"></script>
+    <script src="app.js?v=trading-symbol-search-20260831"></script>
 </body>
 </html>
