@@ -1,9 +1,10 @@
-import { Button, Card, Empty, Input, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Empty, Input, Select, Space, Table, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { formatPrice, formatSigned } from '../lib/format';
 import type { LongTigerRank, LongTigerResponse } from '../types';
+import { StockQuoteModal } from './StockQuoteModal';
 
 const { Text } = Typography;
 
@@ -42,6 +43,7 @@ export function LongTigerWorkspace() {
   const [loading, setLoading] = useState(false);
   const [source, setSource] = useState('');
   const [actualDate, setActualDate] = useState('');
+  const [quoteTarget, setQuoteTarget] = useState<{ code: string; name?: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,7 +148,17 @@ export function LongTigerWorkspace() {
             dataIndex: 'SECURITY_CODE',
             fixed: 'left',
             width: 90,
-            render: (value: string, record) => <Tag color="blue">{value || record.SECUCODE || '--'}</Tag>
+            render: (value: string, record) => {
+              const code = value || record.SECUCODE || '';
+              const name = record.SECURITY_NAME_ABBR || '';
+              return code ? (
+                <Button type="link" className="code-link" onClick={() => setQuoteTarget({ code, name })}>
+                  {code.replace(/\.[A-Z]+$/, '')}
+                </Button>
+              ) : (
+                '--'
+              );
+            }
           },
           {
             title: '名称',
@@ -194,6 +206,7 @@ export function LongTigerWorkspace() {
           }
         ]}
       />
+      <StockQuoteModal target={quoteTarget} onClose={() => setQuoteTarget(null)} />
     </Card>
   );
 }

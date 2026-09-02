@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { formatSigned } from '../lib/format';
 import type { HotMoneyTrade, MarketNotice, MarketResearchReport } from '../types';
+import { StockQuoteModal } from './StockQuoteModal';
 
 const { Text } = Typography;
 
@@ -86,6 +87,7 @@ export function MarketInfoWorkspace({ kind }: MarketInfoWorkspaceProps) {
   const [items, setItems] = useState<Array<MarketResearchReport | MarketNotice | HotMoneyTrade>>([]);
   const [loading, setLoading] = useState(false);
   const [loadedCode, setLoadedCode] = useState('');
+  const [quoteTarget, setQuoteTarget] = useState<{ code: string; name?: string } | null>(null);
 
   const load = useCallback(async () => {
     let nextCode = '';
@@ -159,7 +161,23 @@ export function MarketInfoWorkspace({ kind }: MarketInfoWorkspaceProps) {
             {
               title: '股票',
               width: 130,
-              render: (_value, item) => `${item.SECURITY_CODE || '--'} ${item.SECURITY_NAME_ABBR || ''}`
+              render: (_value, item) => {
+                const code = item.SECURITY_CODE || item.SECUCODE || '';
+                return code ? (
+                  <Space size={4}>
+                    <Button
+                      type="link"
+                      className="code-link"
+                      onClick={() => setQuoteTarget({ code, name: item.SECURITY_NAME_ABBR })}
+                    >
+                      {code.replace(/\.[A-Z]+$/, '')}
+                    </Button>
+                    <span>{item.SECURITY_NAME_ABBR || ''}</span>
+                  </Space>
+                ) : (
+                  '--'
+                );
+              }
             },
             { title: '营业部', dataIndex: 'OPERATEDEPT_NAME', width: 300, ellipsis: true },
             { title: '买入额(万)', dataIndex: 'BUY_AMT_REAL', width: 120, render: amountWan },
@@ -188,6 +206,19 @@ export function MarketInfoWorkspace({ kind }: MarketInfoWorkspaceProps) {
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无个股研报" /> }}
           scroll={{ x: 1180 }}
           columns={[
+            {
+              title: '代码',
+              dataIndex: 'stockCode',
+              width: 100,
+              render: (value: string, item) =>
+                value ? (
+                  <Button type="link" className="code-link" onClick={() => setQuoteTarget({ code: value, name: item.stockName })}>
+                    {value.replace(/\.[A-Z]+$/, '')}
+                  </Button>
+                ) : (
+                  '--'
+                )
+            },
             { title: '名称', dataIndex: 'stockName', width: 110 },
             { title: '行业', dataIndex: 'indvInduName', width: 120, render: (value) => value || '--' },
             {
@@ -225,7 +256,19 @@ export function MarketInfoWorkspace({ kind }: MarketInfoWorkspaceProps) {
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无公司公告" /> }}
           scroll={{ x: 1050 }}
           columns={[
-            { title: '代码', dataIndex: 'stock_code', width: 100 },
+            {
+              title: '代码',
+              dataIndex: 'stock_code',
+              width: 100,
+              render: (value: string, item) =>
+                value ? (
+                  <Button type="link" className="code-link" onClick={() => setQuoteTarget({ code: value, name: item.stock_name })}>
+                    {value.replace(/\.[A-Z]+$/, '')}
+                  </Button>
+                ) : (
+                  '--'
+                )
+            },
             { title: '名称', dataIndex: 'stock_name', width: 110 },
             {
               title: '公告标题',
@@ -250,6 +293,7 @@ export function MarketInfoWorkspace({ kind }: MarketInfoWorkspaceProps) {
           ]}
         />
       )}
+      <StockQuoteModal target={quoteTarget} onClose={() => setQuoteTarget(null)} />
     </Card>
   );
 }
