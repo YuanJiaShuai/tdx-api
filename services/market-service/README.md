@@ -51,6 +51,7 @@ go run .
 - `POST /api/market/sync`：按交易日批量同步龙虎榜、游资动向、个股研报和公司公告，并写入本地 SQLite 快照
 - `GET /api/market/industry/rank?sort=0&limit=150`：行业涨幅排名，默认返回 150 个行业
 - `GET /api/market/industry/money?category=0&sort=netamount`：行业/证监会行业/概念板块资金排名
+- `GET /api/market/stock-money?sort=netamount`：个股资金流向排名，支持 9 种资金排序
 - `GET /api/market/trading-status`：返回当前 A 股交易时段状态
 - `GET /api/analysis/context?codes=600519.SH,000001.SZ`：返回 AI/策略可复用的聚合上下文
 
@@ -66,6 +67,9 @@ go run .
 行业排名沿用 go-stock 的腾讯财经和新浪财经数据接口。行业涨幅排名服务端缓存 10 秒，
 资金排名服务端缓存 60 秒；前端仅在页面打开时轮询，交易时段内行业涨幅排名每 10 秒刷新，
 三类资金排名每 60 秒刷新，多用户访问共享服务端缓存。
+
+个股资金流向沿用 go-stock 的新浪财经接口，按净流入额、流出资金、净流入率、主力和散户
+资金等 9 种排序展示前 20 条；服务端和页面刷新周期均为 30 分钟，并支持本地数据库兜底。
 
 代码参数支持 `600519`、`SH600519`、`600519.SH` 等形式。标准行情和订阅接口当前支持沪深北交易所的股票、ETF 和指数。
 

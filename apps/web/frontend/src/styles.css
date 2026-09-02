@@ -3683,6 +3683,31 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+.stock-money-card .ant-card-body {
+  padding-top: 10px;
+}
+
+.stock-money-tabs > .ant-tabs-nav {
+  margin-bottom: 10px;
+}
+
+.stock-money-table .ant-table-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stock-money-name-link.ant-btn {
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.stock-money-name-link.ant-btn:hover {
+  color: var(--primary-strong) !important;
+}
+
 .work-card.ant-card::before,
 .ant-card.work-card::before {
   opacity: 1;

@@ -4,6 +4,7 @@ import { LongTigerWorkspace } from './LongTigerWorkspace';
 import { MarketInfoWorkspace } from './MarketInfoWorkspace';
 import { ProChartWorkspace } from './ProChartWorkspace';
 import { IndustryRankWorkspace } from './IndustryRankWorkspace';
+import { StockMoneyFlowWorkspace } from './StockMoneyFlowWorkspace';
 
 export function MarketWorkspace() {
   const [activeTab, setActiveTab] = useState('chart');
@@ -24,6 +25,11 @@ export function MarketWorkspace() {
             key: 'industry-rank',
             label: '行业排名',
             children: <IndustryRankWorkspace />
+          },
+          {
+            key: 'stock-money',
+            label: '个股资金流向',
+            children: <StockMoneyFlowWorkspace />
           },
           {
             key: 'long-tiger',

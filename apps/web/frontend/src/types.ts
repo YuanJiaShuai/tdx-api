@@ -156,6 +156,36 @@ export interface IndustryMoneyRankResponse {
   fetched_at: string;
 }
 
+export interface StockMoneyRankItem {
+  symbol?: string;
+  name?: string | boolean;
+  trade?: string;
+  changeratio?: string;
+  turnover?: string;
+  amount?: string;
+  inamount?: string;
+  outamount?: string;
+  netamount?: string;
+  ratioamount?: string;
+  r0_in?: string;
+  r0_out?: string;
+  r0_net?: string;
+  r3_in?: string;
+  r3_out?: string;
+  r3_net?: string;
+  r0_ratio?: string;
+  r3_ratio?: string;
+  r0x_ratio?: string;
+}
+
+export interface StockMoneyRankResponse {
+  items: StockMoneyRankItem[];
+  sort: string;
+  limit: number;
+  source: string;
+  fetched_at: string;
+}
+
 export interface MarketTradingStatus {
   date: string;
   is_trading: boolean;

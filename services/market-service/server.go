@@ -860,6 +860,7 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/market/sync", handleMarketInfoSync)
 	http.HandleFunc("/api/market/industry/rank", handleIndustryRank)
 	http.HandleFunc("/api/market/industry/money", handleIndustryMoneyRank)
+	http.HandleFunc("/api/market/stock-money", handleStockMoneyRank)
 	http.HandleFunc("/api/market/trading-status", handleMarketTradingStatus)
 	http.HandleFunc("/api/analysis/context", handleAnalysisContext)
 	http.HandleFunc("/api/company/categories", handleGetCompanyCategories)

@@ -936,6 +936,7 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/market/sync", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/market/industry/rank", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/market/industry/money", marketAPIHandler(marketProxyOnly))
+	http.HandleFunc("/api/market/stock-money", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/market/trading-status", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/analysis/context", marketAPIHandler(marketProxyOnly))
 	http.HandleFunc("/api/company/categories", marketAPIHandler(handleGetCompanyCategories))

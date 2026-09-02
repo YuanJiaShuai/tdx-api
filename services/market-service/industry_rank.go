@@ -77,7 +77,7 @@ type industryRankCacheEntry struct {
 	FetchedAt string
 }
 
-var industryRankCache = struct {
+var marketRankCache = struct {
 	sync.Mutex
 	Items map[string]industryRankCacheEntry
 }{Items: make(map[string]industryRankCacheEntry)}
@@ -105,7 +105,7 @@ func handleIndustryRank(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheKey := fmt.Sprintf("sort=%s&limit=%d", sortValue, limit)
-	value, source, fetchedAt, err := getIndustryRankCached(
+	value, source, fetchedAt, err := getMarketRankCached(
 		r.Context(),
 		industryRankKind,
 		cacheKey,
@@ -142,7 +142,7 @@ func handleIndustryMoneyRank(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheKey := fmt.Sprintf("category=%s&sort=%s", category, sortValue)
-	value, source, fetchedAt, err := getIndustryRankCached(
+	value, source, fetchedAt, err := getMarketRankCached(
 		r.Context(),
 		industryMoneyRankKind,
 		cacheKey,
@@ -164,7 +164,7 @@ func handleIndustryMoneyRank(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func getIndustryRankCached[T any](
+func getMarketRankCached[T any](
 	ctx context.Context,
 	kind string,
 	dataKey string,
@@ -173,16 +173,16 @@ func getIndustryRankCached[T any](
 ) (T, string, string, error) {
 	now := time.Now()
 	cacheKey := kind + ":" + dataKey
-	industryRankCache.Lock()
-	if entry, ok := industryRankCache.Items[cacheKey]; ok && now.Before(entry.ExpiresAt) {
+	marketRankCache.Lock()
+	if entry, ok := marketRankCache.Items[cacheKey]; ok && now.Before(entry.ExpiresAt) {
 		value, ok := entry.Value.(T)
 		fetchedAt := entry.FetchedAt
-		industryRankCache.Unlock()
+		marketRankCache.Unlock()
 		if ok {
 			return value, "cache", fetchedAt, nil
 		}
 	} else {
-		industryRankCache.Unlock()
+		marketRankCache.Unlock()
 	}
 
 	value, err := fetch(ctx)
@@ -196,11 +196,11 @@ func getIndustryRankCached[T any](
 		if marketStore != nil {
 			_ = marketStore.saveMarketSnapshot(kind, dataKey, time.Now().Format("2006-01-02"), raw, fetchedAt)
 		}
-		industryRankCache.Lock()
-		industryRankCache.Items[cacheKey] = industryRankCacheEntry{
+		marketRankCache.Lock()
+		marketRankCache.Items[cacheKey] = industryRankCacheEntry{
 			Value: value, ExpiresAt: time.Now().Add(ttl), FetchedAt: fetchedAt,
 		}
-		industryRankCache.Unlock()
+		marketRankCache.Unlock()
 		return value, "upstream", fetchedAt, nil
 	}
 
@@ -212,11 +212,11 @@ func getIndustryRankCached[T any](
 		if dbErr == nil {
 			var fallback T
 			if unmarshalErr := json.Unmarshal(row.Data, &fallback); unmarshalErr == nil {
-				industryRankCache.Lock()
-				industryRankCache.Items[cacheKey] = industryRankCacheEntry{
+				marketRankCache.Lock()
+				marketRankCache.Items[cacheKey] = industryRankCacheEntry{
 					Value: fallback, ExpiresAt: now.Add(ttl), FetchedAt: row.FetchedAt,
 				}
-				industryRankCache.Unlock()
+				marketRankCache.Unlock()
 				return fallback, "database", row.FetchedAt, nil
 			}
 		}
