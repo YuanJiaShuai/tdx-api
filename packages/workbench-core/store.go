@@ -57,10 +57,15 @@ type Strategy struct {
 }
 
 const (
-	DecisionWatchPoolID   = "watchlist"
-	DecisionExcludePoolID = "exclude"
-	FixedCloseSyncTaskID  = "fixed-close-sync"
-	MarketInfoSyncTaskID  = "market-info-sync"
+	DecisionWatchPoolID         = "watchlist"
+	DecisionExcludePoolID       = "exclude"
+	FixedCloseSyncTaskID        = "fixed-close-sync"
+	LegacyMarketInfoSyncTaskID  = "market-info-sync"
+	LegacyMarketInfoSyncPayload = `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`
+	MarketLongTigerSyncTaskID   = "market-long-tiger-sync"
+	MarketHotMoneySyncTaskID    = "market-hot-money-sync"
+	MarketResearchSyncTaskID    = "market-research-sync"
+	MarketNoticeSyncTaskID      = "market-notice-sync"
 )
 
 type AutomationTask struct {
@@ -418,7 +423,7 @@ func (s *AppStore) seedDefaults() error {
 	if err := s.ensureFixedAutomationTasks(); err != nil {
 		return err
 	}
-	if err := s.ensureMarketInfoAutomationTask(); err != nil {
+	if err := s.ensureMarketInfoAutomationTasks(); err != nil {
 		return err
 	}
 	return s.ensureTradingSystemState()
@@ -514,28 +519,66 @@ func (s *AppStore) ensureFixedAutomationTasks() error {
 	return err
 }
 
-func marketInfoAutomationTask() AutomationTask {
-	return AutomationTask{
-		ID:          MarketInfoSyncTaskID,
-		Name:        "市场信息同步",
-		Type:        "system_sync",
-		Cron:        "0 0 18 * * 1-5",
-		Enabled:     true,
-		PayloadJSON: `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`,
-		WebhookIDs:  "[]",
-		System:      true,
+func marketInfoAutomationTasks() []AutomationTask {
+	return []AutomationTask{
+		{
+			ID:          MarketLongTigerSyncTaskID,
+			Name:        "龙虎榜同步",
+			Type:        "system_sync",
+			Cron:        "0 0 18 * * 1-5",
+			Enabled:     true,
+			PayloadJSON: `{"scope":"market_info","kinds":["long-tiger"],"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+			System:      true,
+		},
+		{
+			ID:          MarketHotMoneySyncTaskID,
+			Name:        "游资动向同步",
+			Type:        "system_sync",
+			Cron:        "0 5 18 * * 1-5",
+			Enabled:     true,
+			PayloadJSON: `{"scope":"market_info","kinds":["hot_money"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+			System:      true,
+		},
+		{
+			ID:          MarketResearchSyncTaskID,
+			Name:        "个股研报同步",
+			Type:        "system_sync",
+			Cron:        "0 10 18 * * 1-5",
+			Enabled:     true,
+			PayloadJSON: `{"scope":"market_info","kinds":["research"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+			System:      true,
+		},
+		{
+			ID:          MarketNoticeSyncTaskID,
+			Name:        "公司公告同步",
+			Type:        "system_sync",
+			Cron:        "0 15 18 * * 1-5",
+			Enabled:     true,
+			PayloadJSON: `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+			System:      true,
+		},
 	}
 }
 
-func (s *AppStore) ensureMarketInfoAutomationTask() error {
-	task := marketInfoAutomationTask()
+func (s *AppStore) ensureMarketInfoAutomationTasks() error {
 	now := NowText()
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
-		(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
-		"", "", "", "", now, now)
-	return err
+	if _, err := s.db.Exec(`DELETE FROM automation_tasks WHERE id=? OR payload_json=?`, LegacyMarketInfoSyncTaskID, LegacyMarketInfoSyncPayload); err != nil {
+		return err
+	}
+	for _, task := range marketInfoAutomationTasks() {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
+			(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
+			"", "", "", "", now, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func DefaultTradingSystemState() TradingSystemState {

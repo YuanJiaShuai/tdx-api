@@ -505,13 +505,40 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			PayloadJSON: `{"scope":"all","tables":["day"],"limit":4,"max_codes":200,"block_files":["gn","fg","zs","hy","block"],"with_index":true,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
-	case "market_info_sync":
+	case "market_long_tiger_sync":
 		return AutomationTask{
-			Name:        "市场信息同步",
+			Name:        "龙虎榜同步",
 			Type:        "system_sync",
 			Cron:        "0 0 18 * * 1-5",
 			Enabled:     false,
-			PayloadJSON: `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`,
+			PayloadJSON: `{"scope":"market_info","kinds":["long-tiger"],"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+		}, nil
+	case "market_hot_money_sync":
+		return AutomationTask{
+			Name:        "游资动向同步",
+			Type:        "system_sync",
+			Cron:        "0 5 18 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"market_info","kinds":["hot_money"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+		}, nil
+	case "market_research_sync":
+		return AutomationTask{
+			Name:        "个股研报同步",
+			Type:        "system_sync",
+			Cron:        "0 10 18 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"market_info","kinds":["research"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+		}, nil
+	case "market_notice_sync":
+		return AutomationTask{
+			Name:        "公司公告同步",
+			Type:        "system_sync",
+			Cron:        "0 15 18 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
 	default:

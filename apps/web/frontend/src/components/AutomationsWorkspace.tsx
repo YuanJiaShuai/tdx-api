@@ -25,7 +25,10 @@ const templateActions = [
   { key: 'morning_sync', name: '早盘基础同步', note: '08:00 交易日前置数据' },
   { key: 'evening_kline', name: '晚盘日K同步', note: '18:30 更新日线数据' },
   { key: 'evening_full', name: '晚盘完整同步', note: '21:00 批量补全数据' },
-  { key: 'market_info_sync', name: '市场信息同步', note: '18:00 龙虎榜、游资、研报、公告' }
+  { key: 'market_long_tiger_sync', name: '龙虎榜同步', note: '18:00 同步龙虎榜' },
+  { key: 'market_hot_money_sync', name: '游资动向同步', note: '18:05 批量同步游资动向' },
+  { key: 'market_research_sync', name: '个股研报同步', note: '18:10 批量同步个股研报' },
+  { key: 'market_notice_sync', name: '公司公告同步', note: '18:15 批量同步公司公告' }
 ];
 
 function statusText(status?: string) {
