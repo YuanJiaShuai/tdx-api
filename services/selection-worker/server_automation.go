@@ -543,6 +543,15 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			PayloadJSON: `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
+	case "market_industry_research_sync":
+		return AutomationTask{
+			Name:        "行业研究同步",
+			Type:        "system_sync",
+			Cron:        "0 20 18 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"scope":"market_industry_research","days":7,"limit":500,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+		}, nil
 	default:
 		return AutomationTask{}, fmt.Errorf("未知任务模板: %s", name)
 	}

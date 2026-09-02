@@ -4,7 +4,9 @@ import { LongTigerWorkspace } from './LongTigerWorkspace';
 import { MarketInfoWorkspace } from './MarketInfoWorkspace';
 import { ProChartWorkspace } from './ProChartWorkspace';
 import { IndustryRankWorkspace } from './IndustryRankWorkspace';
+import { IndustryResearchWorkspace } from './IndustryResearchWorkspace';
 import { StockMoneyFlowWorkspace } from './StockMoneyFlowWorkspace';
+import { RzrqWorkspace } from './RzrqWorkspace';
 
 export function MarketWorkspace() {
   const [activeTab, setActiveTab] = useState('chart');
@@ -32,6 +34,11 @@ export function MarketWorkspace() {
             children: <StockMoneyFlowWorkspace />
           },
           {
+            key: 'rzrq',
+            label: '融资融券',
+            children: <RzrqWorkspace />
+          },
+          {
             key: 'long-tiger',
             label: '龙虎榜',
             children: <LongTigerWorkspace />
@@ -50,6 +57,11 @@ export function MarketWorkspace() {
             key: 'notice',
             label: '公司公告',
             children: <MarketInfoWorkspace kind="notice" />
+          },
+          {
+            key: 'industry-research',
+            label: '行业研究',
+            children: <IndustryResearchWorkspace />
           }
         ]}
       />

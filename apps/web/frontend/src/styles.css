@@ -3667,6 +3667,41 @@ textarea::placeholder {
   text-align: left;
 }
 
+.industry-research-card .ant-card-body {
+  padding-top: 10px;
+}
+
+.industry-research-toolbar {
+  align-items: center;
+}
+
+.industry-research-select {
+  width: 240px;
+}
+
+.industry-research-days {
+  width: 100px;
+}
+
+.industry-research-card .ant-card-extra .ant-btn,
+.industry-research-card .ant-card-extra .ant-select-selector {
+  min-height: 36px;
+}
+
+.industry-research-table .ant-table-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 800px) {
+  .industry-research-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .industry-research-select {
+    width: min(240px, 52vw);
+  }
+}
+
 .industry-leader-link strong {
   color: var(--text);
   font-weight: 800;
@@ -6849,8 +6884,116 @@ textarea::placeholder {
     flex-direction: column;
   }
 
-  .automation-form-actions .ant-space,
-  .strategy-form-actions .ant-space {
-    justify-content: flex-end;
+.automation-form-actions .ant-space,
+.strategy-form-actions .ant-space {
+  justify-content: flex-end;
+}
+}
+
+.rzrq-layout {
+  display: grid;
+  gap: 12px;
+}
+
+.rzrq-trend-card .ant-card-body {
+  padding: 8px 12px 10px;
+}
+
+.rzrq-trend-wrap {
+  min-height: 250px;
+}
+
+.rzrq-trend-chart {
+  display: block;
+  width: 100%;
+  height: 250px;
+  overflow: visible;
+}
+
+.rzrq-grid-line {
+  stroke: var(--line);
+  stroke-dasharray: 3 4;
+  stroke-width: 1;
+}
+
+.rzrq-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.5;
+}
+
+.rzrq-line-balance {
+  stroke: var(--primary);
+}
+
+.rzrq-line-net {
+  stroke: var(--danger);
+}
+
+.rzrq-axis-label {
+  fill: var(--text-muted);
+  font-size: 10px;
+}
+
+.rzrq-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.rzrq-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rzrq-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.rzrq-legend-dot.balance {
+  background: var(--primary);
+}
+
+.rzrq-legend-dot.net {
+  background: var(--danger);
+}
+
+.rzrq-toolbar .ant-select {
+  min-width: 120px;
+}
+
+.rzrq-toolbar .ant-select:nth-child(2) {
+  min-width: 150px;
+}
+
+.rzrq-summary {
+  margin: 12px 0;
+}
+
+.rzrq-rank-table .ant-table-cell {
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .rzrq-trend-card .ant-card-extra,
+  .rzrq-rank-card .ant-card-extra {
+    margin-top: 4px;
+  }
+
+  .rzrq-toolbar {
+    align-items: stretch;
+  }
+
+  .rzrq-toolbar .ant-select,
+  .rzrq-toolbar .ant-picker {
+    flex: 1 1 140px;
   }
 }

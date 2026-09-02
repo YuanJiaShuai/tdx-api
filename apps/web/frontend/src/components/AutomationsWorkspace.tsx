@@ -28,7 +28,8 @@ const templateActions = [
   { key: 'market_long_tiger_sync', name: '龙虎榜同步', note: '18:00 同步龙虎榜' },
   { key: 'market_hot_money_sync', name: '游资动向同步', note: '18:05 批量同步游资动向' },
   { key: 'market_research_sync', name: '个股研报同步', note: '18:10 批量同步个股研报' },
-  { key: 'market_notice_sync', name: '公司公告同步', note: '18:15 批量同步公司公告' }
+  { key: 'market_notice_sync', name: '公司公告同步', note: '18:15 批量同步公司公告' },
+  { key: 'market_industry_research_sync', name: '行业研究同步', note: '18:20 批量同步行业研报' }
 ];
 
 function statusText(status?: string) {

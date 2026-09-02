@@ -21,9 +21,11 @@ import (
 )
 
 const (
-	marketInfoResearchTTL = 5 * time.Minute
-	marketInfoNoticeTTL   = time.Minute
-	marketInfoHotMoneyTTL = 10 * time.Second
+	marketInfoResearchTTL         = 5 * time.Minute
+	marketInfoNoticeTTL           = time.Minute
+	marketInfoHotMoneyTTL         = 10 * time.Second
+	marketInfoIndustryResearchTTL = 10 * time.Minute
+	marketInfoIndustryDictTTL     = 24 * time.Hour
 )
 
 type MarketResearchReport struct {
@@ -39,6 +41,74 @@ type MarketResearchReport struct {
 	SRatingName  string `json:"sRatingName"`
 	Researcher   string `json:"researcher"`
 	Market       string `json:"market"`
+}
+
+type flexibleInt int
+
+func (value *flexibleInt) UnmarshalJSON(data []byte) error {
+	var number int
+	if err := json.Unmarshal(data, &number); err == nil {
+		*value = flexibleInt(number)
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		if text == "" {
+			*value = 0
+			return nil
+		}
+		parsed, err := strconv.Atoi(text)
+		if err != nil {
+			return err
+		}
+		*value = flexibleInt(parsed)
+		return nil
+	}
+	*value = 0
+	return nil
+}
+
+type IndustryResearchReport struct {
+	Title          string      `json:"title"`
+	StockName      string      `json:"stockName"`
+	StockCode      string      `json:"stockCode"`
+	OrgCode        string      `json:"orgCode"`
+	OrgName        string      `json:"orgName"`
+	OrgSName       string      `json:"orgSName"`
+	PublishDate    string      `json:"publishDate"`
+	InfoCode       string      `json:"infoCode"`
+	IndustryCode   string      `json:"industryCode"`
+	IndustryName   string      `json:"industryName"`
+	EmIndustryCode string      `json:"emIndustryCode"`
+	EmRatingName   string      `json:"emRatingName"`
+	RatingChange   flexibleInt `json:"ratingChange"`
+	SRatingName    string      `json:"sRatingName"`
+	Researcher     string      `json:"researcher"`
+	ReportType     int         `json:"reportType"`
+	EncodeURL      string      `json:"encodeUrl"`
+}
+
+type IndustryDictItem struct {
+	BKCode      string `json:"bkCode"`
+	FuBKCode    string `json:"fubkCode"`
+	BKName      string `json:"bkName"`
+	PublishCode string `json:"publishCode"`
+	FirstLetter string `json:"firstLetter"`
+}
+
+type IndustryResearchResponse struct {
+	Items        []IndustryResearchReport `json:"items"`
+	IndustryCode string                   `json:"industry_code"`
+	Days         int                      `json:"days"`
+	Limit        int                      `json:"limit"`
+	Source       string                   `json:"source"`
+	FetchedAt    string                   `json:"fetched_at"`
+}
+
+type IndustryDictResponse struct {
+	Items     []IndustryDictItem `json:"items"`
+	Source    string             `json:"source"`
+	FetchedAt string             `json:"fetched_at"`
 }
 
 type MarketNotice struct {
@@ -75,15 +145,18 @@ var marketInfoCache = struct {
 }{items: make(map[string]marketInfoCacheEntry)}
 
 const (
-	marketInfoKindResearch = "research"
-	marketInfoKindNotice   = "notice"
-	marketInfoKindHotMoney = "hot_money"
+	marketInfoKindResearch         = "research"
+	marketInfoKindNotice           = "notice"
+	marketInfoKindHotMoney         = "hot_money"
+	marketInfoKindIndustryResearch = "industry-research"
 )
 
 type MarketInfoSyncRequest struct {
 	Date            string   `json:"date"`
 	Codes           []string `json:"codes"`
 	MaxCodes        int      `json:"max_codes"`
+	Days            int      `json:"days"`
+	Limit           int      `json:"limit"`
 	Kinds           []string `json:"kinds"`
 	ContinueOnError bool     `json:"continue_on_error"`
 }
@@ -162,6 +235,76 @@ func handleMarketHotMoney(w http.ResponseWriter, r *http.Request) {
 	successResponse(w, value)
 }
 
+func handleIndustryResearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "只支持GET请求")
+		return
+	}
+	industryCode := strings.TrimSpace(r.URL.Query().Get("industry_code"))
+	days := parsePositiveInt(r.URL.Query().Get("days"))
+	if days <= 0 {
+		days = 7
+	}
+	limit := parsePositiveInt(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	dataKey := fmt.Sprintf("%s:%d:500", industryCode, days)
+	value, source, fetchedAt, err := getMarketRankCached(
+		r.Context(),
+		marketInfoKindIndustryResearch,
+		dataKey,
+		marketInfoIndustryResearchTTL,
+		func(ctx context.Context) ([]IndustryResearchReport, error) {
+			return fetchIndustryResearch(ctx, industryCode, days, 500, time.Now())
+		},
+	)
+	if err != nil {
+		errorResponse(w, "获取行业研究失败: "+err.Error())
+		return
+	}
+	if len(value) > limit {
+		value = value[:limit]
+	}
+	successResponse(w, IndustryResearchResponse{
+		Items:        value,
+		IndustryCode: industryCode,
+		Days:         days,
+		Limit:        limit,
+		Source:       source,
+		FetchedAt:    fetchedAt,
+	})
+}
+
+func handleIndustryDict(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "只支持GET请求")
+		return
+	}
+	value, source, fetchedAt, err := getMarketRankCached(
+		r.Context(),
+		"industry-dict",
+		"016",
+		marketInfoIndustryDictTTL,
+		func(ctx context.Context) ([]IndustryDictItem, error) {
+			return fetchIndustryDict(ctx)
+		},
+	)
+	if err != nil {
+		errorResponse(w, "获取行业字典失败: "+err.Error())
+		return
+	}
+	successResponse(w, IndustryDictResponse{
+		Items:     value,
+		Source:    source,
+		FetchedAt: fetchedAt,
+	})
+}
+
 func handleMarketInfoSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, "只支持POST请求")
@@ -202,6 +345,46 @@ func syncMarketInfo(ctx context.Context, request MarketInfoSyncRequest) (MarketI
 		Kinds:     kinds,
 		CodeCount: len(codes),
 		Failures:  map[string]string{},
+	}
+
+	if containsString(kinds, marketInfoKindIndustryResearch) {
+		days := request.Days
+		if days <= 0 {
+			days = 7
+		}
+		items, err := fetchIndustryResearch(ctx, "", days, 500, time.Now())
+		if err != nil {
+			result.Failures[marketInfoKindIndustryResearch] = err.Error()
+			if !request.ContinueOnError {
+				return result, err
+			}
+		} else if marketStore == nil {
+			result.Failures[marketInfoKindIndustryResearch] = "行情数据库未初始化"
+			if !request.ContinueOnError {
+				return result, errors.New("行情数据库未初始化")
+			}
+		} else {
+			raw, marshalErr := json.Marshal(items)
+			if marshalErr != nil {
+				result.Failures[marketInfoKindIndustryResearch] = marshalErr.Error()
+				if !request.ContinueOnError {
+					return result, marshalErr
+				}
+			} else if err := marketStore.saveMarketSnapshot(
+				marketInfoKindIndustryResearch,
+				fmt.Sprintf(":%d:500", days),
+				tradeDate,
+				raw,
+				time.Now().Format(time.RFC3339),
+			); err != nil {
+				result.Failures[marketInfoKindIndustryResearch] = err.Error()
+				if !request.ContinueOnError {
+					return result, err
+				}
+			} else {
+				result.Success++
+			}
+		}
 	}
 
 	if containsString(kinds, "long-tiger") {
@@ -293,7 +476,7 @@ func syncMarketInfo(ctx context.Context, request MarketInfoSyncRequest) (MarketI
 
 func normalizeMarketInfoKinds(values []string) []string {
 	if len(values) == 0 {
-		values = []string{"long-tiger", marketInfoKindHotMoney, marketInfoKindResearch, marketInfoKindNotice}
+		values = []string{"long-tiger", marketInfoKindHotMoney, marketInfoKindResearch, marketInfoKindNotice, marketInfoKindIndustryResearch}
 	}
 	result := make([]string, 0, len(values))
 	seen := map[string]struct{}{}
@@ -308,6 +491,8 @@ func normalizeMarketInfoKinds(values []string) []string {
 			kind = marketInfoKindResearch
 		case "notice", "notices", "company":
 			kind = marketInfoKindNotice
+		case "industry-research", "industry_research", "industryreport", "industry-report":
+			kind = marketInfoKindIndustryResearch
 		default:
 			continue
 		}
@@ -560,6 +745,87 @@ func fetchMarketResearch(ctx context.Context, rawCode string) ([]MarketResearchR
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, errorsFromBody("研报", body)
+	}
+	return response.Data, nil
+}
+
+func fetchIndustryResearch(ctx context.Context, industryCode string, days, limit int, endDate time.Time) ([]IndustryResearchReport, error) {
+	if err := paceMarketInfoRequest(ctx); err != nil {
+		return nil, err
+	}
+	if days <= 0 {
+		days = 7
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	end := endDate
+	if end.IsZero() {
+		end = time.Now()
+	}
+	query := url.Values{
+		"industry":     {"*"},
+		"industryCode": {industryCode},
+		"beginTime":    {end.AddDate(0, 0, -days).Format("2006-01-02")},
+		"endTime":      {end.Format("2006-01-02")},
+		"pageNo":       {"1"},
+		"pageSize":     {strconv.Itoa(limit)},
+		"p":            {"1"},
+		"pageNum":      {"1"},
+		"pageNumber":   {"1"},
+		"qType":        {"1"},
+	}
+	body, err := eastmoneyRequest(ctx, http.MethodGet, "https://reportapi.eastmoney.com/report/list?"+query.Encode(), nil, map[string]string{
+		"Origin":  "https://data.eastmoney.com",
+		"Referer": "https://data.eastmoney.com/report/industry.jshtml",
+		"Host":    "reportapi.eastmoney.com",
+	})
+	if err != nil {
+		body, err = eastmoneyWget(ctx, "https://reportapi.eastmoney.com/report/list?"+query.Encode(), nil, map[string]string{
+			"Origin":  "https://data.eastmoney.com",
+			"Referer": "https://data.eastmoney.com/report/industry.jshtml",
+			"Host":    "reportapi.eastmoney.com",
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Data []IndustryResearchReport `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, errorsFromBody("行业研究", body)
+	}
+	if response.Data == nil {
+		return []IndustryResearchReport{}, nil
+	}
+	return response.Data, nil
+}
+
+func fetchIndustryDict(ctx context.Context) ([]IndustryDictItem, error) {
+	if err := paceMarketInfoRequest(ctx); err != nil {
+		return nil, err
+	}
+	query := url.Values{"bkCode": {"016"}}
+	body, err := eastmoneyRequest(ctx, http.MethodGet, "https://reportapi.eastmoney.com/report/bk?"+query.Encode(), nil, map[string]string{
+		"Origin":  "https://data.eastmoney.com",
+		"Referer": "https://data.eastmoney.com/report/industry.jshtml",
+		"Host":    "reportapi.eastmoney.com",
+	})
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Data []IndustryDictItem `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, errorsFromBody("行业字典", body)
+	}
+	if response.Data == nil {
+		return []IndustryDictItem{}, nil
 	}
 	return response.Data, nil
 }

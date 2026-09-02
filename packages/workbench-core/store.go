@@ -57,15 +57,16 @@ type Strategy struct {
 }
 
 const (
-	DecisionWatchPoolID         = "watchlist"
-	DecisionExcludePoolID       = "exclude"
-	FixedCloseSyncTaskID        = "fixed-close-sync"
-	LegacyMarketInfoSyncTaskID  = "market-info-sync"
-	LegacyMarketInfoSyncPayload = `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`
-	MarketLongTigerSyncTaskID   = "market-long-tiger-sync"
-	MarketHotMoneySyncTaskID    = "market-hot-money-sync"
-	MarketResearchSyncTaskID    = "market-research-sync"
-	MarketNoticeSyncTaskID      = "market-notice-sync"
+	DecisionWatchPoolID              = "watchlist"
+	DecisionExcludePoolID            = "exclude"
+	FixedCloseSyncTaskID             = "fixed-close-sync"
+	LegacyMarketInfoSyncTaskID       = "market-info-sync"
+	LegacyMarketInfoSyncPayload      = `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`
+	MarketLongTigerSyncTaskID        = "market-long-tiger-sync"
+	MarketHotMoneySyncTaskID         = "market-hot-money-sync"
+	MarketResearchSyncTaskID         = "market-research-sync"
+	MarketNoticeSyncTaskID           = "market-notice-sync"
+	MarketIndustryResearchSyncTaskID = "market-industry-research-sync"
 )
 
 type AutomationTask struct {
@@ -558,6 +559,16 @@ func marketInfoAutomationTasks() []AutomationTask {
 			Cron:        "0 15 18 * * 1-5",
 			Enabled:     true,
 			PayloadJSON: `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+			System:      true,
+		},
+		{
+			ID:          MarketIndustryResearchSyncTaskID,
+			Name:        "行业研究同步",
+			Type:        "system_sync",
+			Cron:        "0 20 18 * * 1-5",
+			Enabled:     true,
+			PayloadJSON: `{"scope":"market_industry_research","days":7,"limit":500,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 			System:      true,
 		},

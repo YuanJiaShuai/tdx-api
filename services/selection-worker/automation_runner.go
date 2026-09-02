@@ -49,6 +49,7 @@ type SystemSyncPayload struct {
 	Kinds           []string `json:"kinds"`
 	BlockFiles      []string `json:"block_files"`
 	Limit           int      `json:"limit"`
+	Days            int      `json:"days"`
 	MaxCodes        int      `json:"max_codes"`
 	StartDate       string   `json:"start_date"`
 	WithIndex       bool     `json:"with_index"`
@@ -507,6 +508,24 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 			"codes":             normalizeSymbols(payload.Codes),
 			"max_codes":         payload.MaxCodes,
 			"kinds":             payload.Kinds,
+			"continue_on_error": payload.ContinueOnError,
+		}
+		var result struct {
+			Success int `json:"success"`
+		}
+		if err := marketClient.post(ctx, "/api/market/sync", request, &result); err != nil {
+			return nil, 0, err
+		}
+		return result, result.Success, nil
+	case "market_industry_research", "industry_research":
+		if !useMarketService() {
+			return nil, 0, errors.New("行业研究同步需要配置MARKET_SERVICE_URL")
+		}
+		request := map[string]interface{}{
+			"date":              payload.Date,
+			"days":              payload.Days,
+			"limit":             payload.Limit,
+			"kinds":             []string{"industry-research"},
 			"continue_on_error": payload.ContinueOnError,
 		}
 		var result struct {

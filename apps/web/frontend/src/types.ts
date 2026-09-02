@@ -84,6 +84,50 @@ export interface MarketResearchReport {
   market?: string;
 }
 
+export interface IndustryResearchReport {
+  title?: string;
+  stockName?: string;
+  stockCode?: string;
+  orgCode?: string;
+  orgName?: string;
+  orgSName?: string;
+  publishDate?: string;
+  infoCode?: string;
+  industryCode?: string;
+  industryName?: string;
+  emIndustryCode?: string;
+  emRatingName?: string;
+  ratingChange?: number;
+  sRatingName?: string;
+  researcher?: string;
+  author?: string[];
+  reportType?: number;
+  encodeUrl?: string;
+}
+
+export interface IndustryDictItem {
+  bkCode?: string;
+  fubkCode?: string;
+  bkName?: string;
+  publishCode?: string;
+  firstLetter?: string;
+}
+
+export interface IndustryResearchResponse {
+  items: IndustryResearchReport[];
+  industry_code: string;
+  days: number;
+  limit: number;
+  source: string;
+  fetched_at: string;
+}
+
+export interface IndustryDictResponse {
+  items: IndustryDictItem[];
+  source: string;
+  fetched_at: string;
+}
+
 export interface MarketNotice {
   art_code?: string;
   stock_code?: string;
@@ -182,6 +226,57 @@ export interface StockMoneyRankResponse {
   items: StockMoneyRankItem[];
   sort: string;
   limit: number;
+  source: string;
+  fetched_at: string;
+}
+
+export interface RzrqRankItem {
+  stockCode?: string;
+  stockName?: string;
+  date?: number;
+  lrye?: string;
+  lryeRate?: string;
+  rzye?: string;
+  rzyeRate?: string;
+  rqye?: string;
+  rqyeRate?: string;
+  jmr?: string;
+  jmrRate?: string;
+  rzmre?: string;
+  rzche?: string;
+  rzjmce?: string;
+  yezf?: string;
+  close_price?: string;
+  close_profit?: string;
+  marketId?: string;
+}
+
+export interface RzrqRankResponse {
+  type: string;
+  list: RzrqRankItem[];
+  requested_date?: string;
+  data_date?: string;
+  source: string;
+  fetched_at: string;
+}
+
+export interface RzrqTrendItem {
+  date?: string;
+  rzye?: string;
+  rzjlr?: string;
+  spj?: string;
+  spzf?: string;
+}
+
+export interface RzrqTrendResponse {
+  type: string;
+  code: string;
+  items: RzrqTrendItem[];
+  rzye_unit?: string;
+  rzjlr_unit?: string;
+  spj_unit?: string;
+  spzf_unit?: string;
+  update_time?: string;
   source: string;
   fetched_at: string;
 }
