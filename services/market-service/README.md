@@ -49,6 +49,9 @@ go run .
 - `POST /api/news`：写入一条或多条已解析资讯
 - `POST /api/news/sync`：从 RSS/Atom 风格 XML 资讯源采集并去重
 - `POST /api/market/sync`：按交易日批量同步龙虎榜、游资动向、个股研报和公司公告，并写入本地 SQLite 快照
+- `GET /api/market/industry/rank?sort=0&limit=150`：行业涨幅排名，默认返回 150 个行业
+- `GET /api/market/industry/money?category=0&sort=netamount`：行业/证监会行业/概念板块资金排名
+- `GET /api/market/trading-status`：返回当前 A 股交易时段状态
 - `GET /api/analysis/context?codes=600519.SH,000001.SZ`：返回 AI/策略可复用的聚合上下文
 
 财务和资讯数据存储在 `MARKET_DATABASE_PATH` 指定的 SQLite 数据库中，默认是
@@ -59,6 +62,10 @@ go run .
 快照，只有本地没有快照时才回源东方财富。自动化模块会自动创建 `龙虎榜同步`、`游资动向同步`、
 `个股研报同步`、`公司公告同步` 四个默认任务，工作日从 `18:00` 起错峰执行；任务可以在 Web 的
 “自动化”页面中分别启停和编辑。
+
+行业排名沿用 go-stock 的腾讯财经和新浪财经数据接口。行业涨幅排名服务端缓存 10 秒，
+资金排名服务端缓存 60 秒；前端仅在页面打开时轮询，交易时段内行业涨幅排名每 10 秒刷新，
+三类资金排名每 60 秒刷新，多用户访问共享服务端缓存。
 
 代码参数支持 `600519`、`SH600519`、`600519.SH` 等形式。标准行情和订阅接口当前支持沪深北交易所的股票、ETF 和指数。
 

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { LongTigerWorkspace } from './LongTigerWorkspace';
 import { MarketInfoWorkspace } from './MarketInfoWorkspace';
 import { ProChartWorkspace } from './ProChartWorkspace';
+import { IndustryRankWorkspace } from './IndustryRankWorkspace';
 
 export function MarketWorkspace() {
   const [activeTab, setActiveTab] = useState('chart');
@@ -18,6 +19,11 @@ export function MarketWorkspace() {
             key: 'chart',
             label: '行情图表',
             children: <ProChartWorkspace />
+          },
+          {
+            key: 'industry-rank',
+            label: '行业排名',
+            children: <IndustryRankWorkspace />
           },
           {
             key: 'long-tiger',

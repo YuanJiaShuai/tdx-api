@@ -107,6 +107,62 @@ export interface HotMoneyTrade {
   SECUCODE?: string;
 }
 
+export interface IndustryRankItem {
+  bd_name?: string;
+  bd_code?: string;
+  bd_zxj?: string;
+  bd_zd?: string;
+  bd_zdf?: string;
+  bd_zdf5?: string;
+  bd_zdf20?: string;
+  nzg_code?: string;
+  nzg_name?: string;
+  nzg_zxj?: string;
+  nzg_zd?: string;
+  nzg_zdf?: string;
+}
+
+export interface IndustryRankResponse {
+  items: IndustryRankItem[];
+  sort: string;
+  limit: number;
+  source: string;
+  fetched_at: string;
+}
+
+export interface IndustryMoneyRankItem {
+  cate_type?: string;
+  category?: string;
+  name?: string;
+  avg_price?: string;
+  avg_changeratio?: string;
+  turnover?: string;
+  inamount?: string;
+  outamount?: string;
+  netamount?: string;
+  ratioamount?: string;
+  ts_symbol?: string;
+  ts_name?: string;
+  ts_trade?: string;
+  ts_changeratio?: string;
+  ts_ratioamount?: string;
+}
+
+export interface IndustryMoneyRankResponse {
+  items: IndustryMoneyRankItem[];
+  category: string;
+  sort: string;
+  source: string;
+  fetched_at: string;
+}
+
+export interface MarketTradingStatus {
+  date: string;
+  is_trading: boolean;
+  checked_at: string;
+  timezone: string;
+}
+
 export interface WatchlistRow {
   key: string;
   code: string;

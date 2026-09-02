@@ -3632,6 +3632,57 @@ textarea::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+.industry-rank-card .ant-card-body {
+  padding-top: 10px;
+}
+
+.industry-rank-tabs > .ant-tabs-nav {
+  margin-bottom: 10px;
+}
+
+.industry-rank-table .ant-table-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.industry-sort-button {
+  height: auto;
+  padding: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.industry-sort-button:hover {
+  color: var(--primary-strong) !important;
+}
+
+.industry-leader-link.ant-btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.industry-leader-link strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.industry-leader-link span {
+  color: var(--primary-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.industry-money-table .ant-table-cell {
+  white-space: nowrap;
+}
+
 .work-card.ant-card::before,
 .ant-card.work-card::before {
   opacity: 1;
