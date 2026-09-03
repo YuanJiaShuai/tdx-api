@@ -990,6 +990,7 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/automations/templates", handleAutomationTemplates)
 	http.HandleFunc("/api/automations/runs", handleAutomationRuns)
 	http.HandleFunc("/api/selection-results", handleSelectionResults)
+	http.HandleFunc("/api/selection-results/tracking", handleSelectionTracking)
 	http.HandleFunc("/api/decision-notes", handleDecisionNotes)
 	http.HandleFunc("/api/decision-notes/", handleDecisionNoteOperations)
 	http.HandleFunc("/api/daily-review", handleDailyReview)

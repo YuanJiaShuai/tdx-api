@@ -19,6 +19,7 @@ import (
 	"github.com/injoyai/tdx/extend"
 	"github.com/injoyai/tdx/protocol"
 	"github.com/robfig/cron/v3"
+	workbench "workbench-core"
 )
 
 type AutomationRunner struct {
@@ -39,6 +40,14 @@ type StockSelectionPayload struct {
 	CalcCount       int      `json:"calc_count"`
 	BatchSize       int      `json:"batch_size"`
 	ContinueOnError bool     `json:"continue_on_error"`
+}
+
+type SelectionTrackingPayload struct {
+	Limit           int     `json:"limit"`
+	Horizons        []int   `json:"horizons"`
+	TargetReturn    float64 `json:"target_return"`
+	DrawdownLimit   float64 `json:"drawdown_limit"`
+	ContinueOnError bool    `json:"continue_on_error"`
 }
 
 type SystemSyncPayload struct {
@@ -161,6 +170,8 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	case "strategy_selection":
 		result, matchedSymbols, err = r.runStrategySelection(ctx, task, run)
 		matchedCount = len(matchedSymbols)
+	case "selection_tracking":
+		result, matchedCount, err = r.runSelectionTracking(ctx, task)
 	case "system_sync":
 		result, matchedCount, err = r.runSystemSync(ctx, task)
 	case "custom":
@@ -216,6 +227,50 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 		run = latest
 	}
 	return run, err
+}
+
+func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task AutomationTask) (interface{}, int, error) {
+	payload := SelectionTrackingPayload{Limit: 500, Horizons: []int{1, 5, 10}, ContinueOnError: true}
+	if strings.TrimSpace(task.PayloadJSON) != "" {
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+			return nil, 0, err
+		}
+	}
+	if payload.Limit <= 0 || payload.Limit > 500 {
+		payload.Limit = 500
+	}
+	items, err := r.store.ListSelectionResults("", "", "", false, payload.Limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	targetReturn, drawdownLimit := workbench.DefaultTrackingPolicy(payload.TargetReturn, payload.DrawdownLimit)
+	tracked := make([]SelectionTrackingItem, 0, len(items))
+	errorsByResult := map[string]string{}
+	for _, item := range items {
+		bars, loadErr := loadTrackingKline(ctx, item.Symbol, 800)
+		if loadErr != nil {
+			errorsByResult[item.ID] = loadErr.Error()
+			if !payload.ContinueOnError {
+				return nil, len(tracked), loadErr
+			}
+			continue
+		}
+		tracking := workbench.EvaluateSelectionTracking(item, toTrackingBars(bars), payload.Horizons, targetReturn, drawdownLimit, time.Now())
+		raw, marshalErr := json.Marshal(tracking)
+		if marshalErr != nil {
+			return nil, len(tracked), marshalErr
+		}
+		if updateErr := r.store.UpdateSelectionTracking(item.ID, string(raw)); updateErr != nil {
+			return nil, len(tracked), updateErr
+		}
+		item.TrackingJSON = string(raw)
+		tracked = append(tracked, SelectionTrackingItem{Result: item, Tracking: tracking})
+	}
+	return map[string]interface{}{
+		"summary": workbench.SummarizeSelectionTracking(tracked, payload.Horizons),
+		"policy":  map[string]float64{"target_return": targetReturn, "drawdown_limit": drawdownLimit},
+		"errors":  errorsByResult,
+	}, len(tracked), nil
 }
 
 func (r *AutomationRunner) resolveTaskWebhooks(task AutomationTask) []Webhook {

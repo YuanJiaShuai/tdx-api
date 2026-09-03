@@ -189,6 +189,15 @@ func (s *AppStore) migrate() error {
 	if err := s.ensureColumn("ai_credentials", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	for _, column := range []struct{ name, definition string }{
+		{"prompt_version", "TEXT NOT NULL DEFAULT 'v1'"},
+		{"data_revision", "TEXT NOT NULL DEFAULT ''"},
+		{"tools_json", "TEXT NOT NULL DEFAULT '[]'"},
+	} {
+		if err := s.ensureColumn("ai_analysis_runs", column.name, column.definition); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

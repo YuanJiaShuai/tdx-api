@@ -16,14 +16,14 @@ TDX Workbench 把通达信行情、历史 K 线、分时、财务、板块、公
 | 市场行情 | 查看多周期 K 线、分时和自定义指标，支持在 K 线中切换个人公式 |
 | K 线分析 | 结合历史 K 线、指标和 AI 做结构化研究 |
 | 数据中心 | 查询股票代码、市场概览、财务/F10、股本和收益测算数据 |
-| 选股结果 | 浏览公式选股命中结果，按股票或公式筛选并跳转行情 |
+| 选股结果与验证 | 浏览公式/策略命中结果，按股票或公式筛选，并跟踪 D1/D5/D10 真实前向表现 |
 | 每日复盘 | 沉淀盘后观察、信号和复盘记录 |
 | 交易系统 | 记录交易卡、仓位、无效点、计划亏损和复盘内容 |
 | 策略中心 | 管理策略规则、执行策略和查看回测/运行结果 |
 | 自动化 | 维护股票池，按 Cron 定时运行公式选股或系统同步 |
 | 预警中心 | 管理美国宏观事件日历，在 CPI、非农、FOMC、PCE 等数据公布前做交易前检查 |
 | AI 模型 | 配置 DeepSeek、OpenAI-compatible、通义千问、智谱 GLM 等模型 |
-| AI 助手 / 自选分析 | 结合实时行情、日 K、财务和资讯进行对话或分析自选池 |
+| AI 研究助手 / AI 选股 | 悬浮问答研究行情；对候选股票做 Hikyuu 验证和 AI 排序 |
 | Webhook | 把选股、策略和自动化任务结果发送到外部通知地址 |
 
 ## 当前界面预览
@@ -69,7 +69,7 @@ curl http://localhost:8080/api/health
 curl http://localhost:8080/api/services/status
 ```
 
-首次使用 AI 时，进入 `AI 模型` 工作区保存并启用一个模型配置，再从 `自选` 工作区点击 `自选分析`。不配置 AI 也可以使用行情、数据、公式和策略功能。
+首次使用 AI 时，进入 `AI 模型` 工作区保存并启用一个模型配置；在 `自选` 工作区点击股票代码打开详情，再点击 `AI 研究报告`。不配置 AI 也可以使用行情、数据、公式和策略功能。
 
 ### 常用 Docker 命令
 
@@ -150,6 +150,8 @@ packages/workbench-core/  # 公式、股票池、策略、任务和存储模型
 4. 手动运行或启用 Cron 调度。
 5. 在选股结果中查看命中股票，并回到行情页面复核。
 
+选股结果中心支持按信号后的交易日验证表现。默认以 5 日收盘收益达到 3% 且最大回撤不超过 5% 作为达标标准；达标率只代表历史样本统计，不是未来成功概率。
+
 公式 worker 会优先尝试使用 HQChartPy2；如果扩展不可用或单次执行失败，会回退到内置 Python 执行器。fallback 支持常见的 `MA`、`EMA`、`SMA`、`REF`、`LLV`、`HHV`、`CROSS`、`SUM`、`STD`、`IF`、`MAX` 和 `MIN`。
 
 示例公式：
@@ -175,10 +177,10 @@ AI 分析不是单独的一套数据源，而是建立在行情服务的结构�
 
 1. 打开 `AI 模型` 工作区。
 2. 新建并启用一个模型配置，API Key 会加密保存。
-3. 回到 `自选`，点击 `自选分析`。
-4. 选择模型和分析侧重，开始分析。
+3. 回到 `自选`，点击股票代码打开详情。
+4. 点击 `AI 研究报告`，开始生成带证据链的单股报告。
 
-支持的内置 provider 包括 DeepSeek、OpenAI、通义千问、智谱 GLM 和自定义 OpenAI-compatible 接口。AI 服务会保存分析运行记录，但 API Key 只返回脱敏结果。
+支持的内置 provider 包括 DeepSeek、OpenAI、通义千问、智谱 GLM 和自定义 OpenAI-compatible 接口。AI 服务会保存分析运行记录，但 API Key 只返回脱敏结果。`AI 选股` 先读取选股结果、股票池或手动代码，再用 Hikyuu MA 交叉参考回测，AI 只负责候选集内排序和解释；历史胜率不代表未来成功概率。
 
 ### 4. 宏观事件预警
 
@@ -221,6 +223,7 @@ Compose 已经提供了服务间默认地址。需要长期使用或部署到其
 | `DEEPSEEK_API_KEY` | 通过环境变量提供 DeepSeek API Key |
 | `DEEPSEEK_BASE_URL` | DeepSeek 接口地址，默认 `https://api.deepseek.com` |
 | `MARKET_SERVICE_URL` | AI 服务访问行情服务的地址 |
+| `HIKYUU_DATA_SERVICE_URL` | AI 研究报告访问 Hikyuu 元数据、质量和指标的地址 |
 | `FORMULA_WORKER_URL` | Web/选股服务访问公式 worker 的地址 |
 | `MARKET_SYNC_ON_START` | 行情服务启动时是否同步基础代码和交易日 |
 | `AUTOMATION_SCHEDULER_ENABLED` | 是否启用自动化调度 |
@@ -285,6 +288,14 @@ curl -X POST "http://localhost:8080/api/ai/analyze/stock" \
 curl -X POST "http://localhost:8080/api/ai/analyze/watchlist" \
   -H "Content-Type: application/json" \
   -d '{"provider":"deepseek","pool_id":"watchlist","symbols":["601899","603171"]}'
+```
+
+单股 AI 研究报告（包含证据链、数据质量和版本信息）：
+
+```bash
+curl -X POST "http://localhost:8080/api/ai/research/stock" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"deepseek","symbol":"603171","input":{"name":"税友股份","source":"watchlist"}}'
 ```
 
 完整参数、响应格式和错误码见 [API 参考](docs/api-reference.md)。

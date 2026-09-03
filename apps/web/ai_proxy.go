@@ -14,5 +14,7 @@ func registerAIProxyRoutes() {
 	http.HandleFunc("/api/ai/chat", handler)
 	http.HandleFunc("/api/ai/chat/stream", handler)
 	http.HandleFunc("/api/ai/analyze/stock", handler)
+	http.HandleFunc("/api/ai/research/stock", handler)
+	http.HandleFunc("/api/ai/select/rank", handler)
 	http.HandleFunc("/api/ai/analyze/watchlist", handler)
 }

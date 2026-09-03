@@ -11,7 +11,8 @@ import { TradingSystemWorkspace } from './components/TradingSystemWorkspace';
 import { WebhooksWorkspace } from './components/WebhooksWorkspace';
 import { MarketWorkspace } from './components/MarketWorkspace';
 import { KlineAnalysisWorkspace } from './components/KlineAnalysisWorkspace';
-import { AIAssistantWorkspace } from './components/AIAssistantWorkspace';
+import { AISelectionWorkspace } from './components/AISelectionWorkspace';
+import { FloatingResearchAssistant } from './components/FloatingResearchAssistant';
 import { AlertsWorkspace } from './components/AlertsWorkspace';
 import { WatchlistTable } from './components/WatchlistTable';
 import { apiFetch } from './lib/api';
@@ -28,7 +29,7 @@ const workspaces = [
   { key: 'strategies', label: '策略中心' },
   { key: 'automations', label: '自动化' },
   { key: 'aiConfigs', label: 'AI 模型' },
-  { key: 'aiAssistant', label: 'AI 助手' },
+  { key: 'aiSelection', label: 'AI 选股' },
   { key: 'alerts', label: '预警中心' },
   { key: 'webhooks', label: 'Webhook' }
 ];
@@ -44,7 +45,7 @@ const workspaceCodes: Record<string, string> = {
   strategies: 'STRATEGY_LAB',
   automations: 'RUN_SCHEDULER',
   aiConfigs: 'MODEL_ROUTER',
-  aiAssistant: 'AI_ASSISTANT',
+  aiSelection: 'AI_SELECTION',
   alerts: 'RISK_CALENDAR',
   webhooks: 'WEBHOOKS'
 };
@@ -112,8 +113,8 @@ export default function App() {
           <AutomationsWorkspace />
         ) : workspace.key === 'aiConfigs' ? (
           <AIConfigsWorkspace />
-        ) : workspace.key === 'aiAssistant' ? (
-          <AIAssistantWorkspace />
+        ) : workspace.key === 'aiSelection' ? (
+          <AISelectionWorkspace />
         ) : workspace.key === 'alerts' ? (
           <AlertsWorkspace />
         ) : workspace.key === 'webhooks' ? (
@@ -143,6 +144,7 @@ export default function App() {
           onChange={setActiveWorkspace}
           destroyOnHidden={false}
         />
+        <FloatingResearchAssistant workspace={activeWorkspaceLabel} />
       </div>
     </Layout>
   );

@@ -26,6 +26,7 @@ docker compose up -d --build ai-service
 | `DEEPSEEK_API_KEY` | 可选，DeepSeek 环境变量凭据 |
 | `DEEPSEEK_BASE_URL` | 可选，默认 `https://api.deepseek.com` |
 | `MARKET_SERVICE_URL` | 行情服务地址，用于单股/自选分析补充行情上下文 |
+| `HIKYUU_DATA_SERVICE_URL` | Hikyuu 数据服务地址，用于研究报告的元数据、质量和指标证据 |
 
 也可以通过接口写入凭据，服务会加密保存到 `data/database/ai.db`，接口只返回脱敏 key。
 
@@ -40,8 +41,14 @@ POST /api/ai/test-connection
 POST /api/ai/chat
 POST /api/ai/chat/stream
 POST /api/ai/analyze/stock
+POST /api/ai/research/stock
+POST /api/ai/select/rank
 POST /api/ai/analyze/watchlist
 ```
+
+`POST /api/ai/research/stock` 生成单股结构化研究报告。服务会受控读取行情上下文和 Hikyuu 的 metadata、quality、MA/EMA/MACD/BOLL/ATR 指标，并将 `prompt_version`、`data_revision`、`tools_used` 写入响应和 `ai_analysis_runs`。工具失败会在输入快照中保留错误字段，不会伪造成功数据。
+
+`POST /api/ai/select/rank` 接收候选 `symbols`，先调用 Hikyuu MA 交叉参考回测，再让模型返回候选集内的相对排序、历史样本、胜率、平均收益、最大回撤和风险说明。评分不是成功概率，也不构成投资建议。
 
 DeepSeek 连接测试示例：
 

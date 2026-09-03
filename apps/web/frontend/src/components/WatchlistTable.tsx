@@ -4,6 +4,7 @@ import { BarChartOutlined, CloseOutlined, ReloadOutlined } from '@ant-design/ico
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { HQChartPanel } from './HQChartPanel';
+import { AIResearchReport } from './AIResearchReport';
 import {
   formatAmount,
   formatPrice,
@@ -276,6 +277,7 @@ export function WatchlistTable() {
                 {quotePreviousClose > 0 ? `${formatSigned(quoteChange)} · ${formatSigned(quoteChangePercent, '%')}` : '--'}
               </div>
             </section>
+            {selectedRow ? <div className="quote-dialog-ai-action"><AIResearchReport symbol={normalizeSymbol(selectedRow.code)} name={selectedRow.name} /></div> : null}
             <section className="quote-dialog-metrics">
               {[
                 ['开盘', selectedQuote?.K?.Open ? formatPrice(priceFromMilli(selectedQuote.K.Open)) : '--'],

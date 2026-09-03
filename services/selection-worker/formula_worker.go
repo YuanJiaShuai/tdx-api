@@ -237,6 +237,10 @@ func loadFormulaKline(ctx context.Context, symbol, period string, calcCount int)
 	return out, nil
 }
 
+func loadTrackingKline(ctx context.Context, symbol string, calcCount int) ([]FormulaKline, error) {
+	return loadFormulaKline(ctx, symbol, "day", calcCount)
+}
+
 func formulaPeriodToKlineType(period string) string {
 	p := strings.ToLower(strings.TrimSpace(period))
 	switch p {

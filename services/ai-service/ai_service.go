@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -80,19 +81,23 @@ type AIAnalyzeRequest struct {
 	Symbols      []string               `json:"symbols"`
 	Input        map[string]interface{} `json:"input"`
 	Options      AIRequestOptions       `json:"options"`
+	Research     bool                   `json:"research,omitempty"`
 }
 
 type AIAnalyzeResponse struct {
-	RunID       string                 `json:"run_id"`
-	TaskType    string                 `json:"task_type"`
-	Provider    string                 `json:"provider"`
-	Model       string                 `json:"model"`
-	Content     string                 `json:"content"`
-	Result      map[string]interface{} `json:"result"`
-	Usage       map[string]interface{} `json:"usage"`
-	LatencyMS   int64                  `json:"latency_ms"`
-	Input       map[string]interface{} `json:"input"`
-	GeneratedAt string                 `json:"generated_at"`
+	RunID         string                 `json:"run_id"`
+	TaskType      string                 `json:"task_type"`
+	Provider      string                 `json:"provider"`
+	Model         string                 `json:"model"`
+	Content       string                 `json:"content"`
+	Result        map[string]interface{} `json:"result"`
+	Usage         map[string]interface{} `json:"usage"`
+	LatencyMS     int64                  `json:"latency_ms"`
+	Input         map[string]interface{} `json:"input"`
+	GeneratedAt   string                 `json:"generated_at"`
+	PromptVersion string                 `json:"prompt_version"`
+	DataRevision  string                 `json:"data_revision"`
+	ToolsUsed     []string               `json:"tools_used"`
 }
 
 type AIProviderClient interface {
@@ -634,6 +639,41 @@ func handleAIAnalyzeStock(w http.ResponseWriter, r *http.Request) {
 	successResponse(w, resp)
 }
 
+func handleAIResearchStock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "只支持POST请求")
+		return
+	}
+	var req AIAnalyzeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+	symbols := normalizeSymbols([]string{req.Symbol})
+	if len(symbols) == 0 {
+		errorResponse(w, "symbol不能为空")
+		return
+	}
+	req.Symbol = symbols[0]
+	req.Research = true
+	input := cloneAIInput(req.Input)
+	input["symbol"] = req.Symbol
+	input["report_type"] = "single_stock_research"
+	input["prompt_version"] = "research-v1"
+	if marketData, err := fetchAnalysisContext(r.Context(), []string{req.Symbol}); err == nil {
+		input["market_data"] = firstAnalysisItem(marketData)
+	} else {
+		input["market_data_error"] = err.Error()
+	}
+	enrichResearchInput(r.Context(), req.Symbol, input)
+	resp, err := runAIAnalysis(r.Context(), "stock_research_report", req, input, stockResearchMessages(req.Symbol, input))
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	successResponse(w, resp)
+}
+
 func handleAIAnalyzeWatchlist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errorResponse(w, "只支持POST请求")
@@ -674,6 +714,85 @@ func handleAIAnalyzeWatchlist(w http.ResponseWriter, r *http.Request) {
 	successResponse(w, resp)
 }
 
+func handleAISelectRank(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "只支持POST请求")
+		return
+	}
+	var req AIAnalyzeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+	symbols := normalizeSymbols(req.Symbols)
+	if len(symbols) == 0 {
+		errorResponse(w, "symbols不能为空")
+		return
+	}
+	if len(symbols) > 20 {
+		symbols = symbols[:20]
+	}
+	input := cloneAIInput(req.Input)
+	input["symbols"] = symbols
+	input["prompt_version"] = "selection-v1"
+	input["methodology"] = "hikyuu_ma_cross_reference"
+	tools := []string{}
+	if marketData, err := fetchAnalysisContext(r.Context(), symbols); err == nil {
+		input["market_data"] = analysisItemsBySymbol(marketData)
+		tools = append(tools, "market_context")
+	} else {
+		input["market_data_error"] = err.Error()
+	}
+	baseURL := hikyuuServiceURL()
+	if baseURL == "" {
+		input["hikyuu_error"] = "HIKYUU_DATA_SERVICE_URL未配置"
+	} else {
+		metadataRaw := map[string]interface{}{}
+		if err := fetchJSON(r.Context(), http.MethodGet, baseURL+"/api/hikyuu/metadata", nil, &metadataRaw); err == nil {
+			metadata := unwrapToolData(metadataRaw)
+			input["hikyuu"] = metadata
+			if item, ok := metadata.(map[string]interface{}); ok {
+				input["data_revision"] = stringValue(item, "data_revision", "")
+			}
+			tools = append(tools, "hikyuu_metadata")
+		} else {
+			input["hikyuu_metadata_error"] = err.Error()
+		}
+		fast := intValue(input, "fast_period", 5)
+		slow := intValue(input, "slow_period", 20)
+		historyCount := intValue(input, "history_count", 520)
+		backtestRaw := map[string]interface{}{}
+		payload := map[string]interface{}{"symbols": symbols, "fast": fast, "slow": slow, "history_count": historyCount, "type": "day"}
+		if err := fetchJSON(r.Context(), http.MethodPost, baseURL+"/api/hikyuu/backtest", payload, &backtestRaw); err == nil {
+			input["historical_validation"] = compactBacktest(unwrapToolData(backtestRaw))
+			tools = append(tools, "hikyuu_ma_cross_backtest")
+		} else {
+			input["historical_validation_error"] = err.Error()
+		}
+	}
+	input["tools_used"] = tools
+	resp, err := runAIAnalysis(r.Context(), "stock_selection_ranking", req, input, selectionRankingMessages(input))
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	successResponse(w, resp)
+}
+
+func compactBacktest(value interface{}) interface{} {
+	item, ok := value.(map[string]interface{})
+	if !ok {
+		return value
+	}
+	result := map[string]interface{}{}
+	for _, key := range []string{"engine", "calculation_engine", "symbols", "signals", "per_symbol", "metrics", "warnings", "meta"} {
+		if field, exists := item[key]; exists {
+			result[key] = field
+		}
+	}
+	return result
+}
+
 func runAIAnalysis(ctx context.Context, taskType string, req AIAnalyzeRequest, input map[string]interface{}, messages []AIMessage) (AIAnalyzeResponse, error) {
 	credential, err := resolveAICredential(req.CredentialID, req.Provider)
 	if err != nil {
@@ -712,6 +831,11 @@ func runAIAnalysis(ctx context.Context, taskType string, req AIAnalyzeRequest, i
 		usage = chatResp.Usage
 		_ = json.Unmarshal([]byte(content), &result)
 	}
+	toolsUsed := input["tools_used"]
+	if toolsUsed == nil {
+		toolsUsed = []string{}
+	}
+	input["tools_used"] = toolsUsed
 	run, saveErr := appStore.SaveAIAnalysisRun(AIAnalysisRun{
 		TaskType:       taskType,
 		Provider:       provider,
@@ -722,6 +846,9 @@ func runAIAnalysis(ctx context.Context, taskType string, req AIAnalyzeRequest, i
 		Error:          errorText,
 		LatencyMS:      latencyMS,
 		TokenUsageJSON: mustJSON(usage),
+		PromptVersion:  stringValue(input, "prompt_version", "v1"),
+		DataRevision:   stringValue(input, "data_revision", ""),
+		ToolsJSON:      mustJSON(toolsUsed),
 	})
 	if chatErr != nil {
 		return AIAnalyzeResponse{}, chatErr
@@ -730,17 +857,213 @@ func runAIAnalysis(ctx context.Context, taskType string, req AIAnalyzeRequest, i
 		return AIAnalyzeResponse{}, saveErr
 	}
 	return AIAnalyzeResponse{
-		RunID:       run.ID,
-		TaskType:    taskType,
-		Provider:    provider,
-		Model:       model,
-		Content:     content,
-		Result:      result,
-		Usage:       usage,
-		LatencyMS:   latencyMS,
-		Input:       input,
-		GeneratedAt: run.CreatedAt,
+		RunID:         run.ID,
+		TaskType:      taskType,
+		Provider:      provider,
+		Model:         model,
+		Content:       content,
+		Result:        result,
+		Usage:         usage,
+		LatencyMS:     latencyMS,
+		Input:         input,
+		GeneratedAt:   run.CreatedAt,
+		PromptVersion: run.PromptVersion,
+		DataRevision:  run.DataRevision,
+		ToolsUsed:     decodeStringSlice(input["tools_used"]),
 	}, nil
+}
+
+func decodeStringSlice(value interface{}) []string {
+	items, ok := value.([]string)
+	if ok {
+		return items
+	}
+	values, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, item := range values {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func stringValue(input map[string]interface{}, key, fallback string) string {
+	if input == nil {
+		return fallback
+	}
+	if value, ok := input[key].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return fallback
+}
+
+func intValue(input map[string]interface{}, key string, fallback int) int {
+	if input == nil {
+		return fallback
+	}
+	switch value := input[key].(type) {
+	case float64:
+		if value > 0 {
+			return int(value)
+		}
+	case int:
+		if value > 0 {
+			return value
+		}
+	}
+	return fallback
+}
+
+func fetchJSON(ctx context.Context, method, endpoint string, payload interface{}, output interface{}) error {
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("研究工具返回 %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	if err != nil {
+		return err
+	}
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return err
+	}
+	if code, ok := envelope["code"].(float64); ok && code != 0 {
+		message := strings.TrimSpace(fmt.Sprint(envelope["message"]))
+		if message == "" {
+			message = "工具返回失败"
+		}
+		return errors.New(message)
+	}
+	if err := json.Unmarshal(raw, output); err != nil {
+		return err
+	}
+	return nil
+}
+
+func hikyuuServiceURL() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("HIKYUU_DATA_SERVICE_URL")), "/")
+}
+
+func unwrapToolData(raw map[string]interface{}) interface{} {
+	if data, ok := raw["data"]; ok {
+		return data
+	}
+	return raw
+}
+
+func enrichResearchInput(ctx context.Context, symbol string, input map[string]interface{}) {
+	baseURL := hikyuuServiceURL()
+	if baseURL == "" {
+		input["hikyuu_error"] = "HIKYUU_DATA_SERVICE_URL未配置"
+		return
+	}
+	tools := []string{"market_context"}
+	metadataRaw := map[string]interface{}{}
+	if err := fetchJSON(ctx, http.MethodGet, baseURL+"/api/hikyuu/metadata", nil, &metadataRaw); err != nil {
+		input["hikyuu_error"] = err.Error()
+	} else {
+		metadata := unwrapToolData(metadataRaw)
+		input["hikyuu"] = metadata
+		if item, ok := metadata.(map[string]interface{}); ok {
+			input["data_revision"] = stringValue(item, "data_revision", "")
+		}
+		tools = append(tools, "hikyuu_metadata")
+	}
+
+	qualityRaw := map[string]interface{}{}
+	qualityURL := baseURL + "/api/hikyuu/quality?code=" + url.QueryEscape(symbol) + "&period=day"
+	if err := fetchJSON(ctx, http.MethodGet, qualityURL, nil, &qualityRaw); err != nil {
+		input["hikyuu_quality_error"] = err.Error()
+	} else {
+		input["hikyuu_quality"] = unwrapToolData(qualityRaw)
+		tools = append(tools, "hikyuu_quality")
+	}
+
+	indicators := map[string]interface{}{}
+	indicatorSuccess := map[string]bool{}
+	indicatorNames := []string{"ma", "ema", "macd", "boll", "atr"}
+	type indicatorResult struct {
+		name string
+		data interface{}
+		err  error
+	}
+	results := make(chan indicatorResult, len(indicatorNames))
+	var group sync.WaitGroup
+	for _, name := range indicatorNames {
+		group.Add(1)
+		go func(indicatorName string) {
+			defer group.Done()
+			payload := map[string]interface{}{"code": symbol, "type": "day", "indicator": indicatorName, "limit": 240, "recover": "none"}
+			resultRaw := map[string]interface{}{}
+			err := fetchJSON(ctx, http.MethodPost, baseURL+"/api/hikyuu/indicators", payload, &resultRaw)
+			results <- indicatorResult{name: indicatorName, data: unwrapToolData(resultRaw), err: err}
+		}(name)
+	}
+	group.Wait()
+	close(results)
+	for result := range results {
+		if result.err != nil {
+			input["hikyuu_"+result.name+"_error"] = result.err.Error()
+			continue
+		}
+		indicators[result.name] = result.data
+		indicatorSuccess[result.name] = true
+	}
+	for _, name := range indicatorNames {
+		if indicatorSuccess[name] {
+			tools = append(tools, "hikyuu_"+name)
+		}
+	}
+	if len(indicators) > 0 {
+		input["hikyuu_indicators"] = indicators
+	}
+	input["tools_used"] = tools
+}
+
+func stockResearchMessages(symbol string, input map[string]interface{}) []AIMessage {
+	system := `你是本地A股研究工作台的审慎研究员。请基于输入数据生成单股研究报告，不提供确定性买卖建议，不承诺收益。
+
+必须只输出一个JSON对象，严格使用以下结构：
+{"summary":"","confidence":"low|medium|high","facts":[{"label":"","value":"","source":""}],"technical":{"trend":"up|down|sideways|unknown","signals":[{"name":"","value":"","evidence":[]}]},"fundamental":{"summary":"","evidence":[]},"macro_risk":{"level":"low|medium|high|unknown","events":[]},"strategy_fit":{"status":"match|mismatch|unknown","reason":""},"evidence":[{"claim":"","evidence":[],"source":""}],"data_quality":{"status":"pass|warn|unknown","notes":[]},"next_checks":[],"discipline_notes":[],"disclaimer":"仅供学习研究和复盘，不构成投资建议"}
+
+严格区分事实、指标计算结果和AI判断：facts只写输入中的事实；technical只解释输入中的指标；evidence必须引用具体输入字段或工具名称。禁止编造行情、财务、宏观事件、新闻或策略回测结果。缺少数据时写unknown，并在data_quality.notes说明。macro_risk只能使用输入中的宏观事件，未提供时返回unknown。`
+	user := fmt.Sprintf("请为标的 %s 生成研究报告。输入数据如下：\n%s\n\n只输出JSON。", symbol, mustJSON(input))
+	return []AIMessage{{Role: "system", Content: system}, {Role: "user", Content: user}}
+}
+
+func selectionRankingMessages(input map[string]interface{}) []AIMessage {
+	system := `你是A股候选筛选助手。候选股票已经由确定性公式产生，Hikyuu提供统一的MA交叉参考回测。你的职责仅是根据输入证据排序和解释，不得创造数据或把历史胜率描述成未来成功概率。
+
+必须只输出一个JSON对象，结构如下：
+{"summary":"","methodology":"hikyuu_ma_cross_reference","ranking":[{"rank":1,"symbol":"","name":"","status":"candidate|watch|exclude","score":0,"historical_validation":{"sample_count":0,"win_rate":0,"average_return":0,"max_drawdown":0},"reasons":[],"risks":[],"next_checks":[]}],"data_quality":{"status":"pass|warn|unknown","notes":[]},"discipline_notes":[],"disclaimer":"仅供学习研究和复盘，不构成投资建议"}
+
+规则：ranking只能包含输入symbols；历史统计必须逐字使用historical_validation.per_symbol中的数值；没有样本或验证失败时不得填写推测值，status应为watch或exclude并在risks说明；score只是候选集内的相对排序分，不是概率；优先考虑样本量、历史胜率、平均收益、最大回撤和当前行情风险；相同证据下保持保守。`
+	user := fmt.Sprintf("请对候选股票进行排序。输入数据如下：\n%s\n\n只输出JSON。", mustJSON(input))
+	return []AIMessage{{Role: "system", Content: system}, {Role: "user", Content: user}}
 }
 
 func stockAnalysisMessages(symbol string, input map[string]interface{}) []AIMessage {

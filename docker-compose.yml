@@ -130,6 +130,7 @@ services:
       - TZ=Asia/Shanghai
       - PORT=8083
       - MARKET_SERVICE_URL=http://market-service:8081
+      - HIKYUU_DATA_SERVICE_URL=http://hikyuu-data-service:8091
       - AI_SERVICE_TOKEN=${AI_SERVICE_TOKEN:-}
       - AUTOMATION_SCHEDULER_ENABLED=false
       - AI_CREDENTIAL_SECRET=${AI_CREDENTIAL_SECRET:-tdx-workbench-local-ai-credential-secret}

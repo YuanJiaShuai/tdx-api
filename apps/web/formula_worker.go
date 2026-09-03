@@ -163,6 +163,10 @@ func loadFormulaKline(symbol, period string, calcCount int) ([]FormulaKline, err
 	return loadFormulaKlineWithContext(context.Background(), symbol, period, calcCount)
 }
 
+func loadTrackingKline(ctx context.Context, symbol string, calcCount int) ([]FormulaKline, error) {
+	return loadFormulaKlineWithContext(ctx, symbol, "day", calcCount)
+}
+
 func loadFormulaKlineWithContext(ctx context.Context, symbol, period string, calcCount int) ([]FormulaKline, error) {
 	klineType := formulaPeriodToKlineType(period)
 	if useMarketService() {

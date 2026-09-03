@@ -60,6 +60,7 @@ const (
 	DecisionWatchPoolID              = "watchlist"
 	DecisionExcludePoolID            = "exclude"
 	FixedCloseSyncTaskID             = "fixed-close-sync"
+	FixedSelectionTrackingTaskID     = "fixed-selection-tracking"
 	LegacyMarketInfoSyncTaskID       = "market-info-sync"
 	LegacyMarketInfoSyncPayload      = `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`
 	MarketLongTigerSyncTaskID        = "market-long-tiger-sync"
@@ -102,16 +103,17 @@ type AutomationRun struct {
 }
 
 type SelectionResult struct {
-	ID          string  `json:"id"`
-	RunID       string  `json:"run_id"`
-	TaskID      string  `json:"task_id"`
-	TaskName    string  `json:"task_name"`
-	FormulaID   string  `json:"formula_id"`
-	FormulaName string  `json:"formula_name"`
-	Symbol      string  `json:"symbol"`
-	Latest      float64 `json:"latest"`
-	DetailJSON  string  `json:"detail_json"`
-	CreatedAt   string  `json:"created_at"`
+	ID           string  `json:"id"`
+	RunID        string  `json:"run_id"`
+	TaskID       string  `json:"task_id"`
+	TaskName     string  `json:"task_name"`
+	FormulaID    string  `json:"formula_id"`
+	FormulaName  string  `json:"formula_name"`
+	Symbol       string  `json:"symbol"`
+	Latest       float64 `json:"latest"`
+	DetailJSON   string  `json:"detail_json"`
+	TrackingJSON string  `json:"tracking_json"`
+	CreatedAt    string  `json:"created_at"`
 }
 
 type DecisionNote struct {
@@ -301,6 +303,7 @@ func (s *AppStore) migrate() error {
 			symbol TEXT NOT NULL,
 			latest REAL NOT NULL DEFAULT 0,
 			detail_json TEXT NOT NULL DEFAULT '{}',
+			tracking_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_created_at ON selection_results(created_at)`,
@@ -406,6 +409,7 @@ func (s *AppStore) migrate() error {
 			"actual_value": "TEXT NOT NULL DEFAULT ''", "revision": "TEXT NOT NULL DEFAULT ''",
 		},
 		"macro_alert_settings": {"notify_webhooks": "INTEGER NOT NULL DEFAULT 0", "webhook_ids": "TEXT NOT NULL DEFAULT '[]'"},
+		"selection_results":    {"tracking_json": "TEXT NOT NULL DEFAULT '{}'"},
 	} {
 		for column, definition := range columns {
 			if err := s.ensureColumn(table, column, definition); err != nil {
@@ -594,8 +598,22 @@ func fixedCloseSyncAutomationTask() AutomationTask {
 	}
 }
 
+func fixedSelectionTrackingAutomationTask() AutomationTask {
+	return AutomationTask{
+		ID:          FixedSelectionTrackingTaskID,
+		Name:        "收盘作业：验证选股表现",
+		Type:        "selection_tracking",
+		Cron:        "0 30 18 * * 1-5",
+		Enabled:     false,
+		PayloadJSON: `{"limit":500,"horizons":[1,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+		WebhookIDs:  "[]",
+		Readonly:    true,
+		System:      true,
+	}
+}
+
 func IsFixedAutomationTaskID(id string) bool {
-	return id == FixedCloseSyncTaskID
+	return id == FixedCloseSyncTaskID || id == FixedSelectionTrackingTaskID
 }
 
 func decorateAutomationTask(t AutomationTask) AutomationTask {
@@ -607,14 +625,17 @@ func decorateAutomationTask(t AutomationTask) AutomationTask {
 }
 
 func (s *AppStore) ensureFixedAutomationTasks() error {
-	task := fixedCloseSyncAutomationTask()
 	now := NowText()
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
-		(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
-		"", "", "", "", now, now)
-	return err
+	for _, task := range []AutomationTask{fixedCloseSyncAutomationTask(), fixedSelectionTrackingAutomationTask()} {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
+			(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
+			"", "", "", "", now, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func marketInfoAutomationTasks() []AutomationTask {
@@ -1541,10 +1562,13 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 		if strings.TrimSpace(item.DetailJSON) == "" {
 			item.DetailJSON = "{}"
 		}
+		if strings.TrimSpace(item.TrackingJSON) == "" {
+			item.TrackingJSON = "{}"
+		}
 		if _, err := tx.Exec(`INSERT INTO selection_results
-			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?)`,
-			item.ID, item.RunID, item.TaskID, item.TaskName, item.FormulaID, item.FormulaName, item.Symbol, item.Latest, item.DetailJSON, item.CreatedAt); err != nil {
+			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			item.ID, item.RunID, item.TaskID, item.TaskName, item.FormulaID, item.FormulaName, item.Symbol, item.Latest, item.DetailJSON, item.TrackingJSON, item.CreatedAt); err != nil {
 			return err
 		}
 	}
@@ -1606,7 +1630,7 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results`
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at FROM selection_results`
 	args := []interface{}{}
 	conds := []string{}
 	if taskID != "" {
@@ -1639,7 +1663,7 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	var list []SelectionResult
 	for rows.Next() {
 		var item SelectionResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.TrackingJSON, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, item)
@@ -1648,6 +1672,23 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 		list = []SelectionResult{}
 	}
 	return list, rows.Err()
+}
+
+// UpdateSelectionTracking stores the deterministic forward-performance snapshot
+// separately from the original formula result, allowing it to be refreshed as
+// more trading days become available.
+func (s *AppStore) UpdateSelectionTracking(id, trackingJSON string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("选股结果ID不能为空")
+	}
+	if strings.TrimSpace(trackingJSON) == "" {
+		trackingJSON = "{}"
+	}
+	if !json.Valid([]byte(trackingJSON)) {
+		return errors.New("tracking_json不是有效JSON")
+	}
+	_, err := s.db.Exec(`UPDATE selection_results SET tracking_json=? WHERE id=?`, trackingJSON, id)
+	return err
 }
 
 func normalizeWebhook(h Webhook) Webhook {

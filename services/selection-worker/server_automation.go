@@ -507,6 +507,15 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			PayloadJSON: `{"scope":"all","tables":["day"],"limit":4,"max_codes":200,"block_files":["gn","fg","zs","hy","block"],"with_index":true,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
+	case "selection_tracking":
+		return AutomationTask{
+			Name:        "选股结果跟踪评估",
+			Type:        "selection_tracking",
+			Cron:        "0 30 18 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"limit":500,"horizons":[1,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+			WebhookIDs:  "[]",
+		}, nil
 	case "market_long_tiger_sync":
 		return AutomationTask{
 			Name:        "龙虎榜同步",
@@ -889,9 +898,17 @@ func scoreSignal(rows []FormulaKline) SignalScore {
 
 func trackNextDay(item SelectionResult, rows []FormulaKline) NextDayTrack {
 	signalDate := selectionSignalDate(item)
+	base := 0.0
+	for _, row := range rows {
+		if row.Date <= signalDate && row.Close > 0 {
+			base = row.Close
+		}
+	}
+	if base <= 0 {
+		base = item.Latest
+	}
 	for _, row := range rows {
 		if row.Date > signalDate {
-			base := item.Latest
 			if base <= 0 {
 				base = row.YClose
 			}

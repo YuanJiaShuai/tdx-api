@@ -9,6 +9,12 @@ type Strategy = workbench.Strategy
 type AutomationTask = workbench.AutomationTask
 type AutomationRun = workbench.AutomationRun
 type SelectionResult = workbench.SelectionResult
+type TrackingBar = workbench.TrackingBar
+type SelectionHorizon = workbench.SelectionHorizon
+type SelectionTracking = workbench.SelectionTracking
+type SelectionTrackingItem = workbench.SelectionTrackingItem
+type SelectionTrackingSummary = workbench.SelectionTrackingSummary
+type SelectionHorizonSummary = workbench.SelectionHorizonSummary
 type DecisionNote = workbench.DecisionNote
 type Webhook = workbench.Webhook
 type TradingAccount = workbench.TradingAccount
@@ -21,10 +27,16 @@ type MacroEventSyncState = workbench.MacroEventSyncState
 type MacroAlertSettings = workbench.MacroAlertSettings
 
 const (
-	DecisionWatchPoolID   = workbench.DecisionWatchPoolID
-	DecisionExcludePoolID = workbench.DecisionExcludePoolID
-	FixedCloseSyncTaskID  = workbench.FixedCloseSyncTaskID
-	TradingSystemStateID  = workbench.TradingSystemStateID
+	DefaultTrackingTargetReturn  = workbench.DefaultTrackingTargetReturn
+	DefaultTrackingDrawdownLimit = workbench.DefaultTrackingDrawdownLimit
+)
+
+const (
+	DecisionWatchPoolID          = workbench.DecisionWatchPoolID
+	DecisionExcludePoolID        = workbench.DecisionExcludePoolID
+	FixedCloseSyncTaskID         = workbench.FixedCloseSyncTaskID
+	FixedSelectionTrackingTaskID = workbench.FixedSelectionTrackingTaskID
+	TradingSystemStateID         = workbench.TradingSystemStateID
 )
 
 func OpenAppStore() (*AppStore, error) {

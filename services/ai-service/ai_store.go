@@ -38,6 +38,9 @@ type AIAnalysisRun struct {
 	Error          string `json:"error"`
 	LatencyMS      int64  `json:"latency_ms"`
 	TokenUsageJSON string `json:"token_usage_json"`
+	PromptVersion  string `json:"prompt_version"`
+	DataRevision   string `json:"data_revision,omitempty"`
+	ToolsJSON      string `json:"tools_json"`
 	CreatedAt      string `json:"created_at"`
 }
 
@@ -228,12 +231,18 @@ func (s *AppStore) SaveAIAnalysisRun(run AIAnalysisRun) (AIAnalysisRun, error) {
 	if strings.TrimSpace(run.TokenUsageJSON) == "" {
 		run.TokenUsageJSON = "{}"
 	}
+	if strings.TrimSpace(run.ToolsJSON) == "" {
+		run.ToolsJSON = "[]"
+	}
+	if strings.TrimSpace(run.PromptVersion) == "" {
+		run.PromptVersion = "v1"
+	}
 	if run.CreatedAt == "" {
 		run.CreatedAt = nowText()
 	}
 	_, err := s.db.Exec(`INSERT INTO ai_analysis_runs
-		(id,task_type,provider,model,input_json,result_json,status,error,latency_ms,token_usage_json,created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		run.ID, run.TaskType, run.Provider, run.Model, run.InputJSON, run.ResultJSON, run.Status, run.Error, run.LatencyMS, run.TokenUsageJSON, run.CreatedAt)
+		(id,task_type,provider,model,input_json,result_json,status,error,latency_ms,token_usage_json,prompt_version,data_revision,tools_json,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.TaskType, run.Provider, run.Model, run.InputJSON, run.ResultJSON, run.Status, run.Error, run.LatencyMS, run.TokenUsageJSON, run.PromptVersion, run.DataRevision, run.ToolsJSON, run.CreatedAt)
 	return run, err
 }

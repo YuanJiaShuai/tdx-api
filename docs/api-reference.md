@@ -1279,6 +1279,17 @@ curl -X POST http://localhost:8080/api/batch-quote \
 
 ## 上游能力补充接口
 
+### AI 研究
+
+| 接口 | 说明 | 示例 |
+| --- | --- | --- |
+| `POST /api/ai/research/stock` | 生成单股结构化研究报告；受控读取行情与 Hikyuu 证据 | `{"provider":"deepseek","symbol":"603171","input":{"name":"税友股份"}}` |
+| `POST /api/ai/select/rank` | 对候选股票执行 Hikyuu MA 参考验证并由 AI 排序 | `{"provider":"deepseek","symbols":["000001","603171"],"input":{"fast_period":5,"slow_period":20}}` |
+
+请求中的 `credential_id`、`provider`、`model`、`options` 与其他 AI 接口一致。响应 `data` 包含 `result`（结论、技术信号、证据链、宏观风险、策略适配、数据质量、下一步检查）以及 `prompt_version`、`data_revision`、`tools_used`。报告严格区分输入事实、指标计算结果和 AI 判断；数据缺失时返回 `unknown`，不补造行情或事件。
+
+选股排序响应中的 `historical_validation` 来自 Hikyuu 参考回测，`score` 仅表示候选集内相对排序，不是未来收益概率。
+
 ### 标准行情扩展
 
 | 接口 | 说明 | 示例 |
@@ -1354,9 +1365,13 @@ curl -X POST http://localhost:8080/api/batch-quote \
 | `GET /api/automations` | 自动化任务列表 | `/api/automations` |
 | `POST /api/automations/{id}/run` | 手动运行自动化任务 | `{}` |
 | `GET /api/selection-results` | 查看选股命中结果 | `/api/selection-results?limit=100` |
+| `GET /api/selection-results/tracking` | 计算并查看信号后 D1/D5/D10 的真实前向表现与聚合命中率 | `/api/selection-results/tracking?latest=1&target_return=3&drawdown_limit=5` |
+| `POST /api/selection-results/tracking` | 手动刷新选股结果跟踪快照 | `/api/selection-results/tracking?limit=500` |
 | `GET /api/webhooks` | Webhook 通知配置列表 | `/api/webhooks` |
 | `GET /api/hqchart/kline` | Web 页面使用的专业行情 K 线对象 | `/api/hqchart/kline?symbol=000001&period=day&limit=500` |
 | `GET /api/hqchart/history` | HQChart 原生历史 K 线数组适配 | `/api/hqchart/history?symbol=000001&period=day&limit=800` |
+
+选股结果跟踪使用信号后的真实交易日 K 线计算开盘收益、收盘收益、区间最高涨幅和最大回撤。达标率是历史样本的确定性统计，不是未来成功概率；未满观察窗口的结果会标记为“待观察”。
 
 `/api/formula/health` 在 Docker 模式下正常会返回 `engine=hqchartpy2` 和 `hqchartpy2_available=true`。如果 HQChartPy2 不可用，worker 会继续使用内置 fallback 执行器。
 
@@ -1375,6 +1390,8 @@ curl -s http://localhost:8080/api/formula/run \
 | type | 说明 |
 | --- | --- |
 | `stock_selection` | 股票池 + 公式选股，payload 支持 `formula_id`、`pool_id`、`symbols`、`batch_size`、`continue_on_error` |
+| `strategy_selection` | 策略模板选股，策略分数保存在结果详情中 |
+| `selection_tracking` | 根据后续交易日 K 线更新 D1/D5/D10 表现，默认目标收益 3%、最大回撤 5% |
 | `system_sync` | 系统同步任务，payload 使用 `scope` 控制同步范围 |
 | `custom` | 自定义任务，支持 `noop`、`system_sync`、`http_request` |
 

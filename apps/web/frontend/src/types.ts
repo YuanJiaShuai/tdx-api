@@ -451,7 +451,57 @@ export interface SelectionResult {
   symbol: string;
   latest: number;
   detail_json: string;
+  tracking_json?: string;
   created_at: string;
+}
+
+export interface SelectionHorizon {
+  horizon_days: number;
+  status: 'pending' | 'complete' | 'unavailable' | string;
+  as_of_date?: number;
+  open_return?: number;
+  close_return?: number;
+  max_gain?: number;
+  max_drawdown?: number;
+  target_return?: number;
+  drawdown_limit?: number;
+  success?: boolean;
+  reason?: string;
+}
+
+export interface SelectionTracking {
+  version?: string;
+  signal_date?: number;
+  base_price?: number;
+  target_return?: number;
+  drawdown_limit?: number;
+  updated_at?: string;
+  horizons?: Record<string, SelectionHorizon>;
+}
+
+export interface SelectionTrackingItem {
+  result: SelectionResult;
+  tracking: SelectionTracking;
+  error?: string;
+}
+
+export interface SelectionHorizonSummary {
+  completed?: number;
+  pending?: number;
+  unavailable?: number;
+  success_count?: number;
+  success_rate?: number;
+  average_open_return?: number;
+  average_close_return?: number;
+  average_max_gain?: number;
+  average_max_drawdown?: number;
+}
+
+export interface SelectionTrackingResponse {
+  items: SelectionTrackingItem[];
+  summary?: { total?: number; horizons?: Record<string, SelectionHorizonSummary> };
+  policy?: { target_return?: number; drawdown_limit?: number };
+  as_of?: string;
 }
 
 export interface DecisionNote {
@@ -585,6 +635,69 @@ export interface AICredential {
   api_key_masked?: string;
   source?: string;
   extra_json?: string;
+}
+
+export interface AIResearchReport {
+  summary?: string;
+  confidence?: string;
+  facts?: Array<{ label?: string; value?: string; source?: string }>;
+  technical?: { trend?: string; signals?: Array<{ name?: string; value?: string; evidence?: string[] }> };
+  fundamental?: { summary?: string; evidence?: string[] };
+  macro_risk?: { level?: string; events?: Array<Record<string, unknown>> };
+  strategy_fit?: { status?: string; reason?: string };
+  evidence?: Array<{ claim?: string; evidence?: string[]; source?: string }>;
+  data_quality?: { status?: string; notes?: string[] };
+  next_checks?: string[];
+  discipline_notes?: string[];
+  disclaimer?: string;
+  [key: string]: unknown;
+}
+
+export interface AIResearchResponse {
+  run_id: string;
+  task_type: string;
+  provider: string;
+  model: string;
+  content: string;
+  result: AIResearchReport;
+  usage?: Record<string, unknown>;
+  latency_ms?: number;
+  input?: Record<string, unknown>;
+  generated_at?: string;
+  prompt_version?: string;
+  data_revision?: string;
+  tools_used?: string[];
+}
+
+export interface AISelectionRankItem {
+  rank?: number;
+  symbol: string;
+  name?: string;
+  status?: 'candidate' | 'watch' | 'exclude' | string;
+  score?: number;
+  historical_validation?: {
+    sample_count?: number;
+    win_rate?: number;
+    average_return?: number;
+    total_return?: number;
+    max_drawdown?: number;
+  };
+  reasons?: string[];
+  risks?: string[];
+  next_checks?: string[];
+}
+
+export interface AISelectionResult {
+  summary?: string;
+  methodology?: string;
+  ranking?: AISelectionRankItem[];
+  data_quality?: { status?: string; notes?: string[] };
+  discipline_notes?: string[];
+  disclaimer?: string;
+}
+
+export interface AISelectionResponse extends Omit<AIResearchResponse, 'result'> {
+  result: AISelectionResult;
 }
 
 export interface TDXHQChartAPI {

@@ -487,7 +487,7 @@ func strategyItemsToSelectionResults(items []StrategySelectionItem) []SelectionR
 	for _, item := range items {
 		results = append(results, SelectionResult{
 			Symbol:     item.Symbol,
-			Latest:     item.Score,
+			Latest:     item.Latest,
 			DetailJSON: mustJSON(item),
 			CreatedAt:  nowText(),
 		})

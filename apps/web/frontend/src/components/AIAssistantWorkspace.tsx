@@ -175,7 +175,7 @@ async function readSSE(
   }
 }
 
-export function AIAssistantWorkspace() {
+export function AIAssistantWorkspace({ embedded = false, workspaceContext = '' }: { embedded?: boolean; workspaceContext?: string }) {
   const [credentials, setCredentials] = useState<AICredential[]>([]);
   const [selectedCredentialId, setSelectedCredentialId] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>(readStoredMessages);
@@ -286,6 +286,7 @@ export function AIAssistantWorkspace() {
       const prompt = `${systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT}
 
 ${thinkingMode ? '请先充分分析，再给出结构化结论。' : '请直接给出简洁、结构化的结论。'}
+${workspaceContext ? `当前页面工作区：${workspaceContext}。` : ''}
 当前时间：${nowText()}`;
       const response = await fetch('/api/ai/chat/stream', {
         method: 'POST',
@@ -372,14 +373,14 @@ ${thinkingMode ? '请先充分分析，再给出结构化结论。' : '请直接
   }
 
   return (
-    <div className="ai-assistant-workspace">
+    <div className={`ai-assistant-workspace${embedded ? ' ai-assistant-workspace--embedded' : ''}`}>
       <Card
         className="work-card ai-assistant-card"
         title={
           <div className="ai-assistant-title">
             <RobotOutlined />
             <div>
-              <strong>AI 助手</strong>
+            <strong>研究助手</strong>
               <Text type="secondary">实时研究与复盘</Text>
             </div>
           </div>
@@ -452,7 +453,7 @@ ${thinkingMode ? '请先充分分析，再给出结构化结论。' : '请直接
                     </div>
                     <div className="ai-assistant-bubble">
                       <div className="ai-assistant-message-meta">
-                        <strong>{item.role === 'assistant' ? 'AI 助手' : '我'}</strong>
+                        <strong>{item.role === 'assistant' ? '研究助手' : '我'}</strong>
                         <Text type="secondary">{item.time}</Text>
                       </div>
                       {item.role === 'assistant' && item.reasoning ? (

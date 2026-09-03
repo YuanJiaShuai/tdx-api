@@ -31,6 +31,8 @@ func main() {
 	mux.HandleFunc("/api/ai/chat", withServiceAuth(handleAIChat))
 	mux.HandleFunc("/api/ai/chat/stream", withServiceAuth(handleAIChatStream))
 	mux.HandleFunc("/api/ai/analyze/stock", withServiceAuth(handleAIAnalyzeStock))
+	mux.HandleFunc("/api/ai/research/stock", withServiceAuth(handleAIResearchStock))
+	mux.HandleFunc("/api/ai/select/rank", withServiceAuth(handleAISelectRank))
 	mux.HandleFunc("/api/ai/analyze/watchlist", withServiceAuth(handleAIAnalyzeWatchlist))
 
 	port := strings.TrimSpace(os.Getenv("PORT"))

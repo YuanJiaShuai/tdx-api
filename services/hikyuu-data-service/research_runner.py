@@ -227,6 +227,7 @@ def run_reference_backtest(payload: dict[str, Any]) -> dict[str, Any]:
     history_count = max(slow + 2, min(2000, int(payload.get("history_count") or 520)))
     trades: list[dict[str, Any]] = []
     equity_points: dict[str, float] = {}
+    per_symbol: dict[str, dict[str, Any]] = {}
     warnings: list[str] = []
     for symbol in symbols:
         try:
@@ -237,6 +238,8 @@ def run_reference_backtest(payload: dict[str, Any]) -> dict[str, Any]:
         closes = _closes(bars)
         short, long = _sma(closes, fast), _sma(closes, slow)
         cash, shares, entry, entry_index = initial_cash, 0.0, 0.0, -1
+        trade_start = len(trades)
+        peak_equity, max_drawdown = initial_cash, 0.0
         for index in range(1, len(bars) - 1):
             if short[index] is None or long[index] is None or short[index - 1] is None or long[index - 1] is None:
                 continue
@@ -253,14 +256,27 @@ def run_reference_backtest(payload: dict[str, Any]) -> dict[str, Any]:
                     cash = shares * price * (1 - sell_cost)
                     trades.append({"symbol": symbol, "entry_date": bars[entry_index]["time"], "exit_date": next_bar["time"], "entry_price": entry, "exit_price": price, "return": price / entry * (1 - buy_cost) * (1 - sell_cost) - 1, "reason": "ma_cross"})
                     shares, entry, entry_index = 0.0, 0.0, -1
-            equity_points[bars[index]["time"]] = equity_points.get(bars[index]["time"], 0.0) + (cash + shares * closes[index])
+            equity = cash + shares * closes[index]
+            equity_points[bars[index]["time"]] = equity_points.get(bars[index]["time"], 0.0) + equity
+            peak_equity = max(peak_equity, equity)
+            if peak_equity > 0:
+                max_drawdown = max(max_drawdown, (peak_equity - equity) / peak_equity)
         if shares > 0 and bars:
             final = float(bars[-1].get("close") or 0)
             cash = shares * final * (1 - sell_cost)
             trades.append({"symbol": symbol, "entry_date": bars[entry_index]["time"], "exit_date": bars[-1]["time"], "entry_price": entry, "exit_price": final, "return": final / entry * (1 - buy_cost) * (1 - sell_cost) - 1, "reason": "final"})
+        symbol_trades = trades[trade_start:]
+        symbol_returns = [float(item["return"]) for item in symbol_trades]
+        per_symbol[symbol] = {
+            "sample_count": len(symbol_trades),
+            "win_rate": sum(1 for value in symbol_returns if value > 0) / len(symbol_returns) if symbol_returns else 0,
+            "average_return": sum(symbol_returns) / len(symbol_returns) if symbol_returns else 0,
+            "total_return": cash / initial_cash - 1,
+            "max_drawdown": max_drawdown,
+        }
     curve = [{"date": key, "equity": value} for key, value in sorted(equity_points.items())]
     total_return = 0.0
     if curve:
         total_return = curve[-1]["equity"] / (initial_cash * len(symbols)) - 1
     wins = [trade for trade in trades if trade["return"] > 0]
-    return {"engine": "hikyuu", "calculation_engine": "hikyuu-data-reference", "symbols": len(symbols), "signals": len(trades), "trades": trades, "equity_curve": curve, "metrics": {"symbols": len(symbols), "trades": len(trades), "win_rate": len(wins) / len(trades) if trades else 0, "total_return": total_return}, "warnings": warnings, "meta": {"source": "hikyuu", "data_revision": os.getenv("HIKYUU_DATA_REVISION", "runtime"), "strategy": "ma_cross_reference", "params": {"fast": fast, "slow": slow}}}
+    return {"engine": "hikyuu", "calculation_engine": "hikyuu-data-reference", "symbols": len(symbols), "signals": len(trades), "trades": trades, "equity_curve": curve, "per_symbol": per_symbol, "metrics": {"symbols": len(symbols), "trades": len(trades), "win_rate": len(wins) / len(trades) if trades else 0, "total_return": total_return}, "warnings": warnings, "meta": {"source": "hikyuu", "data_revision": os.getenv("HIKYUU_DATA_REVISION", "runtime"), "strategy": "ma_cross_reference", "params": {"fast": fast, "slow": slow}}}
