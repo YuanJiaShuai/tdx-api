@@ -375,6 +375,7 @@ tdx-api/
 | [injoyai/tdx](https://github.com/injoyai/tdx) | 通达信协议库 |
 | [jones2000/HQChart](https://github.com/jones2000/HQChart) | K 线与专业行情展示 |
 | [jones2000/hqchartPy2](https://github.com/jones2000/hqchartPy2) | 公式计算引擎 |
+| [fasiondog/hikyuu](https://github.com/fasiondog/hikyuu) | 历史行情数据管理、同步与技术分析框架 |
 
 具体许可信息和第三方代码说明以各项目仓库及本仓库内的许可证文件为准。
 
