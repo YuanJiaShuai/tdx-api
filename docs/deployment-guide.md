@@ -11,6 +11,8 @@ docker compose logs -f
 
 访问 `http://localhost:8080`。
 
+当前发布版本为 `0.1.0-beta.1`，可通过 `GET /api/server-status` 查看 Web 服务版本；版本来源记录在仓库根目录 `VERSION`。
+
 当前 Docker 是多服务形态：Web、行情服务、公式引擎和指标选股服务分别运行在独立容器里。Web 对外暴露 `8080`，其他服务也保留宿主机调试端口。
 
 `docker-compose.yml` 会把宿主机 `./data` 挂载到容器 `/app/data`，自动化数据库、K 线库、同步快照和任务结果都会保留在项目目录下。重建镜像不会清空这些数据。

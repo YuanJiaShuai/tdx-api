@@ -887,7 +887,7 @@ func handleGetServerStatus(w http.ResponseWriter, r *http.Request) {
 		Status:    statusText,
 		Connected: client != nil,
 		Ready:     ready,
-		Version:   "1.0.0",
+		Version:   appVersion(),
 		Uptime:    "unknown",
 		Warnings:  startupWarnings,
 	}
