@@ -30,6 +30,13 @@ coverage.out
 /apps/web/web
 /apps/web/frontend/node_modules/
 /apps/web/frontend/*.tsbuildinfo
+
+# The Docker image serves the committed React build output.
+!/apps/
+!/apps/web/
+!/apps/web/static-react/
+!/apps/web/static-react/assets/
+!/apps/web/static-react/assets/*
 /services/ai-service/ai-service
 /services/market-service/market-service
 /services/selection-worker/selection-worker

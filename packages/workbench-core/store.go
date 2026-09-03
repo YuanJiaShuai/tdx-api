@@ -337,6 +337,60 @@ func (s *AppStore) migrate() error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS macro_events (
+			id TEXT PRIMARY KEY,
+			code TEXT NOT NULL,
+			name TEXT NOT NULL,
+			category TEXT NOT NULL DEFAULT 'macro',
+			country TEXT NOT NULL DEFAULT 'US',
+			impact TEXT NOT NULL DEFAULT 'medium',
+			starts_at TEXT NOT NULL,
+			scheduled_at TEXT NOT NULL DEFAULT '',
+			released_at TEXT NOT NULL DEFAULT '',
+			previous_value TEXT NOT NULL DEFAULT '',
+			forecast_value TEXT NOT NULL DEFAULT '',
+			actual_value TEXT NOT NULL DEFAULT '',
+			revision TEXT NOT NULL DEFAULT '',
+			a_share_date TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			source_url TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'scheduled',
+			acknowledged INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_macro_events_starts_at ON macro_events(starts_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_macro_events_impact ON macro_events(impact)`,
+		`CREATE TABLE IF NOT EXISTS macro_event_sync_state (
+			id TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'idle',
+			last_attempt_at TEXT NOT NULL DEFAULT '',
+			last_success_at TEXT NOT NULL DEFAULT '',
+			event_count INTEGER NOT NULL DEFAULT 0,
+			message TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS macro_alert_settings (
+			id TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			lead_minutes INTEGER NOT NULL DEFAULT 240,
+			window_before_minutes INTEGER NOT NULL DEFAULT 240,
+			window_after_minutes INTEGER NOT NULL DEFAULT 120,
+			critical_only INTEGER NOT NULL DEFAULT 0,
+			notify_webhooks INTEGER NOT NULL DEFAULT 0,
+			webhook_ids TEXT NOT NULL DEFAULT '[]',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS macro_alert_deliveries (
+			event_id TEXT NOT NULL,
+			webhook_id TEXT NOT NULL,
+			alert_kind TEXT NOT NULL,
+			sent_at TEXT NOT NULL,
+			PRIMARY KEY(event_id, webhook_id, alert_kind)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_macro_alert_deliveries_sent_at ON macro_alert_deliveries(sent_at)`,
 	}
 
 	for _, stmt := range stmts {
@@ -344,7 +398,47 @@ func (s *AppStore) migrate() error {
 			return err
 		}
 	}
+	// Existing workbench databases predate the extended event and notification fields.
+	for table, columns := range map[string]map[string]string{
+		"macro_events": {
+			"scheduled_at": "TEXT NOT NULL DEFAULT ''", "released_at": "TEXT NOT NULL DEFAULT ''",
+			"previous_value": "TEXT NOT NULL DEFAULT ''", "forecast_value": "TEXT NOT NULL DEFAULT ''",
+			"actual_value": "TEXT NOT NULL DEFAULT ''", "revision": "TEXT NOT NULL DEFAULT ''",
+		},
+		"macro_alert_settings": {"notify_webhooks": "INTEGER NOT NULL DEFAULT 0", "webhook_ids": "TEXT NOT NULL DEFAULT '[]'"},
+	} {
+		for column, definition := range columns {
+			if err := s.ensureColumn(table, column, definition); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+func (s *AppStore) ensureColumn(table, column, definition string) error {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
+	return err
 }
 
 func (s *AppStore) seedDefaults() error {
@@ -427,7 +521,10 @@ func (s *AppStore) seedDefaults() error {
 	if err := s.ensureMarketInfoAutomationTasks(); err != nil {
 		return err
 	}
-	return s.ensureTradingSystemState()
+	if err := s.ensureTradingSystemState(); err != nil {
+		return err
+	}
+	return s.ensureMacroEvents()
 }
 
 func defaultStrategyTemplates() []Strategy {
@@ -1564,7 +1661,7 @@ func normalizeWebhook(h Webhook) Webhook {
 		h.HeadersJSON = "{}"
 	}
 	if strings.TrimSpace(h.Events) == "" {
-		h.Events = `["automation.failed","automation.finished","stock_selection.finished","strategy_selection.finished"]`
+		h.Events = `["automation.failed","automation.finished","stock_selection.finished","strategy_selection.finished","macro_event.alert_due","macro_event.window_started"]`
 	}
 	return h
 }

@@ -6,6 +6,8 @@ import subprocess
 import threading
 import time
 import uuid
+import hashlib
+import sqlite3
 from configparser import ConfigParser
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +33,10 @@ QUERY_TIMEOUT_SECONDS = int(os.getenv("HIKYUU_QUERY_TIMEOUT_SECONDS", "120"))
 SCHEDULER_ENABLED = os.getenv("HIKYUU_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 AFTER_CLOSE_CRON = os.getenv("HIKYUU_AFTER_CLOSE_CRON", "30 16 * * 1-5")
 MAX_TASKS = int(os.getenv("HIKYUU_MAX_TASKS", "200"))
+DATA_REVISION_FILE = STOCKS_DIR / ".data-revision"
+INDICATOR_CACHE_SECONDS = int(os.getenv("HIKYUU_INDICATOR_CACHE_SECONDS", "60"))
+indicator_cache: Dict[str, Any] = {}
+indicator_cache_lock = threading.Lock()
 
 
 class SyncRequest(BaseModel):
@@ -85,6 +91,86 @@ def ensure_dirs() -> None:
     (STOCKS_DIR / "tmp").mkdir(parents=True, exist_ok=True)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def hikyuu_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("hikyuu")
+    except Exception:
+        return "unknown"
+
+
+def data_revision() -> str:
+    if DATA_REVISION_FILE.exists():
+        try:
+            value = DATA_REVISION_FILE.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    try:
+        latest = max((item.stat().st_mtime_ns for item in STOCKS_DIR.glob("*")), default=0)
+    except OSError:
+        latest = 0
+    return hashlib.sha1(f"{STOCKS_DIR}:{latest}".encode()).hexdigest()[:12]
+
+
+def dataset_metadata() -> Dict[str, Any]:
+    files: List[Dict[str, Any]] = []
+    try:
+        for item in sorted(STOCKS_DIR.glob("*.h5")) + sorted(STOCKS_DIR.glob("*.db")):
+            stat = item.stat()
+            files.append({"name": item.name, "bytes": stat.st_size, "modified_at": datetime.fromtimestamp(stat.st_mtime, TZ).isoformat()})
+    except OSError:
+        pass
+    symbols = None
+    stock_db = STOCKS_DIR / "stock.db"
+    if stock_db.exists():
+        try:
+            with sqlite3.connect(stock_db, timeout=2) as conn:
+                for table in ("stock", "stock_basic", "stocks"):
+                    try:
+                        symbols = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                        break
+                    except sqlite3.Error:
+                        continue
+        except sqlite3.Error:
+            symbols = None
+    return {"data_revision": data_revision(), "stocks": {"path": str(STOCKS_DIR), "symbols": symbols, "files": files}, "hikyuu_version": hikyuu_version(), "checked_at": now_text()}
+
+
+def dataset_quality(code: str = "", period: str = "day") -> Dict[str, Any]:
+    metadata = dataset_metadata()
+    files = metadata["stocks"]["files"]
+    h5_files = [item for item in files if str(item["name"]).endswith(".h5")]
+    total_bytes = sum(int(item["bytes"]) for item in files)
+    checks = [
+        {"id": "directory", "label": "数据目录", "status": "pass" if STOCKS_DIR.exists() else "fail", "detail": str(STOCKS_DIR)},
+        {"id": "hdf5", "label": "HDF5 文件", "status": "pass" if h5_files else "warn", "detail": f"{len(h5_files)} 个文件"},
+        {"id": "stock_db", "label": "基础信息库", "status": "pass" if (STOCKS_DIR / "stock.db").exists() else "warn", "detail": f"{metadata['stocks']['symbols'] or 0} 个证券"},
+        {"id": "size", "label": "数据体积", "status": "pass" if total_bytes > 0 else "warn", "detail": total_bytes},
+        {"id": "revision", "label": "修订标识", "status": "pass" if metadata["data_revision"] else "warn", "detail": metadata["data_revision"]},
+    ]
+    sample = None
+    if code:
+        try:
+            from query_runner import load_records
+            sample = load_records(code, period, "", "", 2000, "none")["list"]
+            times = [str(row.get("time")) for row in sample]
+            closes = [float(row.get("close") or 0) for row in sample]
+            duplicate_count = len(times) - len(set(times))
+            invalid_count = sum(1 for row in sample if float(row.get("high") or 0) < float(row.get("low") or 0) or float(row.get("close") or 0) <= 0)
+            checks.extend([
+                {"id": "sample_count", "label": "样本记录", "status": "pass" if sample else "warn", "detail": len(sample)},
+                {"id": "duplicates", "label": "重复时间", "status": "pass" if duplicate_count == 0 else "fail", "detail": duplicate_count},
+                {"id": "ohlc", "label": "OHLC 合法性", "status": "pass" if invalid_count == 0 else "fail", "detail": invalid_count},
+                {"id": "monotonic", "label": "时间序列", "status": "pass" if times == sorted(times) and len(closes) == len(sample) else "warn", "detail": "升序" if times == sorted(times) else "需检查"},
+            ])
+        except Exception as exc:
+            checks.append({"id": "sample_count", "label": "样本记录", "status": "warn", "detail": str(exc)})
+    status = "pass" if all(item["status"] == "pass" for item in checks) else "warn"
+    return {"status": status, "checks": checks, "data_revision": metadata["data_revision"], "checked_at": now_text()}
 
 
 def write_hikyuu_ini() -> None:
@@ -351,6 +437,10 @@ def run_task(task_id: str) -> None:
                 task["ended_at"] = now_text()
                 if exit_code == 0:
                     task["status"] = "success"
+                    try:
+                        DATA_REVISION_FILE.write_text(f"{uuid.uuid4().hex[:12]}\n", encoding="utf-8")
+                    except OSError:
+                        pass
                 else:
                     task["status"] = "failed"
                     task["error"] = f"import process exited with code {exit_code}"
@@ -438,6 +528,14 @@ def query_kline(
     ensure_dirs()
     if not (CONFIG_DIR / "hikyuu.ini").exists():
         write_hikyuu_ini()
+    try:
+        from query_runner import load_records
+        data = load_records(code.strip(), kline_type.strip().lower() or "day", start.strip(), end.strip(), limit, recover.strip().lower() or "none")
+        return {"code": 0, "message": "success", "data": data}
+    except Exception as in_process_error:
+        # Keep the subprocess path as an isolation fallback for incompatible
+        # Hikyuu builds or a damaged native runtime.
+        fallback_error = in_process_error
     env = os.environ.copy()
     env["HOME"] = str(CONFIG_DIR.parent if CONFIG_DIR.name == ".hikyuu" else Path("/root"))
     env["HIKYUU_STOCKS_DIR"] = str(STOCKS_DIR)
@@ -475,7 +573,7 @@ def query_kline(
         raise HTTPException(status_code=503, detail=f"hikyuu 查询进程启动失败: {exc}") from exc
 
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or "hikyuu 查询失败"
+        detail = completed.stderr.strip() or completed.stdout.strip() or str(fallback_error) or "hikyuu 查询失败"
         raise HTTPException(status_code=503, detail=detail[-1000:])
 
     output_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
@@ -487,6 +585,49 @@ def query_kline(
         raise HTTPException(status_code=503, detail="hikyuu 查询返回格式错误") from exc
 
     return {"code": 0, "message": "success", "data": data}
+
+
+@app.get("/api/hikyuu/metadata")
+def metadata() -> Dict[str, Any]:
+    ensure_dirs()
+    return {"code": 0, "message": "success", "data": dataset_metadata()}
+
+
+@app.get("/api/hikyuu/quality")
+def quality(code: str = Query(""), period: str = Query("day")) -> Dict[str, Any]:
+    ensure_dirs()
+    return {"code": 0, "message": "success", "data": dataset_quality(code.strip(), period.strip().lower() or "day")}
+
+
+@app.post("/api/hikyuu/indicators")
+def indicators(payload: Dict[str, Any]) -> Dict[str, Any]:
+    cache_key = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    current_time = time.monotonic()
+    with indicator_cache_lock:
+        cached = indicator_cache.get(cache_key)
+        if cached and current_time - cached["created_at"] < INDICATOR_CACHE_SECONDS:
+            return {"code": 0, "message": "success", "data": cached["data"]}
+    try:
+        from research_runner import calculate_indicator
+        result = calculate_indicator(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"指标计算失败: {exc}") from exc
+    with indicator_cache_lock:
+        indicator_cache[cache_key] = {"created_at": current_time, "data": result}
+        if len(indicator_cache) > 128:
+            oldest = min(indicator_cache, key=lambda key: indicator_cache[key]["created_at"])
+            indicator_cache.pop(oldest, None)
+    return {"code": 0, "message": "success", "data": result}
+
+
+@app.post("/api/hikyuu/backtest")
+def backtest(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from research_runner import run_reference_backtest
+        result = run_reference_backtest(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Hikyuu 回测失败: {exc}") from exc
+    return {"code": 0, "message": "success", "data": result}
 
 
 @app.get("/api/hikyuu/health")
@@ -503,6 +644,9 @@ def health() -> Dict[str, Any]:
             "scheduler_enabled": SCHEDULER_ENABLED,
             "after_close_cron": AFTER_CLOSE_CRON,
             "active_task_id": active_task_id,
+            "hikyuu_version": hikyuu_version(),
+            "data_revision": data_revision(),
+            "quality_status": dataset_quality()["status"],
         },
     }
 

@@ -35,6 +35,7 @@ func initAutomationServices() error {
 			return err
 		}
 	}
+	startMacroCalendarSyncLoop()
 	return nil
 }
 

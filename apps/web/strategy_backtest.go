@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +17,7 @@ import (
 
 type StrategyBacktestRequest struct {
 	StrategyID    string  `json:"strategy_id"`
+	Engine        string  `json:"engine,omitempty"`
 	StartDate     string  `json:"start_date,omitempty"`
 	EndDate       string  `json:"end_date,omitempty"`
 	HistoryCount  int     `json:"history_count,omitempty"`
@@ -25,19 +30,24 @@ type StrategyBacktestRequest struct {
 	TrailingStop  float64 `json:"trailing_stop,omitempty"`
 	MaxHold       int     `json:"max_hold,omitempty"`
 	ExitMA        int     `json:"exit_ma,omitempty"`
+	FastMA        int     `json:"fast_ma,omitempty"`
+	SlowMA        int     `json:"slow_ma,omitempty"`
 }
 
 type StrategyBacktestResult struct {
-	Strategy    Strategy                      `json:"strategy"`
-	Config      StrategyConfig                `json:"config"`
-	Request     StrategyBacktestRequest       `json:"request"`
-	Symbols     int                           `json:"symbols"`
-	Signals     int                           `json:"signals"`
-	Trades      []StrategyBacktestTrade       `json:"trades"`
-	EquityCurve []StrategyBacktestEquityPoint `json:"equity_curve,omitempty"`
-	Metrics     StrategyBacktestMetrics       `json:"metrics"`
-	Warnings    []string                      `json:"warnings,omitempty"`
-	Errors      map[string]string             `json:"errors,omitempty"`
+	Strategy          Strategy                      `json:"strategy"`
+	Config            StrategyConfig                `json:"config"`
+	Request           StrategyBacktestRequest       `json:"request"`
+	Symbols           int                           `json:"symbols"`
+	Signals           int                           `json:"signals"`
+	Trades            []StrategyBacktestTrade       `json:"trades"`
+	EquityCurve       []StrategyBacktestEquityPoint `json:"equity_curve,omitempty"`
+	Metrics           StrategyBacktestMetrics       `json:"metrics"`
+	Warnings          []string                      `json:"warnings,omitempty"`
+	Errors            map[string]string             `json:"errors,omitempty"`
+	Engine            string                        `json:"engine"`
+	CalculationEngine string                        `json:"calculation_engine,omitempty"`
+	DataRevision      string                        `json:"data_revision,omitempty"`
 }
 
 type StrategyBacktestTrade struct {
@@ -84,6 +94,9 @@ type strategyBacktestSymbolResult struct {
 }
 
 func (r *AutomationRunner) runStrategyBacktest(ctx context.Context, strategy Strategy, req StrategyBacktestRequest) (StrategyBacktestResult, error) {
+	if strings.EqualFold(strings.TrimSpace(req.Engine), "hikyuu") {
+		return r.runHikyuuReferenceBacktest(ctx, strategy, req)
+	}
 	var cfg StrategyConfig
 	if err := json.Unmarshal([]byte(strategy.ConfigJSON), &cfg); err != nil {
 		return StrategyBacktestResult{}, err
@@ -159,12 +172,14 @@ func (r *AutomationRunner) runStrategyBacktest(ctx context.Context, strategy Str
 	}
 
 	backtestResult := StrategyBacktestResult{
-		Strategy: strategy,
-		Config:   cfg,
-		Request:  req,
-		Symbols:  0,
-		Warnings: []string{},
-		Errors:   map[string]string{},
+		Strategy:          strategy,
+		Config:            cfg,
+		Request:           req,
+		Symbols:           0,
+		Warnings:          []string{},
+		Errors:            map[string]string{},
+		Engine:            "go",
+		CalculationEngine: "tdx-workbench-go",
 	}
 
 	symbolResults := make([]strategyBacktestSymbolResult, 0, len(symbols))
@@ -222,6 +237,120 @@ func (r *AutomationRunner) runStrategyBacktest(ctx context.Context, strategy Str
 	})
 
 	return backtestResult, nil
+}
+
+type hikyuuBacktestEnvelope struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Engine            string                        `json:"engine"`
+		CalculationEngine string                        `json:"calculation_engine"`
+		Symbols           int                           `json:"symbols"`
+		Signals           int                           `json:"signals"`
+		Trades            []StrategyBacktestTrade       `json:"trades"`
+		EquityCurve       []StrategyBacktestEquityPoint `json:"equity_curve"`
+		Metrics           StrategyBacktestMetrics       `json:"metrics"`
+		Warnings          []string                      `json:"warnings"`
+		Meta              struct {
+			DataRevision string `json:"data_revision"`
+		} `json:"meta"`
+	} `json:"data"`
+}
+
+func (r *AutomationRunner) runHikyuuReferenceBacktest(ctx context.Context, strategy Strategy, req StrategyBacktestRequest) (StrategyBacktestResult, error) {
+	var cfg StrategyConfig
+	if err := json.Unmarshal([]byte(strategy.ConfigJSON), &cfg); err != nil {
+		return StrategyBacktestResult{}, err
+	}
+	if cfg.Period == "" {
+		cfg.Period = "day"
+	}
+	symbols, err := r.strategyUniverse(cfg)
+	if err != nil {
+		return StrategyBacktestResult{}, err
+	}
+	if req.SymbolLimit > 0 && len(symbols) > req.SymbolLimit {
+		symbols = symbols[:req.SymbolLimit]
+	}
+	if len(symbols) == 0 {
+		return StrategyBacktestResult{}, errors.New("策略股票范围为空")
+	}
+	if req.InitialCash <= 0 {
+		req.InitialCash = 100000
+	}
+	if req.HistoryCount <= 0 {
+		req.HistoryCount = 520
+	}
+	if req.FastMA <= 0 {
+		req.FastMA = 5
+	}
+	if req.SlowMA <= req.FastMA {
+		req.SlowMA = 20
+	}
+	if req.BuyCost <= 0 {
+		req.BuyCost = 0.0005
+	}
+	if req.SellCost <= 0 {
+		req.SellCost = 0.001
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("HIKYUU_DATA_SERVICE_URL")), "/")
+	if baseURL == "" {
+		return StrategyBacktestResult{}, errors.New("未配置 HIKYUU_DATA_SERVICE_URL")
+	}
+	payload := map[string]interface{}{
+		"symbols":       symbols,
+		"type":          cfg.Period,
+		"start":         req.StartDate,
+		"end":           req.EndDate,
+		"history_count": req.HistoryCount,
+		"initial_cash":  req.InitialCash,
+		"buy_cost":      req.BuyCost,
+		"sell_cost":     req.SellCost,
+		"fast":          req.FastMA,
+		"slow":          req.SlowMA,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return StrategyBacktestResult{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/hikyuu/backtest", bytes.NewReader(body))
+	if err != nil {
+		return StrategyBacktestResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 30 * time.Minute}).Do(httpReq)
+	if err != nil {
+		return StrategyBacktestResult{}, fmt.Errorf("Hikyuu 回测请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return StrategyBacktestResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return StrategyBacktestResult{}, fmt.Errorf("Hikyuu 回测返回 %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+	var envelope hikyuuBacktestEnvelope
+	if err := json.Unmarshal(responseBody, &envelope); err != nil {
+		return StrategyBacktestResult{}, fmt.Errorf("Hikyuu 回测响应格式错误: %w", err)
+	}
+	if envelope.Code != 0 {
+		return StrategyBacktestResult{}, errors.New(envelope.Message)
+	}
+	return StrategyBacktestResult{
+		Strategy:          strategy,
+		Config:            cfg,
+		Request:           req,
+		Symbols:           envelope.Data.Symbols,
+		Signals:           envelope.Data.Signals,
+		Trades:            envelope.Data.Trades,
+		EquityCurve:       envelope.Data.EquityCurve,
+		Metrics:           envelope.Data.Metrics,
+		Warnings:          envelope.Data.Warnings,
+		Engine:            "hikyuu",
+		CalculationEngine: envelope.Data.CalculationEngine,
+		DataRevision:      envelope.Data.Meta.DataRevision,
+	}, nil
 }
 
 func (r *AutomationRunner) backtestSymbol(strategy Strategy, cfg StrategyConfig, req StrategyBacktestRequest, symbol string, rows []FormulaKline, startDate, endDate int) (strategyBacktestSymbolResult, error) {

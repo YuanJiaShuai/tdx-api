@@ -15,7 +15,8 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}): Promi
 
   const result = (await response.json()) as ApiResponse<T>;
   if (result.code !== 0) {
-    throw new Error(result.message || '请求失败');
+    const detail = (result as ApiResponse<T> & { detail?: string }).detail;
+    throw new Error(result.message || detail || '请求失败');
   }
   return result.data;
 }

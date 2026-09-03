@@ -1,5 +1,5 @@
 import { Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, Typography, message } from 'antd';
-import { BarChartOutlined, CheckCircleOutlined, CloseOutlined, CodeOutlined, CopyOutlined, EditOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { BarChartOutlined, CheckCircleOutlined, CloseOutlined, CodeOutlined, CopyOutlined, DatabaseOutlined, EditOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { JsonPane } from './JsonPane';
@@ -87,14 +87,14 @@ export function StrategiesWorkspace() {
     }
   }
 
-  async function runStrategy(id: string, backtest = false) {
+  async function runStrategy(id: string, backtest = false, engine = 'go') {
     try {
       const run = await apiFetch(
         `/api/strategies/${id}/${backtest ? 'backtest' : 'run'}`,
-        { method: 'POST', body: backtest ? JSON.stringify({ strategy_id: id }) : undefined }
+        { method: 'POST', body: backtest ? JSON.stringify({ strategy_id: id, engine }) : undefined }
       );
       setRunOutput(run);
-      message.success(backtest ? '策略回测已完成' : '策略运行已提交');
+      message.success(backtest ? `${engine === 'hikyuu' ? 'Hikyuu 校验' : 'Go'} 回测已完成` : '策略运行已提交');
     } catch (error) {
       const text = error instanceof Error ? error.message : (backtest ? '策略回测失败' : '策略运行失败');
       setRunOutput(text);
@@ -218,6 +218,7 @@ export function StrategiesWorkspace() {
                 <Button icon={<CopyOutlined />} onClick={() => cloneStrategy(selected.id)}>复制副本</Button>
                 <Button type="primary" icon={<ThunderboltOutlined />} onClick={() => runStrategy(selected.id)}>立即运行</Button>
                 <Button icon={<ExperimentOutlined />} onClick={() => runStrategy(selected.id, true)}>回测</Button>
+                <Button icon={<DatabaseOutlined />} onClick={() => runStrategy(selected.id, true, 'hikyuu')}>Hikyuu 校验</Button>
               </div>
               <div className="strategy-config-preview">
                 <div><span>配置预览</span><CodeOutlined /></div>

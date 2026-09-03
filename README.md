@@ -21,6 +21,7 @@ TDX Workbench 把通达信行情、历史 K 线、分时、财务、板块、公
 | 交易系统 | 记录交易卡、仓位、无效点、计划亏损和复盘内容 |
 | 策略中心 | 管理策略规则、执行策略和查看回测/运行结果 |
 | 自动化 | 维护股票池，按 Cron 定时运行公式选股或系统同步 |
+| 预警中心 | 管理美国宏观事件日历，在 CPI、非农、FOMC、PCE 等数据公布前做交易前检查 |
 | AI 模型 | 配置 DeepSeek、OpenAI-compatible、通义千问、智谱 GLM 等模型 |
 | AI 助手 / 自选分析 | 结合实时行情、日 K、财务和资讯进行对话或分析自选池 |
 | Webhook | 把选股、策略和自动化任务结果发送到外部通知地址 |
@@ -34,6 +35,10 @@ TDX Workbench 把通达信行情、历史 K 线、分时、财务、板块、公
 ### 自动化任务
 
 ![自动化任务](docs/assets/tdx-workbench-automation.png)
+
+### 预警中心
+
+![预警中心](docs/assets/tdx-workbench-alerts.png)
 
 ## 快速启动
 
@@ -116,7 +121,7 @@ flowchart LR
 | 公式引擎 | `services/formula-worker/` | `tdx-workbench-formula` | `18712` | HQChartPy2 或 fallback 公式执行 |
 | 指标选股 | `services/selection-worker/` | `tdx-workbench-selection` | `18082` | 股票池、公式选股、策略和自动化任务 |
 | AI 分析 | `services/ai-service/` | `tdx-workbench-ai` | `18083` | 模型配置、聊天、单股分析和自选分析 |
-| Hikyuu 数据 | `services/hikyuu-data-service/` | `tdx-workbench-hikyuu-data` | `18091` | 全量数据、盘后增量同步和任务状态 |
+| Hikyuu 研究数据 | `services/hikyuu-data-service/` | `tdx-workbench-hikyuu-data` | `18091` | 历史数据、数据质量、统一指标和参考回测 |
 
 正常使用只需要访问 `8080`。其他宿主机端口是排障入口；如果部署在共享网络或公网前面，应通过防火墙、反向代理或仅绑定 `127.0.0.1` 限制访问。
 
@@ -175,6 +180,19 @@ AI 分析不是单独的一套数据源，而是建立在行情服务的结构�
 
 支持的内置 provider 包括 DeepSeek、OpenAI、通义千问、智谱 GLM 和自定义 OpenAI-compatible 接口。AI 服务会保存分析运行记录，但 API Key 只返回脱敏结果。
 
+### 4. 宏观事件预警
+
+打开 `预警中心` 可以查看美国宏观数据的发布时间、影响级别和对应 A 股交易日，并在事件前标记为待处理或已处理。首版内置：
+
+- CPI 通胀：观察核心通胀与利率预期变化。
+- 非农就业：观察就业新增、失业率和平均时薪。
+- 美联储议息会议（FOMC）：关注利率决议、点阵图和发布会。
+- PCE 物价指数：关注美联储偏好的通胀指标。
+
+内置日期是可编辑的参考日历。预警中心会按 `MACRO_EVENT_SYNC_INTERVAL` 拉取 BLS、Federal Reserve、BEA 的公开日程；单一来源失败时保留上次成功数据，并在页面标记失败。BLS 可能对云环境返回 HTTP 403，可通过 `MACRO_EVENT_BLS_EMPLOYMENT_URL`、`MACRO_EVENT_BLS_CPI_URL` 配置镜像或代理地址。官方事件会尽量使用行情服务的交易日历计算对应 A 股交易日，无法确认时显示“待交易日历确认”。
+
+提醒规则包含提前提醒、事件前后风险窗口和高影响过滤。默认不会发送 Webhook；在 `提醒规则` 中打开通知并填写渠道 ID JSON 数组后，系统才会发送 `macro_event.alert_due` 和 `macro_event.window_started`，每个事件、渠道和提醒类型只发送一次。预警中心会统计当前持仓和观察池关联的风险事件，交易系统也会显示同一风险窗口。它只提供复核提示，不会自动阻止交易，也不构成投资建议。事件模型还支持手动添加中国 CPI、PMI、社融、LPR，以及政策、财报和解禁等分类。
+
 ## 数据与持久化
 
 Docker Compose 会把项目中的 `data/` 挂载到容器。重建镜像不会主动清空这些数据。
@@ -206,6 +224,12 @@ Compose 已经提供了服务间默认地址。需要长期使用或部署到其
 | `FORMULA_WORKER_URL` | Web/选股服务访问公式 worker 的地址 |
 | `MARKET_SYNC_ON_START` | 行情服务启动时是否同步基础代码和交易日 |
 | `AUTOMATION_SCHEDULER_ENABLED` | 是否启用自动化调度 |
+| `MACRO_EVENT_SYNC_ENABLED` | 是否启用宏观日历自动同步，默认启用 |
+| `MACRO_EVENT_SYNC_INTERVAL` | 宏观日历同步间隔，例如 `12h`，默认 `12h` |
+| `MACRO_EVENT_BLS_EMPLOYMENT_URL` | 非农官方页面地址，必要时配置镜像或代理 |
+| `MACRO_EVENT_BLS_CPI_URL` | CPI 官方页面地址，必要时配置镜像或代理 |
+| `MACRO_EVENT_FOMC_URL` | Federal Reserve 议息日历地址 |
+| `MACRO_EVENT_BEA_URL` | BEA 发布日程地址 |
 
 通过环境变量提供的 AI 凭据会以 `env:` 开头显示，并且不能从页面删除。长期部署时请固定 `AI_CREDENTIAL_SECRET`，否则更换密钥后历史凭据可能无法解密。
 
@@ -230,6 +254,23 @@ curl "http://localhost:8080/api/formula/health"
 
 # AI provider 列表
 curl "http://localhost:8080/api/ai/providers"
+
+# 宏观事件日历
+curl "http://localhost:8080/api/macro-events?category=inflation&impact=high"
+
+# 查看官方日程同步状态
+curl "http://localhost:8080/api/macro-events/sync"
+
+# 手动同步官方日程
+curl -X POST "http://localhost:8080/api/macro-events/sync"
+
+# 读取预警窗口与持仓/观察池联动摘要
+curl "http://localhost:8080/api/macro-events/overview"
+
+# 保存提醒规则（默认 webhook_ids 为空，不发送外部通知）
+curl -X PUT "http://localhost:8080/api/macro-events/settings" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"lead_minutes":240,"window_before_minutes":240,"window_after_minutes":120,"critical_only":true,"notify_webhooks":true,"webhook_ids":"[\"your-webhook-id\"]"}'
 ```
 
 AI 分析接口示例：
@@ -278,7 +319,12 @@ python3 services/formula-worker/worker.py
 (cd apps/web && go run .)
 ```
 
-Hikyuu 服务需要先安装 `services/hikyuu-data-service/requirements.txt` 和 `hikyuu`，再从该目录运行 `uvicorn app:app --host 0.0.0.0 --port 8091`。
+Hikyuu 服务需要先安装 `services/hikyuu-data-service/requirements.txt` 和 `hikyuu==2.8.2`，再从该目录运行 `uvicorn app:app --host 0.0.0.0 --port 8091`。
+
+Hikyuu 在本项目中的职责边界是：负责可复现的历史研究数据、指标和参考回测；TDX
+负责实时行情；Go 负责业务编排。数据同步成功后会生成 `data_revision`，指标和
+回测结果都会返回该修订号。策略中心中的“回测”默认使用 Go 引擎，“Hikyuu 校验”
+显式调用 Hikyuu MA 交叉参考策略，不能把两者结果混用。
 
 源码模式下，如需让 Web 走独立行情、公式和 AI 服务，请显式设置服务地址：
 

@@ -3,7 +3,7 @@ import { CheckCircleOutlined, CloseOutlined, PlusOutlined, ReloadOutlined, SaveO
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { normalizeSymbol, priceFromMilli } from '../lib/format';
-import type { AICredential, Quote, TradingSystemState, TradingTrade } from '../types';
+import type { AICredential, MacroEventOverview, Quote, TradingSystemState, TradingTrade } from '../types';
 
 const { Text } = Typography;
 
@@ -214,6 +214,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMS: number) {
 
 export function TradingSystemWorkspace() {
   const [state, setState] = useState<TradingSystemState | null>(null);
+  const [macroOverview, setMacroOverview] = useState<MacroEventOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<TradingTrade | null>(null);
@@ -231,6 +232,11 @@ export function TradingSystemWorkspace() {
     setLoading(true);
     try {
       setState(await apiFetch<TradingSystemState>('/api/trading-system'));
+      try {
+        setMacroOverview(await apiFetch<MacroEventOverview>('/api/macro-events/overview'));
+      } catch {
+        setMacroOverview(null);
+      }
     } catch (error) {
       message.error(error instanceof Error ? error.message : '交易系统加载失败');
     } finally {
@@ -238,7 +244,13 @@ export function TradingSystemWorkspace() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(async () => {
+      try { setMacroOverview(await apiFetch<MacroEventOverview>('/api/macro-events/overview')); } catch { /* optional risk context */ }
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const trades = state?.trades || [];
   const direction = Form.useWatch('direction', form) || (editing?.direction === 'sell' ? 'sell' : 'buy');
@@ -534,6 +546,10 @@ export function TradingSystemWorkspace() {
         }
         extra={<Button aria-label="刷新账户数据" icon={<ReloadOutlined />} onClick={load} loading={loading} />}
       >
+        <div className={`trading-macro-risk ${macroOverview?.active_risk_events?.length ? 'is-active' : ''}`}>
+          <WarningOutlined />
+          <div><strong>{macroOverview?.active_risk_events?.length ? `宏观风险窗口 ${macroOverview.active_risk_events.length} 个` : '宏观风险窗口暂无'}</strong><span>{macroOverview?.holding_risk_events ? `当前持仓相关 ${macroOverview.holding_risk_events} 个，交易前请复核计划。` : '预警只提供复核提示，不会自动阻止交易。'}</span></div>
+        </div>
         <section className="trading-account-summary">
           <div className="trading-account-total">
             <span>总资产</span>

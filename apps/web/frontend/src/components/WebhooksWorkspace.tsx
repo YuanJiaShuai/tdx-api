@@ -64,7 +64,7 @@ export function WebhooksWorkspace() {
       url: '',
       method: 'POST',
       headers_json: '{}',
-      events: '["automation.failed","automation.finished","stock_selection.finished"]',
+      events: '["automation.failed","automation.finished","stock_selection.finished","macro_event.alert_due","macro_event.window_started"]',
       enabled: true
     };
     setEditing(item || null);
@@ -264,7 +264,7 @@ export function WebhooksWorkspace() {
               <small>EVENTS</small>
             </div>
             <div className="webhook-form-grid webhook-form-grid-events">
-              <Form.Item name="events" label="事件 JSON"><Input.TextArea rows={4} placeholder={'例如：["automation.failed","stock_selection.finished"]'} /></Form.Item>
+              <Form.Item name="events" label="事件 JSON"><Input.TextArea rows={4} placeholder={'例如：["automation.failed","stock_selection.finished","macro_event.alert_due"]'} /></Form.Item>
             </div>
           </section>
 

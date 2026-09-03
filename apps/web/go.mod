@@ -6,6 +6,7 @@ require (
 	github.com/google/uuid v1.5.0
 	github.com/injoyai/tdx v0.0.0
 	github.com/robfig/cron/v3 v3.0.1
+	golang.org/x/net v0.30.0
 	workbench-core v0.0.0
 )
 

@@ -16,6 +16,9 @@ type TradingDiscipline = workbench.TradingDiscipline
 type TradingFeeConfig = workbench.TradingFeeConfig
 type TradingTrade = workbench.TradingTrade
 type TradingSystemState = workbench.TradingSystemState
+type MacroEvent = workbench.MacroEvent
+type MacroEventSyncState = workbench.MacroEventSyncState
+type MacroAlertSettings = workbench.MacroAlertSettings
 
 const (
 	DecisionWatchPoolID   = workbench.DecisionWatchPoolID

@@ -12,6 +12,62 @@ export interface ServiceStatusResult {
   checked_at: string;
 }
 
+export interface MacroEvent {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  country: string;
+  impact: 'low' | 'medium' | 'high' | 'critical' | string;
+  starts_at: string;
+  scheduled_at?: string;
+  released_at?: string;
+  previous_value?: string;
+  forecast_value?: string;
+  actual_value?: string;
+  revision?: string;
+  a_share_date?: string;
+  source?: string;
+  source_url?: string;
+  description?: string;
+  status?: string;
+  acknowledged?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MacroEventSyncState {
+  id: string;
+  provider: string;
+  status: 'idle' | 'success' | 'partial' | 'failed' | string;
+  last_attempt_at?: string;
+  last_success_at?: string;
+  event_count: number;
+  message?: string;
+  updated_at?: string;
+}
+
+export interface MacroAlertSettings {
+  id: string;
+  enabled: boolean;
+  lead_minutes: number;
+  window_before_minutes: number;
+  window_after_minutes: number;
+  critical_only: boolean;
+  notify_webhooks: boolean;
+  webhook_ids: string;
+  updated_at?: string;
+}
+
+export interface MacroEventOverview {
+  holding_symbols: number;
+  watchlist_symbols: number;
+  holding_risk_events: number;
+  watchlist_risk_events: number;
+  active_risk_events: MacroEvent[];
+  settings: MacroAlertSettings;
+}
+
 export interface QuoteK {
   Last?: number;
   Close?: number;

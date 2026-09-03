@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sys
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -34,6 +35,20 @@ RECOVER_TYPES = {
     "equal_backward": "EQUAL_BACKWARD",
 }
 
+_runtime_lock = threading.RLock()
+_runtime = None
+
+
+def _hikyuu_runtime():
+    global _runtime
+    if _runtime is None:
+        from hikyuu import Datetime, Query, StockManager, hikyuu_init
+        if not CONFIG_FILE.exists():
+            raise FileNotFoundError(f"missing hikyuu config: {CONFIG_FILE}")
+        hikyuu_init(str(CONFIG_FILE), ignore_preload=True)
+        _runtime = {"Datetime": Datetime, "Query": Query, "StockManager": StockManager}
+    return _runtime
+
 
 def parse_date(value: str, end: bool = False):
     if not value:
@@ -55,6 +70,9 @@ def normalize_symbol(value: str) -> str:
         code, market = value.split(".", 1)
     elif len(value) == 8 and value[:2] in ("SH", "SZ", "BJ"):
         market, code = value[:2], value[2:]
+    elif len(value) == 6 and value.isdigit():
+        code = value
+        market = "SH" if value.startswith(("5", "6", "9")) else "BJ" if value.startswith(("4", "8")) else "SZ"
     else:
         raise ValueError("symbol must be like 000001.SZ")
     if market not in ("SH", "SZ", "BJ") or len(code) != 6 or not code.isdigit():
@@ -89,12 +107,11 @@ def load_records(symbol: str, period: str, start: str, end: str, limit: int, rec
         raise ValueError("unsupported recover type")
 
     native_output = io.StringIO()
-    with contextlib.redirect_stdout(native_output), contextlib.redirect_stderr(native_output):
-        from hikyuu import Datetime, Query, StockManager, hikyuu_init
-
-        if not CONFIG_FILE.exists():
-            raise FileNotFoundError(f"missing hikyuu config: {CONFIG_FILE}")
-        hikyuu_init(str(CONFIG_FILE), ignore_preload=True)
+    with _runtime_lock, contextlib.redirect_stdout(native_output), contextlib.redirect_stderr(native_output):
+        runtime = _hikyuu_runtime()
+        Datetime = runtime["Datetime"]
+        Query = runtime["Query"]
+        StockManager = runtime["StockManager"]
         stock = StockManager.instance()[normalize_symbol(symbol)]
         if stock.is_null():
             raise LookupError(f"symbol not found: {symbol}")

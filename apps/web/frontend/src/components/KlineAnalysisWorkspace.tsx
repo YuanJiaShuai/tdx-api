@@ -1,5 +1,5 @@
-import { Button, Card, Empty, Input, Space, Tag, Typography, message } from 'antd';
-import { LineChartOutlined, ReloadOutlined, SearchOutlined, StarOutlined } from '@ant-design/icons';
+import { Button, Card, Empty, Input, Select, Space, Tag, Typography, message } from 'antd';
+import { CheckCircleOutlined, LineChartOutlined, ReloadOutlined, SearchOutlined, StarOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { formatAmount, formatPercent, formatPrice, formatSigned, normalizeSymbol, priceFromMilli } from '../lib/format';
@@ -208,6 +208,9 @@ export function KlineAnalysisWorkspace() {
   const [loading, setLoading] = useState(false);
   const [indicators, setIndicators] = useState(defaultIndicators);
   const [chartVersion, setChartVersion] = useState(0);
+  const [hikyuuIndicator, setHikyuuIndicator] = useState<Record<string, unknown> | null>(null);
+  const [hikyuuIndicatorLoading, setHikyuuIndicatorLoading] = useState(false);
+  const [hikyuuIndicatorName, setHikyuuIndicatorName] = useState('macd');
 
   const loadData = useCallback(async (nextSymbol = symbol, nextPeriod = period) => {
     const normalized = normalizeSymbol(nextSymbol);
@@ -260,6 +263,22 @@ export function KlineAnalysisWorkspace() {
     }, 60000);
     return () => window.clearInterval(timer);
   }, [loadData, period, symbol]);
+
+  async function calculateHikyuuIndicator(indicator: string) {
+    setHikyuuIndicatorLoading(true);
+    try {
+      const result = await apiFetch<Record<string, unknown>>('/api/hikyuu/indicators', {
+        method: 'POST',
+        body: JSON.stringify({ code: symbol, type: period, indicator, limit: 800, recover: 'none' })
+      });
+      setHikyuuIndicator(result);
+      message.success(`${indicator.toUpperCase()} 已由 Hikyuu 计算`);
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : 'Hikyuu 指标不可用');
+    } finally {
+      setHikyuuIndicatorLoading(false);
+    }
+  }
 
   const latestBar = history[history.length - 1];
   const latestClose = priceFromMilli(quote?.K?.Close) || latestBar?.close || 0;
@@ -356,7 +375,9 @@ export function KlineAnalysisWorkspace() {
             </section>
           ))}
           <div className="kline-indicator-note">
-            指标由当前项目的 HQChart 统一绘制，拖拽、缩放和十字光标与市场行情页保持一致。
+            <span>图表由 HQChart 绘制；研究值可切换到 Hikyuu 计算并保留数据修订号。</span>
+            <Select size="small" value={hikyuuIndicatorName} onChange={setHikyuuIndicatorName} options={['ma', 'ema', 'macd', 'boll', 'atr'].map((value) => ({ value, label: value.toUpperCase() }))} />
+            <Button size="small" icon={<CheckCircleOutlined />} loading={hikyuuIndicatorLoading} onClick={() => void calculateHikyuuIndicator(hikyuuIndicatorName)}>Hikyuu 校验</Button>
           </div>
         </Card>
 
@@ -416,6 +437,7 @@ export function KlineAnalysisWorkspace() {
               {history.length ? `已加载 ${history.length} 根 · 每 60 秒刷新 · HQChart 统一交互` : '等待行情数据'}
             </Text>
             {quote?.Name ? <Text type="secondary">实时行情：{quote.Name}</Text> : null}
+            {hikyuuIndicator ? <Text type="secondary">研究引擎：{String(hikyuuIndicator.meta && typeof hikyuuIndicator.meta === 'object' ? (hikyuuIndicator.meta as Record<string, unknown>).calculation_engine : '--')} · 修订 {String(hikyuuIndicator.meta && typeof hikyuuIndicator.meta === 'object' ? (hikyuuIndicator.meta as Record<string, unknown>).data_revision : '--')}</Text> : null}
           </div>
         </Card>
       </div>

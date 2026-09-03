@@ -1,5 +1,5 @@
-import { Button, Card, Checkbox, Form, Input, InputNumber, Select, Space, Statistic, Table, Typography, message } from 'antd';
-import { DatabaseOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Card, Checkbox, Form, Input, InputNumber, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd';
+import { CheckCircleOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined, WarningOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { DynamicTable } from './DynamicTable';
@@ -38,6 +38,8 @@ export function DataCenterWorkspace() {
   const [blockFile, setBlockFile] = useState('gn');
   const [blockWithIndex, setBlockWithIndex] = useState(true);
   const [hikyuuStatus, setHikyuuStatus] = useState<unknown>('尚未查询');
+  const [hikyuuMetadata, setHikyuuMetadata] = useState<Record<string, unknown>>({});
+  const [hikyuuQuality, setHikyuuQuality] = useState<Record<string, unknown>>({});
 
   const loadOverview = useCallback(async () => {
     try {
@@ -134,9 +136,28 @@ export function DataCenterWorkspace() {
     }
   }
 
+  const loadHikyuuResearch = useCallback(async () => {
+    try {
+      const [health, metadata, quality] = await Promise.all([
+        apiFetch<Record<string, unknown>>('/api/hikyuu/health'),
+        apiFetch<Record<string, unknown>>('/api/hikyuu/metadata'),
+        apiFetch<Record<string, unknown>>(`/api/hikyuu/quality?code=${encodeURIComponent(historyCode)}&period=${encodeURIComponent(historyType)}`)
+      ]);
+      setHikyuuStatus(health);
+      setHikyuuMetadata(metadata);
+      setHikyuuQuality(quality);
+    } catch (error) {
+      setHikyuuStatus(error instanceof Error ? error.message : '数据服务不可用');
+    }
+  }, [historyCode, historyType]);
+
+  useEffect(() => { void loadHikyuuResearch(); }, [loadHikyuuResearch]);
+
   const status = overview.status as Record<string, unknown> | undefined;
   const count = overview.count as Record<string, unknown> | undefined;
   const stats = overview.stats as Record<string, unknown> | undefined;
+  const stockMetadata = hikyuuMetadata.stocks as { files?: Array<Record<string, unknown>>; symbols?: number } | undefined;
+  const qualityChecks = Array.isArray(hikyuuQuality.checks) ? hikyuuQuality.checks as Array<Record<string, unknown>> : [];
 
   return (
     <div className="data-center-grid">
@@ -172,7 +193,23 @@ export function DataCenterWorkspace() {
         />
       </Card>
 
-      <Card className="work-card" title="Hikyuu 行情数据" extra={<Button onClick={() => loadHikyuu()}>刷新</Button>}>
+      <Card className="work-card hikyuu-research-card" title="Hikyuu 研究数据" extra={<Button icon={<ReloadOutlined />} onClick={loadHikyuuResearch}>刷新</Button>}>
+        <div className="hikyuu-research-strip">
+          <div><span>框架版本</span><strong>{String(hikyuuMetadata.hikyuu_version || '--')}</strong><small>固定运行版本</small></div>
+          <div><span>数据修订</span><strong>{String(hikyuuMetadata.data_revision || '--')}</strong><small>回测可追溯</small></div>
+          <div><span>数据文件</span><strong>{stockMetadata?.files?.length || 0}</strong><small>HDF5 / SQLite</small></div>
+          <div className={hikyuuQuality.status === 'pass' ? 'is-pass' : 'is-warn'}>
+            {hikyuuQuality.status === 'pass' ? <CheckCircleOutlined /> : <WarningOutlined />}
+            <span>质量状态</span><strong>{hikyuuQuality.status === 'pass' ? '通过' : '待检查'}</strong>
+          </div>
+        </div>
+        <div className="hikyuu-quality-list">
+          {qualityChecks.map((check) => (
+            <Tag key={String(check.id)} color={check.status === 'pass' ? 'success' : 'warning'}>
+              {String(check.label)} · {String(check.detail)}
+            </Tag>
+          ))}
+        </div>
         <Space wrap className="toolbar-row">
           <Button type="primary" onClick={() => loadHikyuu('/api/hikyuu/tasks/full-sync')}>全量同步</Button>
           <Button onClick={() => loadHikyuu('/api/hikyuu/tasks/after-close-sync')}>盘后同步</Button>

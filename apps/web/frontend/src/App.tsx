@@ -12,6 +12,7 @@ import { WebhooksWorkspace } from './components/WebhooksWorkspace';
 import { MarketWorkspace } from './components/MarketWorkspace';
 import { KlineAnalysisWorkspace } from './components/KlineAnalysisWorkspace';
 import { AIAssistantWorkspace } from './components/AIAssistantWorkspace';
+import { AlertsWorkspace } from './components/AlertsWorkspace';
 import { WatchlistTable } from './components/WatchlistTable';
 import { apiFetch } from './lib/api';
 import type { ServiceStatusResult } from './types';
@@ -28,6 +29,7 @@ const workspaces = [
   { key: 'automations', label: '自动化' },
   { key: 'aiConfigs', label: 'AI 模型' },
   { key: 'aiAssistant', label: 'AI 助手' },
+  { key: 'alerts', label: '预警中心' },
   { key: 'webhooks', label: 'Webhook' }
 ];
 
@@ -43,6 +45,7 @@ const workspaceCodes: Record<string, string> = {
   automations: 'RUN_SCHEDULER',
   aiConfigs: 'MODEL_ROUTER',
   aiAssistant: 'AI_ASSISTANT',
+  alerts: 'RISK_CALENDAR',
   webhooks: 'WEBHOOKS'
 };
 
@@ -111,6 +114,8 @@ export default function App() {
           <AIConfigsWorkspace />
         ) : workspace.key === 'aiAssistant' ? (
           <AIAssistantWorkspace />
+        ) : workspace.key === 'alerts' ? (
+          <AlertsWorkspace />
         ) : workspace.key === 'webhooks' ? (
           <WebhooksWorkspace />
         ) : (

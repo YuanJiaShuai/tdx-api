@@ -13,7 +13,11 @@ Docker 数据目录：
 API：
 
 - `GET /api/hikyuu/health`
+- `GET /api/hikyuu/metadata`
+- `GET /api/hikyuu/quality`
 - `GET /api/hikyuu/kline?code=600519.SH&type=day&limit=120&recover=qfq`
+- `POST /api/hikyuu/indicators`
+- `POST /api/hikyuu/backtest`
 - `POST /api/hikyuu/tasks/full-sync`
 - `POST /api/hikyuu/tasks/after-close-sync`
 - `GET /api/hikyuu/tasks`
@@ -52,3 +56,7 @@ K 线查询支持 `day`、`minute1`、`minute5`、`week`、`month`，复权参�
 `none`、`qfq`/`forward`、`hfq`/`backward` 以及等比复权。查询接口只读取本地
 hikyuu 数据，不会触发下载；没有数据时返回失败，由上游 market-service 回退到
 原有行情源。
+
+指标接口支持 `ma`、`ema`、`macd`、`boll`、`atr`，返回 `data_revision` 和
+`calculation_engine` 便于复现研究结果。回测接口提供可校验的 Hikyuu MA 交叉
+参考策略，现有 Go 策略回测仍保留作为主流程。

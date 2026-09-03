@@ -19,11 +19,12 @@ RUN apt-get update && \
 
 COPY services/hikyuu-data-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn -r requirements.txt && \
-    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn hikyuu
+    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn hikyuu==2.8.2
 
 COPY services/hikyuu-data-service/app.py ./app.py
 COPY services/hikyuu-data-service/importdata_runner.py ./importdata_runner.py
 COPY services/hikyuu-data-service/query_runner.py ./query_runner.py
+COPY services/hikyuu-data-service/research_runner.py ./research_runner.py
 
 RUN mkdir -p /root/stocks /root/.hikyuu /app/logs
 

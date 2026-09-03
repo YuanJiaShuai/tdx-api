@@ -1316,6 +1316,34 @@ curl -X POST http://localhost:8080/api/batch-quote \
 
 ### 公式、选股与 HQChart
 
+### 宏观事件与预警
+
+| 接口 | 说明 | 示例 |
+| --- | --- | --- |
+| `GET /api/macro-events` | 事件列表，可按 `from`、`to`、`category`、`impact` 筛选 | `/api/macro-events?category=inflation&impact=high` |
+| `POST /api/macro-events` | 新增事件，`starts_at` 使用 RFC3339 | `{"code":"PMI","name":"中国制造业 PMI","country":"CN","category":"china_macro","starts_at":"2026-09-30T09:30:00+08:00"}` |
+| `PUT /api/macro-events/{id}` | 更新事件 | `/api/macro-events/macro-custom-1` |
+| `POST /api/macro-events/{id}/acknowledge` | 标记或恢复已处理状态 | `{"acknowledged":true}` |
+| `GET /api/macro-events/sync` | 查看 BLS、Federal Reserve、BEA 同步状态 | `/api/macro-events/sync` |
+| `POST /api/macro-events/sync` | 手动同步官方日程 | `/api/macro-events/sync` |
+| `GET /api/macro-events/settings` | 查看提醒窗口与 Webhook 设置 | `/api/macro-events/settings` |
+| `PUT /api/macro-events/settings` | 保存提醒规则；`webhook_ids` 是 JSON 字符串 | `/api/macro-events/settings` |
+| `GET /api/macro-events/overview` | 当前风险窗口及持仓/观察池摘要 | `/api/macro-events/overview` |
+
+`macro_event.alert_due` 表示提前提醒，`macro_event.window_started` 表示风险窗口开始。通知默认关闭；开启后每个事件、渠道和提醒类型只发送一次。事件提醒只提示复核，不自动阻止交易。
+
+### Hikyuu 研究数据
+
+| 接口 | 说明 | 示例 |
+| --- | --- | --- |
+| `GET /api/hikyuu/health` | 服务、版本、数据修订和质量状态 | `/api/hikyuu/health` |
+| `GET /api/hikyuu/metadata` | HDF5/SQLite 文件、体积和证券数量 | `/api/hikyuu/metadata` |
+| `GET /api/hikyuu/quality` | 数据目录、OHLC、重复时间和序列检查；可带 `code`、`period` | `/api/hikyuu/quality?code=000001&period=day` |
+| `POST /api/hikyuu/indicators` | Hikyuu 指标值：`ma`、`ema`、`macd`、`boll`、`atr` | `{"code":"000001","indicator":"macd","limit":800}` |
+| `POST /api/hikyuu/backtest` | MA 交叉参考回测，用于和 Go 回测校验 | `{"symbols":["000001"],"fast":5,"slow":20}` |
+
+研究响应中的 `meta.data_revision`、`meta.calculation_engine` 用于复现和解释计算来源。
+
 | 接口 | 说明 | 示例 |
 | --- | --- | --- |
 | `GET /api/formula/health` | 查看公式 worker 和当前公式引擎状态 | `/api/formula/health` |
