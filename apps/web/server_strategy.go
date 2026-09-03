@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -132,13 +133,31 @@ func handleStrategyRun(w http.ResponseWriter, r *http.Request, id string) {
 		PayloadJSON: mustJSON(map[string]string{"strategy_id": strategy.ID}),
 		WebhookIDs:  "[]",
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Minute)
-	defer cancel()
-	run, err := automationRunner.runTask(ctx, task)
+
+	runs, err := appStore.ListAutomationRuns(task.ID, 20)
 	if err != nil {
 		errorResponse(w, "策略运行失败: "+err.Error())
 		return
 	}
+	for _, existing := range runs {
+		if existing.Status == "running" {
+			successResponse(w, existing)
+			return
+		}
+	}
+
+	run, err := appStore.CreateAutomationRun(task)
+	if err != nil {
+		errorResponse(w, "策略运行失败: "+err.Error())
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		defer cancel()
+		if _, runErr := automationRunner.runTaskWithRun(ctx, task, run); runErr != nil {
+			log.Printf("手动策略运行失败: %s %v", strategy.ID, runErr)
+		}
+	}()
 	successResponse(w, run)
 }
 

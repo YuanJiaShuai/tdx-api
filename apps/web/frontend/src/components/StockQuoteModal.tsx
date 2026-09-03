@@ -64,7 +64,7 @@ export function StockQuoteModal({ target, onClose }: StockQuoteModalProps) {
       centered
       destroyOnHidden
       closeIcon={<CloseOutlined />}
-      className="watchlist-quote-modal stock-quote-modal"
+      className="app-themed-modal watchlist-quote-modal stock-quote-modal"
       title={
         <div className="quote-dialog-title">
           <div>

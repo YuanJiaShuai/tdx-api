@@ -8,7 +8,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HQCHARTPY2 = None
-USE_HQCHARTPY2 = os.getenv("FORMULA_WORKER_USE_HQCHARTPY2", "0").strip().lower() in ("1", "true", "yes", "on")
+USE_HQCHARTPY2 = os.getenv("FORMULA_WORKER_USE_HQCHARTPY2", "1").strip().lower() in ("1", "true", "yes", "on")
 ENGINE_STATUS = {
 	"engine": "fallback",
 	"hqchartpy2_available": False,

@@ -3776,6 +3776,35 @@ textarea::placeholder {
   min-height: 52px;
 }
 
+.app-themed-modal .ant-modal-content {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #b9c5d3;
+  border-radius: 7px;
+  background: #f4f6f8;
+  box-shadow: 0 18px 48px rgba(23, 34, 48, 0.22);
+}
+
+.app-themed-modal .ant-modal-header {
+  margin: 0;
+  padding: 13px 16px 11px;
+  border-bottom: 1px solid #b9c5d3;
+  background: #16263d;
+}
+
+.app-themed-modal .ant-modal-close {
+  color: #c4d0df;
+}
+
+.app-themed-modal .ant-modal-close:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-themed-modal .ant-modal-body {
+  padding: 12px;
+}
+
 .watchlist-quote-modal .ant-modal-content {
   padding: 0;
   overflow: hidden;
@@ -5565,7 +5594,7 @@ textarea::placeholder {
 
 .webhook-overview-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 1.65fr) repeat(3, minmax(100px, 0.55fr)) minmax(180px, 0.9fr);
+  grid-template-columns: minmax(260px, 1.55fr) repeat(4, minmax(100px, 0.55fr)) minmax(180px, 0.9fr);
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--line);
@@ -5640,6 +5669,180 @@ textarea::placeholder {
   color: var(--success);
   font-family: inherit;
   font-size: 13px;
+}
+
+.webhook-schedule-card .ant-card-body {
+  padding-top: 10px;
+}
+
+.webhook-schedule-summary {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #f8fafc;
+}
+
+.webhook-next-delivery,
+.webhook-schedule-rules {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.webhook-next-delivery > svg {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-size: 18px;
+}
+
+.webhook-next-delivery > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.webhook-next-delivery span,
+.webhook-schedule-rules span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.webhook-next-delivery strong {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.webhook-schedule-rules {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+}
+
+.webhook-schedule-rules span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.webhook-schedule-rules svg {
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.webhook-schedule-rules span:last-child svg {
+  color: var(--warning);
+}
+
+.webhook-schedule-table .ant-table-thead > tr > th {
+  height: 42px;
+  padding: 8px 12px;
+  background: #edf2f7;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.webhook-schedule-table .ant-table-tbody > tr > td {
+  height: 66px;
+  padding: 9px 12px;
+  border-bottom-color: #e8edf1;
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.webhook-schedule-table .ant-table-tbody > tr:hover > td {
+  background: #f7faff !important;
+}
+
+.webhook-delivery-task-cell,
+.webhook-delivery-channel-cell,
+.webhook-delivery-time-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.webhook-delivery-task-cell strong,
+.webhook-delivery-channel-cell strong,
+.webhook-delivery-time-cell strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webhook-delivery-task-cell span,
+.webhook-delivery-channel-cell span,
+.webhook-delivery-time-cell span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webhook-delivery-channel-cell span,
+.webhook-event-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.webhook-event-code {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.webhook-delivery-time-cell strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.webhook-delivery-status-tag {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #f3f5f7;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.webhook-delivery-status-tag.is-ready {
+  border-color: #b8d9ca;
+  background: #f0f8f3;
+  color: var(--success);
+}
+
+.webhook-delivery-status-tag.is-triggered {
+  border-color: #c3d5ed;
+  background: #f1f6fd;
+  color: var(--primary);
+}
+
+.webhook-delivery-status-tag.is-warning {
+  border-color: #e5c995;
+  background: #fff8e8;
+  color: #9b6914;
+}
+
+.webhook-delivery-status-tag.is-muted {
+  color: var(--text-muted);
 }
 
 .webhook-main-grid {
@@ -5972,7 +6175,7 @@ textarea::placeholder {
 
 @media (max-width: 1200px) {
   .webhook-overview-grid {
-    grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(90px, 0.55fr));
+    grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(90px, 0.55fr));
   }
 
   .webhook-overview-status {
@@ -5984,6 +6187,15 @@ textarea::placeholder {
 
   .webhook-main-grid {
     grid-template-columns: 1fr;
+  }
+
+  .webhook-schedule-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .webhook-schedule-rules {
+    justify-content: flex-start;
   }
 
   .webhook-list-card,
@@ -7485,10 +7697,27 @@ textarea::placeholder {
 }
 
 .kline-symbol-search .ant-input-affix-wrapper {
+  display: flex;
+  align-items: center;
   height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
   border-color: var(--line-strong);
   border-radius: 4px;
   background: #fbfcfd;
+}
+
+.kline-symbol-search .ant-input-prefix,
+.kline-symbol-search .ant-input-suffix {
+  display: inline-flex;
+  align-items: center;
+}
+
+.kline-symbol-search .ant-input {
+  height: 32px;
+  line-height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .kline-period-switcher {
@@ -8278,6 +8507,18 @@ textarea::placeholder {
   margin-bottom: 12px;
 }
 
+/* The stock picker extends below the compact toolbar card. Keep it above the chart row. */
+.kline-analysis-header-card.work-card.ant-card {
+  z-index: 5;
+  overflow: visible;
+}
+
+.kline-analysis-header-card .ant-card-body {
+  position: relative;
+  z-index: 1;
+  overflow: visible;
+}
+
 .kline-analysis-title {
   display: flex;
   align-items: center;
@@ -8315,15 +8556,18 @@ textarea::placeholder {
 .kline-symbol-search {
   position: relative;
   width: min(300px, 100%);
+  z-index: 2;
 }
 
 .kline-search-results {
   position: absolute;
-  z-index: 12;
+  z-index: 20;
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  overflow: hidden;
+  max-height: min(360px, calc(100vh - 180px));
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--panel);
@@ -8624,7 +8868,34 @@ textarea::placeholder {
 .hikyuu-research-strip .is-warn > .anticon { color: var(--warning); }
 .hikyuu-quality-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 
-.kline-indicator-note { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.kline-indicator-note {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+
+.kline-indicator-note > span {
+  display: block;
+}
+
+.kline-indicator-note-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kline-indicator-note-controls .ant-select {
+  min-width: 0;
+  flex: 0 1 96px;
+}
+
+.kline-indicator-note-controls .ant-btn {
+  min-width: 0;
+  flex: 1 1 132px;
+  padding-inline: 8px;
+  white-space: nowrap;
+}
 
 @media (max-width: 760px) {
   .hikyuu-research-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -8723,6 +8994,52 @@ textarea::placeholder {
 .alerts-calendar-item > em { grid-column: 1 / -1; color: var(--text); font-size: 13px; font-style: normal; font-weight: 850; }
 .alerts-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
 .alerts-form .ant-form-item { margin-bottom: 10px; }
+.alerts-form .ant-form-item-control,
+.alerts-form .ant-form-item-control-input,
+.alerts-form .ant-form-item-control-input-content {
+  min-width: 0;
+}
+.alerts-form .ant-form-item-control-input {
+  min-height: 36px;
+}
+.alerts-form .ant-form-item-control-input-content > .ant-input,
+.alerts-form .ant-form-item-control-input-content > .ant-select,
+.alerts-form .ant-form-item-control-input-content > .ant-picker,
+.alerts-form .ant-form-item-control-input-content > .ant-input-number {
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+}
+.alerts-form .ant-input {
+  padding: 6px 11px;
+}
+.alerts-form .ant-select-selector {
+  display: flex;
+  height: 36px !important;
+  min-height: 36px;
+  align-items: center;
+  margin: 0;
+  padding: 0 11px !important;
+}
+.alerts-form .ant-picker {
+  padding: 0 11px;
+}
+.alerts-form .ant-picker-input > input {
+  height: 34px;
+  min-height: 34px;
+  margin: 0;
+  padding: 4px 0;
+}
+.alerts-form .ant-input-number {
+  display: flex;
+  align-items: center;
+  padding: 0;
+}
+.alerts-form .ant-input-number-input {
+  height: 34px;
+  padding: 4px 11px;
+}
 .alerts-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .alerts-form-actions .ant-typography { margin: 0; color: var(--text-muted); font-size: 11px; }
 .alerts-settings-note { display: flex; align-items: flex-start; gap: 7px; margin: 2px 0 12px; padding: 8px 10px; border-left: 3px solid var(--warning); background: var(--warning-soft); color: #745018; font-size: 11px; font-weight: 700; line-height: 1.5; }
@@ -8755,7 +9072,46 @@ textarea::placeholder {
 .ai-research-raw pre { max-height: 260px; overflow: auto; margin: 8px 0 0; padding: 10px; background: #172230; color: #dce6f2; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
 @media (max-width: 700px) { .ai-research-headline { flex-direction: column; } .ai-research-grid, .ai-research-next { grid-template-columns: 1fr; } }
 
-.research-assistant-fab { position: fixed; right: 24px; bottom: 24px; z-index: 30; width: 48px; height: 48px; border: 2px solid #d9e8ff; box-shadow: 0 6px 18px rgba(18, 55, 117, 0.25); }
+.research-assistant-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  display: inline-flex;
+  width: 48px !important;
+  min-width: 48px;
+  max-width: 48px;
+  height: 48px !important;
+  min-height: 48px;
+  max-height: 48px;
+  flex: 0 0 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  border: 2px solid #d9e8ff;
+  box-shadow: 0 6px 18px rgba(18, 55, 117, 0.25);
+  line-height: 1;
+}
+
+.research-assistant-fab .ant-btn-icon,
+.research-assistant-fab .anticon,
+.research-assistant-fab .anticon svg {
+  display: inline-flex;
+  width: 22px;
+  min-width: 22px;
+  max-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  margin-inline-end: 0 !important;
+}
+
+.research-assistant-fab .anticon svg {
+  display: block;
+}
 .research-assistant-modal .ant-modal-body { max-height: min(82vh, 860px); overflow: auto; padding: 0; }
 .research-assistant-modal .ai-assistant-card { border: 0; border-radius: 0; box-shadow: none; }
 .research-assistant-modal .ai-assistant-card::before { display: none; }
@@ -8770,12 +9126,36 @@ textarea::placeholder {
 .ai-selection-flow > div:last-child { border-right: 0; }
 .ai-selection-flow span, .ai-selection-flow small { color: var(--text-soft); font-size: 10px; }
 .ai-selection-flow strong { overflow: hidden; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
-.ai-selection-form { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
-.ai-selection-form label { display: grid; gap: 4px; min-width: 112px; color: var(--text-soft); font-size: 10px; font-weight: 750; }
+.ai-selection-form { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.ai-selection-form label { display: grid; grid-template-rows: 16px 36px; align-content: start; gap: 4px; min-width: 112px; color: var(--text-soft); font-size: 10px; font-weight: 750; }
 .ai-selection-form label .ant-select, .ai-selection-form label .ant-input-number { width: 130px; }
+.ai-selection-form label .ant-select,
+.ai-selection-form label .ant-input-number,
+.ai-selection-form label .ant-input {
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+}
+.ai-selection-form label .ant-select-selector {
+  display: flex;
+  height: 36px !important;
+  min-height: 36px;
+  align-items: center;
+  margin: 0;
+  padding: 0 11px;
+}
+.ai-selection-form label .ant-input-number {
+  display: flex;
+  align-items: center;
+  padding: 0;
+}
+.ai-selection-form label .ant-input-number-input {
+  height: 34px;
+  padding: 4px 11px;
+}
 .ai-selection-form .ai-selection-manual { min-width: 235px; flex: 1 1 235px; }
 .ai-selection-form .ai-selection-manual .ant-input { width: 100%; }
-.ai-selection-form > .ant-btn { min-height: 32px; }
+.ai-selection-form > .ant-btn { align-self: flex-end; min-height: 32px; margin-bottom: 0; }
 .ai-selection-summary { margin-bottom: 10px; }
 .ai-selection-symbol { display: grid; gap: 2px; min-width: 0; }
 .ai-selection-symbol strong { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }

@@ -24,7 +24,7 @@ export function FloatingResearchAssistant({ workspace }: { workspace: string }) 
         width={1120}
         centered
         destroyOnHidden={false}
-        className="research-assistant-modal"
+        className="app-themed-modal research-assistant-modal"
         title={<div className="quote-dialog-title"><div><strong>研究助手</strong><span>当前工作区：{workspace}</span></div><small>RESEARCH COPILOT</small></div>}
       >
         <AIAssistantWorkspace embedded workspaceContext={workspace} />

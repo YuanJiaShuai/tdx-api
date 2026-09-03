@@ -153,6 +153,18 @@ func syncMacroCalendars(ctx context.Context) (macroCalendarSyncResult, error) {
 		}
 		if !insertFailed {
 			for _, id := range referenceMacroEventIDs(provider) {
+				reference, getErr := appStore.GetMacroEvent(id)
+				if errors.Is(getErr, sql.ErrNoRows) {
+					continue
+				}
+				if getErr != nil {
+					providerMessages[provider] = append(providerMessages[provider], "读取参考事件失败: "+getErr.Error())
+					continue
+				}
+				// Keep a local reference when the official page omits one event type.
+				if !containsMacroEventOnDate(events, reference) {
+					continue
+				}
 				if err := appStore.DeleteMacroEvent(id); err != nil && !errors.Is(err, sql.ErrNoRows) {
 					providerMessages[provider] = append(providerMessages[provider], "清理参考记录失败: "+err.Error())
 				}
@@ -195,6 +207,22 @@ func syncMacroCalendars(ctx context.Context) (macroCalendarSyncResult, error) {
 	}
 	result.States, _ = appStore.ListMacroEventSyncStates()
 	return result, nil
+}
+
+func containsMacroEventOnDate(events []MacroEvent, reference MacroEvent) bool {
+	referenceDate, err := time.Parse(time.RFC3339, reference.StartsAt)
+	if err != nil {
+		return false
+	}
+	for _, event := range events {
+		eventDate, parseErr := time.Parse(time.RFC3339, event.StartsAt)
+		if parseErr == nil &&
+			strings.EqualFold(strings.TrimSpace(event.Code), strings.TrimSpace(reference.Code)) &&
+			eventDate.Format("20060102") == referenceDate.Format("20060102") {
+			return true
+		}
+	}
+	return false
 }
 
 func nextAShareTradingDate(startsAt string) string {

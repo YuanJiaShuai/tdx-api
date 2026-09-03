@@ -702,7 +702,7 @@ export function TradingSystemWorkspace() {
         centered
         destroyOnHidden
         closeIcon={<CloseOutlined />}
-        className="trading-edit-modal"
+        className="app-themed-modal trading-edit-modal"
         title={
           <div className="quote-dialog-title trade-dialog-title">
             <div>

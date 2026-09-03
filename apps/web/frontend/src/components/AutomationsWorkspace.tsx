@@ -373,7 +373,7 @@ export function AutomationsWorkspace() {
         centered
         destroyOnHidden
         closeIcon={<CloseOutlined />}
-        className="automation-edit-modal"
+        className="app-themed-modal automation-edit-modal"
         title={
           <div className="quote-dialog-title automation-dialog-title">
             <div>

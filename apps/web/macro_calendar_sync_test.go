@@ -34,3 +34,13 @@ func TestParseBEASchedulePage(t *testing.T) {
 		t.Fatalf("unexpected BEA events: %+v", events)
 	}
 }
+
+func TestContainsMacroEventOnDateKeepsMissingReferenceDate(t *testing.T) {
+	reference := MacroEvent{Code: "NFP", StartsAt: "2026-09-04T20:30:00+08:00"}
+	if containsMacroEventOnDate([]MacroEvent{{Code: "NFP", StartsAt: "2026-02-05T21:30:00+08:00"}}, reference) {
+		t.Fatal("NFP reference should remain when the official page only returns another date")
+	}
+	if !containsMacroEventOnDate([]MacroEvent{{Code: "nfp", StartsAt: "2026-09-04T20:30:00+08:00"}}, reference) {
+		t.Fatal("matching NFP date should remove the reference event")
+	}
+}

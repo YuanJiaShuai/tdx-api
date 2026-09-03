@@ -154,6 +154,10 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	if err != nil {
 		return run, err
 	}
+	return r.runTaskWithRun(ctx, task, run)
+}
+
+func (r *AutomationRunner) runTaskWithRun(ctx context.Context, task AutomationTask, run AutomationRun) (AutomationRun, error) {
 
 	status := "success"
 	logText := ""
@@ -161,6 +165,7 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	matchedCount := 0
 	var result interface{}
 	var matchedSymbols []string
+	var err error
 
 	switch task.Type {
 	case "stock_selection":

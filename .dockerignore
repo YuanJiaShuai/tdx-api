@@ -34,6 +34,7 @@ vendor/
 # Web compiled
 apps/web/stock-web
 apps/web/*.exe
+apps/web/frontend/.vite/
 
 # Runtime data and generated artifacts
 data/

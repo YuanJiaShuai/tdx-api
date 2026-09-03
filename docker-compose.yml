@@ -42,6 +42,7 @@ services:
       - TZ=Asia/Shanghai
       - FORMULA_WORKER_HOST=0.0.0.0
       - FORMULA_WORKER_PORT=8712
+      - FORMULA_WORKER_USE_HQCHARTPY2=1
     networks:
       - stock-network
     healthcheck:

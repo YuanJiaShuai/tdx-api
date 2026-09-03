@@ -72,7 +72,7 @@ export function AIResearchReport({ symbol, name }: AIResearchReportProps) {
         width={920}
         centered
         destroyOnHidden
-        className="ai-research-modal"
+        className="app-themed-modal ai-research-modal"
         title={<div className="quote-dialog-title"><div><strong>{name || symbol}</strong><span>{symbol}</span></div><small>AI RESEARCH DOSSIER</small></div>}
       >
         {!response ? <Empty description="暂无研究报告" /> : (

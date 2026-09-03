@@ -376,8 +376,10 @@ export function KlineAnalysisWorkspace() {
           ))}
           <div className="kline-indicator-note">
             <span>图表由 HQChart 绘制；研究值可切换到 Hikyuu 计算并保留数据修订号。</span>
-            <Select size="small" value={hikyuuIndicatorName} onChange={setHikyuuIndicatorName} options={['ma', 'ema', 'macd', 'boll', 'atr'].map((value) => ({ value, label: value.toUpperCase() }))} />
-            <Button size="small" icon={<CheckCircleOutlined />} loading={hikyuuIndicatorLoading} onClick={() => void calculateHikyuuIndicator(hikyuuIndicatorName)}>Hikyuu 校验</Button>
+            <div className="kline-indicator-note-controls">
+              <Select size="small" value={hikyuuIndicatorName} onChange={setHikyuuIndicatorName} options={['ma', 'ema', 'macd', 'boll', 'atr'].map((value) => ({ value, label: value.toUpperCase() }))} />
+              <Button size="small" icon={<CheckCircleOutlined />} loading={hikyuuIndicatorLoading} onClick={() => void calculateHikyuuIndicator(hikyuuIndicatorName)}>Hikyuu 校验</Button>
+            </div>
           </div>
         </Card>
 

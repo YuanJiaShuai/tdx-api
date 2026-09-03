@@ -222,7 +222,7 @@ export function WatchlistTable() {
         centered
         destroyOnHidden
         closeIcon={<CloseOutlined />}
-        className="watchlist-quote-modal"
+        className="app-themed-modal watchlist-quote-modal"
         title={
           <div className="quote-dialog-title">
             <div>

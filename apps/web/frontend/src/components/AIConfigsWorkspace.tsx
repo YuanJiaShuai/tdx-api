@@ -197,7 +197,7 @@ export function AIConfigsWorkspace() {
         centered
         destroyOnHidden
         closeIcon={<CloseOutlined />}
-        className="ai-model-edit-modal"
+        className="app-themed-modal ai-model-edit-modal"
         title={
           <div className="quote-dialog-title ai-model-dialog-title">
             <div>

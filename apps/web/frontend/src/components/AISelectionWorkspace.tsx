@@ -2,10 +2,23 @@ import { Alert, Button, Card, Empty, Input, InputNumber, Select, Space, Table, T
 import { ExperimentOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { normalizeSymbol } from '../lib/format';
 import type { AICredential, AISelectionRankItem, AISelectionResponse, SelectionResult, StockPool } from '../types';
 import { AIResearchReport } from './AIResearchReport';
 
 const { Text } = Typography;
+
+interface StockSearchResult {
+  code?: string;
+  name?: string;
+}
+
+interface SelectionCandidate {
+  symbol: string;
+  name?: string;
+  formula_name?: string;
+  task_name?: string;
+}
 
 function percent(value?: number) {
   return Number.isFinite(value) ? `${(Number(value) * 100).toFixed(1)}%` : '--';
@@ -15,6 +28,36 @@ function statusTag(status?: string) {
   const labels: Record<string, string> = { candidate: '候选', watch: '观察', exclude: '淘汰' };
   const colors: Record<string, string> = { candidate: 'green', watch: 'gold', exclude: 'red' };
   return <Tag color={colors[status || ''] || 'default'}>{labels[status || ''] || status || '未知'}</Tag>;
+}
+
+function hasSameSymbol(left?: string, right?: string) {
+  return Boolean(left && right && normalizeSymbol(left) === normalizeSymbol(right));
+}
+
+function resolveStockName(item: Pick<AISelectionRankItem, 'symbol' | 'name'>, stockNames: Record<string, string>) {
+  const mappedName = stockNames[normalizeSymbol(item.symbol)];
+  if (mappedName) return mappedName;
+  const modelName = item.name?.trim();
+  return modelName && !hasSameSymbol(modelName, item.symbol) ? modelName : item.symbol;
+}
+
+async function fetchStockNames(symbols: string[]) {
+  const uniqueSymbols = [...new Set(symbols.map(normalizeSymbol).filter(Boolean))];
+  const entries = await Promise.all(uniqueSymbols.map(async (symbol) => {
+    try {
+      const matches = await apiFetch<StockSearchResult[]>(
+        `/api/search?keyword=${encodeURIComponent(symbol)}`
+      );
+      const exact = (Array.isArray(matches) ? matches : []).find((item) => (
+        hasSameSymbol(item.code, symbol) && Boolean(item.name?.trim())
+      ));
+      return exact?.name?.trim() ? [symbol, exact.name.trim()] as const : null;
+    } catch {
+      return null;
+    }
+  }));
+
+  return Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry)));
 }
 
 export function AISelectionWorkspace() {
@@ -32,6 +75,7 @@ export function AISelectionWorkspace() {
   const [loading, setLoading] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [response, setResponse] = useState<AISelectionResponse | null>(null);
+  const [stockNames, setStockNames] = useState<Record<string, string>>({});
 
   async function loadSources() {
     setPreparing(true);
@@ -57,7 +101,7 @@ export function AISelectionWorkspace() {
   useEffect(() => { void loadSources(); }, []);
 
   const candidates = useMemo(() => {
-    const map = new Map<string, { symbol: string; formula_name?: string; task_name?: string }>();
+    const map = new Map<string, SelectionCandidate>();
     if (source === 'selection') {
       for (const item of selectionResults) if (!map.has(item.symbol)) map.set(item.symbol, { symbol: item.symbol, formula_name: item.formula_name, task_name: item.task_name });
     } else if (source === 'pool') {
@@ -67,6 +111,17 @@ export function AISelectionWorkspace() {
     }
     return [...map.values()].slice(0, Math.max(1, candidateLimit));
   }, [candidateLimit, manualSymbols, poolID, pools, selectionResults, source]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchStockNames(candidates.map((item) => item.symbol)).then((names) => {
+      if (cancelled || !Object.keys(names).length) return;
+      setStockNames((current) => ({ ...current, ...names }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [candidates]);
 
   async function runSelection() {
     const credential = credentials.find((item) => item.id === credentialID);
@@ -81,7 +136,16 @@ export function AISelectionWorkspace() {
           model: credential.model,
           credential_id: credential.id,
           symbols: candidates.map((item) => item.symbol),
-          input: { source, candidates, fast_period: fastPeriod, slow_period: slowPeriod, history_count: historyCount },
+          input: {
+            source,
+            candidates: candidates.map((item) => {
+              const name = stockNames[normalizeSymbol(item.symbol)];
+              return name ? { ...item, name } : item;
+            }),
+            fast_period: fastPeriod,
+            slow_period: slowPeriod,
+            history_count: historyCount
+          },
           options: { max_tokens: 2200 }
         })
       });
@@ -117,7 +181,7 @@ export function AISelectionWorkspace() {
         {response?.result?.summary ? <Alert className="ai-selection-summary" type="info" showIcon message={response.result.summary} /> : null}
         {ranking.length ? <Table<AISelectionRankItem> size="small" rowKey={(item) => item.symbol} pagination={false} scroll={{ x: 1100 }} dataSource={ranking} columns={[
           { title: '排名', dataIndex: 'rank', width: 62, render: (value, _item, index) => <strong>{value || index + 1}</strong> },
-          { title: '股票', width: 145, render: (_value, item) => <div className="ai-selection-symbol"><strong>{item.name || item.symbol}</strong><span>{item.symbol}</span></div> },
+          { title: '股票', width: 145, render: (_value, item) => <div className="ai-selection-symbol"><strong>{resolveStockName(item, stockNames)}</strong><span>{item.symbol}</span></div> },
           { title: '状态', dataIndex: 'status', width: 82, render: statusTag },
           { title: '评分', dataIndex: 'score', width: 76, render: (value) => Number.isFinite(value) ? Number(value).toFixed(0) : '--' },
           { title: '样本', width: 72, render: (_value, item) => item.historical_validation?.sample_count ?? '--' },
@@ -126,7 +190,7 @@ export function AISelectionWorkspace() {
           { title: '最大回撤', width: 96, render: (_value, item) => percent(item.historical_validation?.max_drawdown) },
           { title: '主要依据', width: 240, render: (_value, item) => (item.reasons || []).slice(0, 2).join('；') || '--' },
           { title: '风险', width: 210, render: (_value, item) => (item.risks || []).slice(0, 2).join('；') || '--' },
-          { title: '研究', fixed: 'right', width: 118, render: (_value, item) => <AIResearchReport symbol={item.symbol} name={item.name} /> }
+          { title: '研究', fixed: 'right', width: 118, render: (_value, item) => <AIResearchReport symbol={item.symbol} name={resolveStockName(item, stockNames)} /> }
         ]} /> : <Empty description={loading ? '正在执行历史验证与排序' : '选择候选来源后执行验证'} />}
         {response?.result?.disclaimer ? <Alert className="ai-selection-disclaimer" type="warning" message={response.result.disclaimer} /> : null}
       </Card>

@@ -3,9 +3,10 @@ import { BarChartOutlined, CheckCircleOutlined, CloseOutlined, CodeOutlined, Cop
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { JsonPane } from './JsonPane';
-import type { Strategy } from '../types';
+import type { AutomationRun, Strategy } from '../types';
 
 const { Text } = Typography;
+type StrategyAction = 'run' | 'backtest' | 'hikyuu';
 
 function formatConfig(value?: string) {
   try {
@@ -13,6 +14,30 @@ function formatConfig(value?: string) {
   } catch {
     return value || '{}';
   }
+}
+
+function isAutomationRun(value: unknown): value is AutomationRun {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    'id' in value &&
+    'status' in value &&
+    'task_type' in value
+  );
+}
+
+function formatAutomationRun(run: AutomationRun) {
+  if (run.status === 'running') {
+    return '策略已提交，正在读取行情并计算因子，请稍候。';
+  }
+  if (run.result_json) {
+    try {
+      return JSON.parse(run.result_json);
+    } catch {
+      return run.result_json;
+    }
+  }
+  return run.log || run;
 }
 
 export function StrategiesWorkspace() {
@@ -23,6 +48,8 @@ export function StrategiesWorkspace() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Strategy | null>(null);
   const [loading, setLoading] = useState(false);
+  const [runningAction, setRunningAction] = useState<StrategyAction | null>(null);
+  const [pendingRunId, setPendingRunId] = useState<string | null>(null);
   const [form] = Form.useForm<Strategy>();
 
   const load = async () => {
@@ -44,6 +71,34 @@ export function StrategiesWorkspace() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!pendingRunId) return;
+    let active = true;
+    const checkRun = async () => {
+      try {
+        const runs = await apiFetch<AutomationRun[]>('/api/automations/runs?limit=50');
+        const run = runs.find((item) => item.id === pendingRunId);
+        if (!active || !run || run.status === 'running') return;
+        setRunOutput(formatAutomationRun(run));
+        setPendingRunId(null);
+        setRunningAction(null);
+        if (run.status === 'success') {
+          message.success('策略运行已完成');
+        } else {
+          message.error(run.log || '策略运行失败');
+        }
+      } catch {
+        // Keep polling so a temporary status request failure does not lose the run.
+      }
+    };
+    void checkRun();
+    const timer = window.setInterval(() => { void checkRun(); }, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [pendingRunId]);
 
   const enabledCount = useMemo(() => items.filter((item) => item.enabled).length, [items]);
   const templateCount = useMemo(() => items.filter((item) => item.readonly).length, [items]);
@@ -88,17 +143,31 @@ export function StrategiesWorkspace() {
   }
 
   async function runStrategy(id: string, backtest = false, engine = 'go') {
+    if (runningAction) return;
+    const action: StrategyAction = backtest ? (engine === 'hikyuu' ? 'hikyuu' : 'backtest') : 'run';
+    let waitingForRun = false;
+    setRunningAction(action);
+    setRunOutput(backtest ? '正在执行回测，请稍候。' : '策略已提交，正在读取行情并计算因子，请稍候。');
     try {
-      const run = await apiFetch(
+      const run = await apiFetch<unknown>(
         `/api/strategies/${id}/${backtest ? 'backtest' : 'run'}`,
         { method: 'POST', body: backtest ? JSON.stringify({ strategy_id: id, engine }) : undefined }
       );
+      if (!backtest && isAutomationRun(run)) {
+        waitingForRun = true;
+        setPendingRunId(run.id);
+        setRunOutput(formatAutomationRun(run));
+        message.info('策略运行已提交，后台计算中');
+        return;
+      }
       setRunOutput(run);
       message.success(backtest ? `${engine === 'hikyuu' ? 'Hikyuu 校验' : 'Go'} 回测已完成` : '策略运行已提交');
     } catch (error) {
       const text = error instanceof Error ? error.message : (backtest ? '策略回测失败' : '策略运行失败');
       setRunOutput(text);
       message.error(text);
+    } finally {
+      if (!waitingForRun) setRunningAction(null);
     }
   }
 
@@ -214,11 +283,11 @@ export function StrategiesWorkspace() {
                 <div><span>配置状态</span><strong>{selected.config_json ? 'JSON 已载入' : '空配置'}</strong></div>
               </div>
               <div className="strategy-inspector-actions">
-                {!selected.readonly ? <Button icon={<EditOutlined />} onClick={() => openDialog(selected)}>编辑策略</Button> : null}
-                <Button icon={<CopyOutlined />} onClick={() => cloneStrategy(selected.id)}>复制副本</Button>
-                <Button type="primary" icon={<ThunderboltOutlined />} onClick={() => runStrategy(selected.id)}>立即运行</Button>
-                <Button icon={<ExperimentOutlined />} onClick={() => runStrategy(selected.id, true)}>回测</Button>
-                <Button icon={<DatabaseOutlined />} onClick={() => runStrategy(selected.id, true, 'hikyuu')}>Hikyuu 校验</Button>
+                {!selected.readonly ? <Button disabled={Boolean(runningAction)} icon={<EditOutlined />} onClick={() => openDialog(selected)}>编辑策略</Button> : null}
+                <Button disabled={Boolean(runningAction)} icon={<CopyOutlined />} onClick={() => cloneStrategy(selected.id)}>复制副本</Button>
+                <Button type="primary" loading={runningAction === 'run'} disabled={Boolean(runningAction) && runningAction !== 'run'} icon={<ThunderboltOutlined />} onClick={() => { void runStrategy(selected.id); }}>立即运行</Button>
+                <Button loading={runningAction === 'backtest'} disabled={Boolean(runningAction) && runningAction !== 'backtest'} icon={<ExperimentOutlined />} onClick={() => { void runStrategy(selected.id, true); }}>回测</Button>
+                <Button loading={runningAction === 'hikyuu'} disabled={Boolean(runningAction) && runningAction !== 'hikyuu'} icon={<DatabaseOutlined />} onClick={() => { void runStrategy(selected.id, true, 'hikyuu'); }}>Hikyuu 校验</Button>
               </div>
               <div className="strategy-config-preview">
                 <div><span>配置预览</span><CodeOutlined /></div>
@@ -266,7 +335,10 @@ export function StrategiesWorkspace() {
         >
           <div className="strategy-result-intro">
             <BarChartOutlined />
-            <div><strong>{selected ? '查看运行或回测返回值' : '选择策略查看结果'}</strong><span>运行不会修改策略配置</span></div>
+            <div>
+              <strong>{runningAction ? '策略正在运行' : (selected ? '查看运行或回测返回值' : '选择策略查看结果')}</strong>
+              <span>{runningAction ? '正在读取行情并计算，请稍候' : '运行不会修改策略配置'}</span>
+            </div>
           </div>
           <JsonPane value={runOutput} />
         </Card>
@@ -280,7 +352,7 @@ export function StrategiesWorkspace() {
         centered
         destroyOnHidden
         closeIcon={<CloseOutlined />}
-        className="strategy-edit-modal"
+        className="app-themed-modal strategy-edit-modal"
         title={
           <div className="quote-dialog-title strategy-dialog-title">
             <div>
