@@ -2,18 +2,19 @@
 
 一个本地运行的 A 股行情与交易研究工作台。
 
-TDX Workbench 把通达信行情、历史 K 线、分时、财务、板块、公式、选股、自动化、交易计划和 AI 辅助分析集中到一个 Web 界面中。它适合用来做个人研究、策略验证、盘后复盘和本地数据服务，不定位为交易终端或投资顾问。
+TDX Workbench 把通达信行情、历史 K 线、分时、财务、板块、公式、选股、自动化、交易计划和 AI 辅助分析集中到一个 Web 界面中。它适合个人研究、策略验证、盘后复盘和本地数据服务，不定位为交易终端或投资顾问。
 
 > 行情数据可能延迟、缺失或出错。AI 输出仅供学习研究和复盘，不构成投资建议。
 
-![TDX Workbench 行情工作台](docs/assets/tdx-workbench-market.png)
+![TDX Workbench 自选列表（当前 React 工作台）](docs/assets/tdx-workbench-market.png)
 
 ## 你可以用它做什么
 
 | 工作区 | 适合做的事 |
 | --- | --- |
 | 自选 | 查看自选列表、实时行情、五档盘口，并打开个股行情弹窗 |
-| 专业行情 | 查看多周期 K 线、分时和自定义指标，支持在 K 线中切换个人公式 |
+| 市场行情 | 查看多周期 K 线、分时和自定义指标，支持在 K 线中切换个人公式 |
+| K 线分析 | 结合历史 K 线、指标和 AI 做结构化研究 |
 | 数据中心 | 查询股票代码、市场概览、财务/F10、股本和收益测算数据 |
 | 选股结果 | 浏览公式选股命中结果，按股票或公式筛选并跳转行情 |
 | 每日复盘 | 沉淀盘后观察、信号和复盘记录 |
@@ -21,14 +22,10 @@ TDX Workbench 把通达信行情、历史 K 线、分时、财务、板块、公
 | 策略中心 | 管理策略规则、执行策略和查看回测/运行结果 |
 | 自动化 | 维护股票池，按 Cron 定时运行公式选股或系统同步 |
 | AI 模型 | 配置 DeepSeek、OpenAI-compatible、通义千问、智谱 GLM 等模型 |
-| 自选分析 | 使用已配置的 AI 模型，结合实时行情、日 K、财务和资讯分析自选池 |
+| AI 助手 / 自选分析 | 结合实时行情、日 K、财务和资讯进行对话或分析自选池 |
 | Webhook | 把选股、策略和自动化任务结果发送到外部通知地址 |
 
-## 功能预览
-
-### 行情与研究
-
-![行情工作台](docs/assets/tdx-workbench-market.png)
+## 当前界面预览
 
 ### 数据中心
 
@@ -67,7 +64,7 @@ curl http://localhost:8080/api/health
 curl http://localhost:8080/api/services/status
 ```
 
-首次启动后，进入页面顶部的 `AI 模型` 工作区，保存一个模型配置，再从 `自选` 工作区点击 `自选分析`。
+首次使用 AI 时，进入 `AI 模型` 工作区保存并启用一个模型配置，再从 `自选` 工作区点击 `自选分析`。不配置 AI 也可以使用行情、数据、公式和策略功能。
 
 ### 常用 Docker 命令
 
@@ -85,14 +82,16 @@ docker compose logs -f ai-service
 docker compose down
 ```
 
+Compose 是完整六服务部署的标准入口。根目录 `Dockerfile` 是早期的单镜像兼容方案，只包含 Web 与公式 worker，不等价于完整 Compose 部署。
+
 ## 系统架构
 
 ```mermaid
 flowchart LR
-    Browser[浏览器 Web 工作台] --> Web[stock-web<br/>页面与 API 网关]
-    Web --> Market[market-service<br/>行情与历史数据]
-    Web --> Formula[formula-worker<br/>公式执行]
-    Web --> Selection[selection-worker<br/>选股与自动化]
+    Browser[浏览器 Web 工作台] --> Web[stock-web<br/>React 页面与 API 网关]
+    Web --> Market[market-service<br/>行情与市场信息]
+    Web --> Formula[formula-worker<br/>HQChartPy2 / fallback]
+    Web --> Selection[selection-worker<br/>选股、策略与自动化]
     Web --> AI[ai-service<br/>模型调用与分析]
     Web --> Hikyuu[hikyuu-data-service<br/>历史数据同步]
     Selection --> Market
@@ -106,7 +105,7 @@ flowchart LR
     AI --> Local
 ```
 
-项目采用多服务结构，但仍然可以通过一条 Compose 命令启动完整闭环。Web 服务负责页面和统一入口，行情、公式、选股、AI 和历史数据分别由独立服务承担，便于单独构建、重启和排障。
+项目采用多服务结构，但仍可以通过一条 Compose 命令启动完整闭环。Go 负责协议、服务 API 和任务调度，Python 负责公式与 Hikyuu 运行时，React 负责工作台 UI。按运行时和故障域拆分是合理的，也便于单独构建、重启和排障；代价是部署、监控与跨服务数据一致性的复杂度更高。
 
 ## 服务清单
 
@@ -118,6 +117,8 @@ flowchart LR
 | 指标选股 | `services/selection-worker/` | `tdx-workbench-selection` | `18082` | 股票池、公式选股、策略和自动化任务 |
 | AI 分析 | `services/ai-service/` | `tdx-workbench-ai` | `18083` | 模型配置、聊天、单股分析和自选分析 |
 | Hikyuu 数据 | `services/hikyuu-data-service/` | `tdx-workbench-hikyuu-data` | `18091` | 全量数据、盘后增量同步和任务状态 |
+
+正常使用只需要访问 `8080`。其他宿主机端口是排障入口；如果部署在共享网络或公网前面，应通过防火墙、反向代理或仅绑定 `127.0.0.1` 限制访问。
 
 共享代码位于：
 
@@ -134,7 +135,7 @@ packages/workbench-core/  # 公式、股票池、策略、任务和存储模型
 2. 点击股票代码或整行，打开行情弹窗。
 3. 在分时、日 K、周 K、月 K 等周期之间切换。
 4. 点击 K 线上的指标名称，选择自己的自定义指标。
-5. 需要时跳转到专业行情工作区继续研究。
+5. 需要时跳转到市场行情或 K 线分析工作区继续研究。
 
 ### 2. 公式选股与自动化
 
@@ -189,11 +190,7 @@ data/
 └── ...                       # 运行快照和任务结果
 ```
 
-建议把 `data/` 纳入本地备份范围，不要在没有备份的情况下执行：
-
-```bash
-rm -rf data/
-```
+建议把 `data/` 纳入本地备份范围，不要在没有备份的情况下删除它。
 
 ## 配置要点
 
@@ -202,7 +199,7 @@ Compose 已经提供了服务间默认地址。需要长期使用或部署到其
 | 变量 | 用途 |
 | --- | --- |
 | `AI_CREDENTIAL_SECRET` | 加密保存 AI 凭据的密钥 |
-| `AI_SERVICE_TOKEN` | Web 与 AI 服务之间的可选访问令牌 |
+| `AI_SERVICE_TOKEN` | Web 与 AI 服务之间的访问令牌 |
 | `DEEPSEEK_API_KEY` | 通过环境变量提供 DeepSeek API Key |
 | `DEEPSEEK_BASE_URL` | DeepSeek 接口地址，默认 `https://api.deepseek.com` |
 | `MARKET_SERVICE_URL` | AI 服务访问行情服务的地址 |
@@ -211,6 +208,8 @@ Compose 已经提供了服务间默认地址。需要长期使用或部署到其
 | `AUTOMATION_SCHEDULER_ENABLED` | 是否启用自动化调度 |
 
 通过环境变量提供的 AI 凭据会以 `env:` 开头显示，并且不能从页面删除。长期部署时请固定 `AI_CREDENTIAL_SECRET`，否则更换密钥后历史凭据可能无法解密。
+
+默认 Compose 配置面向本机试用：`AI_SERVICE_TOKEN` 为空、后端调试端口对宿主机开放，且 `AI_CREDENTIAL_SECRET` 有开发默认值。生产或共享网络使用前，必须改成强随机密钥、设置服务令牌，并收紧端口暴露。
 
 ## 常用 API
 
@@ -254,37 +253,40 @@ curl -X POST "http://localhost:8080/api/ai/analyze/watchlist" \
 要求：
 
 - Go 1.23+
-- Python 3
+- Python 3.11+
+- Node.js 18+
 - SQLite
 - 如果需要完整公式能力，准备 HQChartPy2 构建环境
 
-推荐优先使用 Docker。源码运行时需要分别启动依赖服务：
+推荐优先使用 Docker。源码开发时先构建 React 前端：
+
+```bash
+cd apps/web/frontend
+npm ci
+npm run build
+```
+
+构建产物会写入 `apps/web/static-react/`。然后分别启动依赖服务：
 
 下面每组命令都应在独立终端中运行；这些服务启动后会持续占用当前终端。
 
 ```bash
-# 公式服务
 python3 services/formula-worker/worker.py
+(cd services/market-service && go run .)
+(cd services/selection-worker && go run .)
+(cd services/ai-service && go run .)
+(cd apps/web && go run .)
+```
 
-# 行情服务
-cd services/market-service
-go run .
+Hikyuu 服务需要先安装 `services/hikyuu-data-service/requirements.txt` 和 `hikyuu`，再从该目录运行 `uvicorn app:app --host 0.0.0.0 --port 8091`。
 
-# Hikyuu 数据服务
-cd ../hikyuu-data-service
-python3 -m pip install -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 8091
+源码模式下，如需让 Web 走独立行情、公式和 AI 服务，请显式设置服务地址：
 
-# 选股服务
-cd ../selection-worker
-go run .
-
-# AI 服务
-cd ../ai-service
-go run .
-
-# Web 工作台
-cd ../../apps/web
+```bash
+cd apps/web
+MARKET_SERVICE_URL=http://localhost:8081 \
+FORMULA_WORKER_URL=http://localhost:8712 \
+AI_SERVICE_URL=http://localhost:8083 \
 go run .
 ```
 
@@ -297,6 +299,8 @@ PORT=18080 go run .
 
 ## 开发验证
 
+根目录是多模块 `go.work` 工作区，不能用根目录的 `go test ./...` 代替模块级测试。
+
 ```bash
 # Compose 配置
 docker compose config --quiet
@@ -305,13 +309,21 @@ docker compose config --quiet
 node --check apps/web/static/app.js
 
 # Go 模块测试
-cd packages/tdx-core && go test ./...
-cd ../workbench-core && go test ./...
-cd ../../apps/web && go test ./...
-cd ../../services/market-service && go test ./...
-cd ../selection-worker && go test ./...
-cd ../ai-service && go test ./...
+for module in \
+  packages/tdx-core \
+  packages/workbench-core \
+  apps/web \
+  services/market-service \
+  services/selection-worker \
+  services/ai-service; do
+  (cd "$module" && go test ./...)
+done
+
+# React 前端
+(cd apps/web/frontend && npm ci && npm run build)
 ```
+
+`apps/web/static-react/` 是 Docker 镜像直接提供的构建产物。修改 `frontend/src/` 后要重新构建并提交产物，或在 CI 中完成这一步。
 
 服务状态检查：
 
@@ -325,6 +337,7 @@ curl http://localhost:8080/api/services/status
 ```text
 tdx-api/
 ├── apps/web/                    # Web 页面、API 网关和工作台后端
+│   └── frontend/                # React + Vite 源码
 ├── services/
 │   ├── market-service/          # 独立行情服务
 │   ├── formula-worker/          # 公式执行服务
@@ -334,11 +347,11 @@ tdx-api/
 ├── packages/
 │   ├── tdx-core/                # 通达信核心库
 │   └── workbench-core/          # 工作台共享模型和存储
-├── data/                        # 本地数据库和同步数据
+├── data/                        # SQLite、Hikyuu 数据和任务快照
 ├── docs/                        # 使用、部署、API 和算法文档
 ├── scripts/                     # 示例脚本和日常工具
-├── docker-compose.yml
-└── go.work
+├── docker-compose.yml           # 完整多服务部署入口
+└── go.work                      # Go 多模块工作区
 ```
 
 ## 文档导航
