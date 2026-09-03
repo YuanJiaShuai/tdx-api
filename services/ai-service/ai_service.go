@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/aes"
@@ -97,6 +98,7 @@ type AIAnalyzeResponse struct {
 type AIProviderClient interface {
 	Chat(ctx context.Context, req AIChatRequest, credential AICredential) (AIChatResponse, error)
 	Test(ctx context.Context, req AIChatRequest, credential AICredential) error
+	Stream(ctx context.Context, req AIChatRequest, credential AICredential, emit func(map[string]interface{}) error) error
 }
 
 type OpenAICompatibleClient struct {
@@ -193,6 +195,123 @@ func (c *OpenAICompatibleClient) Chat(ctx context.Context, req AIChatRequest, cr
 		Credential:  credential.ID,
 		GeneratedAt: nowText(),
 	}, nil
+}
+
+func (c *OpenAICompatibleClient) Stream(ctx context.Context, req AIChatRequest, credential AICredential, emit func(map[string]interface{}) error) error {
+	provider := normalizeAIProvider(req.Provider)
+	model := chooseAIModel(provider, chooseNonEmpty(req.Model, credential.Model))
+	baseURL := chooseAIBaseURL(provider, credential.BaseURL)
+	if err := requireNonEmpty(credential.APIKey, "AI API key未配置"); err != nil {
+		return err
+	}
+	if len(req.Messages) == 0 {
+		return errors.New("messages不能为空")
+	}
+	if baseURL == "" {
+		return errors.New("AI base URL未配置")
+	}
+
+	body := map[string]interface{}{
+		"model":    model,
+		"messages": req.Messages,
+		"stream":   true,
+	}
+	if req.Options.Temperature != nil {
+		body["temperature"] = *req.Options.Temperature
+	}
+	if req.Options.MaxTokens > 0 {
+		body["max_tokens"] = req.Options.MaxTokens
+	}
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(rawBody))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+credential.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		rawResponse, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("AI请求失败: %s", resp.Status)
+		}
+		var parsed openAICompatibleResponse
+		_ = json.Unmarshal(rawResponse, &parsed)
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return fmt.Errorf("AI请求失败: %s", parsed.Error.Message)
+		}
+		return fmt.Errorf("AI请求失败: %s %s", resp.Status, strings.TrimSpace(string(rawResponse)))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			return nil
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content          string                   `json:"content"`
+					ReasoningContent string                   `json:"reasoning_content"`
+					Reasoning        string                   `json:"reasoning"`
+					ToolCalls        []map[string]interface{} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			return errors.New(chunk.Error.Message)
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+
+		delta := chunk.Choices[0].Delta
+		event := map[string]interface{}{}
+		if delta.Content != "" {
+			event["content"] = delta.Content
+		}
+		if delta.ReasoningContent != "" {
+			event["reasoning_content"] = delta.ReasoningContent
+		} else if delta.Reasoning != "" {
+			event["reasoning_content"] = delta.Reasoning
+		}
+		if len(delta.ToolCalls) > 0 {
+			event["tool_calls"] = delta.ToolCalls
+		}
+		if len(event) > 0 {
+			if err := emit(event); err != nil {
+				return err
+			}
+		}
+	}
+	return scanner.Err()
 }
 
 func (c *OpenAICompatibleClient) Test(ctx context.Context, req AIChatRequest, credential AICredential) error {
@@ -432,6 +551,56 @@ func handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	successResponse(w, resp)
+}
+
+func handleAIChatStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "只支持POST请求")
+		return
+	}
+	var req AIChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+	credential, err := resolveAICredential(req.CredentialID, req.Provider)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = credential.Provider
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		errorResponse(w, "流式响应不受支持")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	emit := func(event map[string]interface{}) error {
+		raw, marshalErr := json.Marshal(event)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if _, writeErr := fmt.Fprintf(w, "data: %s\n\n", raw); writeErr != nil {
+			return writeErr
+		}
+		flusher.Flush()
+		return nil
+	}
+	if err := aiClientFor(req.Provider).Stream(r.Context(), req, credential, emit); err != nil {
+		raw, _ := json.Marshal(map[string]string{"message": err.Error()})
+		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", raw)
+		flusher.Flush()
+		return
+	}
+	_, _ = w.Write([]byte("event: done\ndata: [DONE]\n\n"))
+	flusher.Flush()
 }
 
 func handleAIAnalyzeStock(w http.ResponseWriter, r *http.Request) {

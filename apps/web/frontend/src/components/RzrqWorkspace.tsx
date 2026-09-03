@@ -1,9 +1,9 @@
-import { Button, Card, DatePicker, Empty, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, DatePicker, Empty, Select, Space, Statistic, Table, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { formatPrice, formatSigned } from '../lib/format';
-import type { RzrqRankItem, RzrqRankResponse, RzrqTrendResponse, RzrqTrendItem } from '../types';
+import type { RzrqRankItem, RzrqRankResponse } from '../types';
 
 const { Text } = Typography;
 
@@ -65,67 +65,6 @@ function dateFromTimestamp(value?: number) {
   return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
 }
 
-function TrendChart({ data }: { data: RzrqTrendResponse | null }) {
-  const items = data?.items || [];
-  const width = 840;
-  const height = 250;
-  const padding = { top: 18, right: 18, bottom: 32, left: 54 };
-  const values = items.flatMap((item) => [numberValue(item.rzye), numberValue(item.rzjlr)]);
-  const min = values.length ? Math.min(...values) : 0;
-  const max = values.length ? Math.max(...values) : 1;
-  const range = max - min || 1;
-  const x = (index: number) =>
-    padding.left + (index / Math.max(items.length - 1, 1)) * (width - padding.left - padding.right);
-  const y = (value: number) =>
-    padding.top + (1 - (value - min) / range) * (height - padding.top - padding.bottom);
-  const line = (selector: (item: RzrqTrendItem) => string | undefined) =>
-    items.map((item, index) => `${x(index).toFixed(1)},${y(numberValue(selector(item))).toFixed(1)}`).join(' ');
-
-  return (
-    <div className="rzrq-trend-wrap">
-      {items.length ? (
-        <>
-          <svg className="rzrq-trend-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="融资融券走势">
-            {[0, 0.5, 1].map((ratio) => {
-              const gridY = padding.top + ratio * (height - padding.top - padding.bottom);
-              return (
-                <line
-                  key={ratio}
-                  x1={padding.left}
-                  x2={width - padding.right}
-                  y1={gridY}
-                  y2={gridY}
-                  className="rzrq-grid-line"
-                />
-              );
-            })}
-            <polyline points={line((item) => item.rzye)} className="rzrq-line rzrq-line-balance" />
-            <polyline points={line((item) => item.rzjlr)} className="rzrq-line rzrq-line-net" />
-            <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" className="rzrq-axis-label">
-              {max.toFixed(2)}
-            </text>
-            <text x={padding.left - 8} y={height - padding.bottom} textAnchor="end" className="rzrq-axis-label">
-              {min.toFixed(2)}
-            </text>
-            <text x={padding.left} y={height - 8} className="rzrq-axis-label">
-              {items[0]?.date || ''}
-            </text>
-            <text x={width - padding.right} y={height - 8} textAnchor="end" className="rzrq-axis-label">
-              {items[items.length - 1]?.date || ''}
-            </text>
-          </svg>
-          <div className="rzrq-legend">
-            <span><i className="rzrq-legend-dot balance" />融资余额 ({data?.rzye_unit || '亿'})</span>
-            <span><i className="rzrq-legend-dot net" />融资净买入 ({data?.rzjlr_unit || '亿'})</span>
-          </div>
-        </>
-      ) : (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无融资融券走势数据" />
-      )}
-    </div>
-  );
-}
-
 function RankTable({ items, loading }: { items: RzrqRankItem[]; loading: boolean }) {
   return (
     <Table<RzrqRankItem>
@@ -140,7 +79,13 @@ function RankTable({ items, loading }: { items: RzrqRankItem[]; loading: boolean
       columns={[
         { title: '排名', width: 60, fixed: 'left', render: (_value, _item, index) => index + 1 },
         { title: '代码', dataIndex: 'stockCode', width: 95, fixed: 'left', render: (value) => value || '--' },
-        { title: '名称', dataIndex: 'stockName', width: 115, fixed: 'left', render: (value) => <Tag color="blue">{value || '--'}</Tag> },
+        {
+          title: '名称',
+          dataIndex: 'stockName',
+          width: 115,
+          fixed: 'left',
+          render: (value) => <span className="rzrq-name">{value || '--'}</span>
+        },
         { title: '收盘价', dataIndex: 'close_price', width: 85, align: 'right', render: formatPrice },
         {
           title: '涨跌幅',
@@ -185,9 +130,7 @@ export function RzrqWorkspace() {
   const [length, setLength] = useState(20);
   const [date, setDate] = useState('');
   const [rank, setRank] = useState<RzrqRankResponse>();
-  const [trend, setTrend] = useState<RzrqTrendResponse | null>(null);
   const [rankLoading, setRankLoading] = useState(false);
-  const [trendLoading, setTrendLoading] = useState(false);
   const initialLoad = useRef(false);
 
   const loadRank = useCallback(async () => {
@@ -211,19 +154,6 @@ export function RzrqWorkspace() {
     }
   }, [date, length, sortKey, sortType, type]);
 
-  const loadTrend = useCallback(async () => {
-    setTrendLoading(true);
-    try {
-      const data = await apiFetch<RzrqTrendResponse>('/api/market/rzrq/trend');
-      setTrend(data);
-    } catch (error) {
-      setTrend(null);
-      message.warning(error instanceof Error ? error.message : '融资融券走势加载失败');
-    } finally {
-      setTrendLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     if (!initialLoad.current) {
       void loadRank();
@@ -231,8 +161,7 @@ export function RzrqWorkspace() {
     }
     initialLoad.current = false;
     void loadRank();
-    void loadTrend();
-  }, [loadRank, loadTrend]);
+  }, [loadRank]);
 
   const dataDate = useMemo(
     () => rank?.data_date || dateFromTimestamp(rank?.list?.[0]?.date),
@@ -252,44 +181,17 @@ export function RzrqWorkspace() {
   return (
     <div className="rzrq-layout">
       <Card
-        className="work-card rzrq-trend-card"
-        title={
-          <div className="market-panel-title">
-            <strong>融资融券走势</strong>
-            <Text type="secondary">
-              {trend?.update_time ? `更新于 ${trend.update_time}` : '全市场汇总'}
-            </Text>
-          </div>
-        }
-        extra={
-          <Space>
-            <Text type="secondary">{trend?.source || '同花顺'}</Text>
-            <Button type="primary" icon={<ReloadOutlined />} loading={trendLoading} onClick={() => void loadTrend()}>
-              刷新走势
-            </Button>
-          </Space>
-        }
-      >
-        <TrendChart data={trend} />
-      </Card>
-
-      <Card
         className="work-card rzrq-rank-card"
         title={
           <div className="market-panel-title">
-            <strong>融资融券余额排名</strong>
+            <strong>融资融券余额</strong>
             <Text type="secondary">
               {dataDate ? `${typeOptions.find((item) => item.value === type)?.label || ''} · ${dataDate}` : '行业 / 概念 / 个股'}
             </Text>
           </div>
         }
         extra={
-          <Space>
-            <Text type="secondary">{rank?.source || '同花顺'}</Text>
-            <Button type="primary" icon={<ReloadOutlined />} loading={rankLoading} onClick={() => void loadRank()}>
-              刷新排名
-            </Button>
-          </Space>
+          <Text type="secondary">{rank?.source || '同花顺'}</Text>
         }
       >
         <Space wrap className="toolbar-row rzrq-toolbar">
@@ -301,14 +203,17 @@ export function RzrqWorkspace() {
             placeholder="最新日期"
             onChange={(_value, dateString) => setDate(typeof dateString === 'string' ? dateString : '')}
           />
+          <Button type="primary" icon={<ReloadOutlined />} loading={rankLoading} onClick={() => void loadRank()}>
+            刷新
+          </Button>
         </Space>
 
         <div className="metric-strip rzrq-summary">
-          <Statistic title="净买入合计" value={amount(summary.net)} />
-          <Statistic title="融资余额合计" value={amount(summary.margin)} />
-          <Statistic title="融券余额合计" value={amount(summary.short)} />
-          <Statistic title="上涨" value={summary.up} valueStyle={{ color: 'var(--danger)' }} />
-          <Statistic title="下跌" value={summary.down} valueStyle={{ color: 'var(--success)' }} />
+          <Statistic className="rzrq-metric-net" title="净买入合计" value={amount(summary.net)} />
+          <Statistic className="rzrq-metric-margin" title="融资余额合计" value={amount(summary.margin)} />
+          <Statistic className="rzrq-metric-short" title="融券余额合计" value={amount(summary.short)} />
+          <Statistic className="rzrq-metric-up" title="上涨" value={summary.up} valueStyle={{ color: 'var(--danger)' }} />
+          <Statistic className="rzrq-metric-down" title="下跌" value={summary.down} valueStyle={{ color: 'var(--success)' }} />
         </div>
 
         <RankTable items={rank?.list || []} loading={rankLoading} />

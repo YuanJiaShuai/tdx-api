@@ -10,6 +10,8 @@ import { StrategiesWorkspace } from './components/StrategiesWorkspace';
 import { TradingSystemWorkspace } from './components/TradingSystemWorkspace';
 import { WebhooksWorkspace } from './components/WebhooksWorkspace';
 import { MarketWorkspace } from './components/MarketWorkspace';
+import { KlineAnalysisWorkspace } from './components/KlineAnalysisWorkspace';
+import { AIAssistantWorkspace } from './components/AIAssistantWorkspace';
 import { WatchlistTable } from './components/WatchlistTable';
 import { apiFetch } from './lib/api';
 import type { ServiceStatusResult } from './types';
@@ -17,6 +19,7 @@ import type { ServiceStatusResult } from './types';
 const workspaces = [
   { key: 'market', label: '自选' },
   { key: 'proChart', label: '市场行情' },
+  { key: 'klineAnalysis', label: 'K线分析' },
   { key: 'dataCenter', label: '数据中心' },
   { key: 'selectionResults', label: '选股结果' },
   { key: 'dailyReview', label: '每日复盘' },
@@ -24,12 +27,14 @@ const workspaces = [
   { key: 'strategies', label: '策略中心' },
   { key: 'automations', label: '自动化' },
   { key: 'aiConfigs', label: 'AI 模型' },
+  { key: 'aiAssistant', label: 'AI 助手' },
   { key: 'webhooks', label: 'Webhook' }
 ];
 
 const workspaceCodes: Record<string, string> = {
   market: 'WATCHLIST',
   proChart: 'MARKET_DATA',
+  klineAnalysis: 'KLINE_ANALYSIS',
   dataCenter: 'DATA_CENTER',
   selectionResults: 'SIGNAL_RESULTS',
   dailyReview: 'DAILY_REVIEW',
@@ -37,6 +42,7 @@ const workspaceCodes: Record<string, string> = {
   strategies: 'STRATEGY_LAB',
   automations: 'RUN_SCHEDULER',
   aiConfigs: 'MODEL_ROUTER',
+  aiAssistant: 'AI_ASSISTANT',
   webhooks: 'WEBHOOKS'
 };
 
@@ -87,6 +93,8 @@ export default function App() {
           <WatchlistTable />
         ) : workspace.key === 'proChart' ? (
           <MarketWorkspace />
+        ) : workspace.key === 'klineAnalysis' ? (
+          <KlineAnalysisWorkspace />
         ) : workspace.key === 'dataCenter' ? (
           <DataCenterWorkspace />
         ) : workspace.key === 'selectionResults' ? (
@@ -101,6 +109,8 @@ export default function App() {
           <AutomationsWorkspace />
         ) : workspace.key === 'aiConfigs' ? (
           <AIConfigsWorkspace />
+        ) : workspace.key === 'aiAssistant' ? (
+          <AIAssistantWorkspace />
         ) : workspace.key === 'webhooks' ? (
           <WebhooksWorkspace />
         ) : (

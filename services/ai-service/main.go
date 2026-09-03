@@ -29,6 +29,7 @@ func main() {
 	mux.HandleFunc("/api/ai/credentials/", withServiceAuth(handleAICredentialOperations))
 	mux.HandleFunc("/api/ai/test-connection", withServiceAuth(handleAITestConnection))
 	mux.HandleFunc("/api/ai/chat", withServiceAuth(handleAIChat))
+	mux.HandleFunc("/api/ai/chat/stream", withServiceAuth(handleAIChatStream))
 	mux.HandleFunc("/api/ai/analyze/stock", withServiceAuth(handleAIAnalyzeStock))
 	mux.HandleFunc("/api/ai/analyze/watchlist", withServiceAuth(handleAIAnalyzeWatchlist))
 

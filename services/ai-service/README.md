@@ -38,6 +38,7 @@ POST /api/ai/credentials
 POST /api/ai/credentials/{id}/test
 POST /api/ai/test-connection
 POST /api/ai/chat
+POST /api/ai/chat/stream
 POST /api/ai/analyze/stock
 POST /api/ai/analyze/watchlist
 ```

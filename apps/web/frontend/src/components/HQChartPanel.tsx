@@ -5,10 +5,20 @@ interface HQChartPanelProps {
   period?: string;
   count?: number;
   pageSize?: number;
+  windows?: Array<Record<string, unknown>>;
+  dataWidth?: number;
   className?: string;
 }
 
-export function HQChartPanel({ symbol, period = 'day', count = 800, pageSize = 80, className }: HQChartPanelProps) {
+export function HQChartPanel({
+  symbol,
+  period = 'day',
+  count = 800,
+  pageSize = 80,
+  windows,
+  dataWidth,
+  className
+}: HQChartPanelProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const isMinuteChart = useMemo(() => String(period).toLowerCase() === 'minute', [period]);
 
@@ -25,7 +35,9 @@ export function HQChartPanel({ symbol, period = 'day', count = 800, pageSize = 8
       symbol,
       period,
       count,
-      pageSize
+      pageSize,
+      windows,
+      dataWidth
     });
     if (!ok) {
       container.innerHTML = '<div class="chart-empty">图表加载失败</div>';
@@ -40,7 +52,7 @@ export function HQChartPanel({ symbol, period = 'day', count = 800, pageSize = 8
       window.removeEventListener('resize', onResize);
       api.destroy?.(container);
     };
-  }, [count, isMinuteChart, pageSize, period, symbol]);
+  }, [count, dataWidth, isMinuteChart, pageSize, period, symbol, windows]);
 
   return <div ref={ref} className={className ? `${className} hq-chart-surface` : 'hq-chart-surface'} />;
 }
