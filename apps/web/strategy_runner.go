@@ -11,17 +11,17 @@ import (
 )
 
 type StrategyConfig struct {
-	Universe        string               `json:"universe"`
-	PoolID          string               `json:"pool_id"`
-	Symbols         []string             `json:"symbols"`
-	Filters         []StrategyFactorRule `json:"filters"`
-	Scores          []StrategyFactorRule `json:"scores"`
-	Pass            StrategyPassConfig   `json:"pass"`
-	Period          string               `json:"period"`
-	Right           int                  `json:"right"`
-	CalcCount       int                  `json:"calc_count"`
-	BatchSize       int                  `json:"batch_size"`
-	ContinueOnError bool                 `json:"continue_on_error"`
+	Universe        StrategyUniverseExpression `json:"universe"`
+	PoolID          string                     `json:"pool_id"`
+	Symbols         []string                   `json:"symbols"`
+	Filters         []StrategyFactorRule       `json:"filters"`
+	Scores          []StrategyFactorRule       `json:"scores"`
+	Pass            StrategyPassConfig         `json:"pass"`
+	Period          string                     `json:"period"`
+	Right           int                        `json:"right"`
+	CalcCount       int                        `json:"calc_count"`
+	BatchSize       int                        `json:"batch_size"`
+	ContinueOnError bool                       `json:"continue_on_error"`
 }
 
 type StrategyFactorRule struct {
@@ -42,6 +42,8 @@ type StrategyRunResult struct {
 	Matched       int                        `json:"matched"`
 	Items         []StrategySelectionItem    `json:"items"`
 	Errors        map[string]string          `json:"errors,omitempty"`
+	Warnings      []string                   `json:"warnings,omitempty"`
+	Universe      StrategyUniverseResult     `json:"universe"`
 	FormulaCache  map[string]map[string]bool `json:"-"`
 	FormulaDetail map[string]map[string]any  `json:"-"`
 	KlineCache    map[string][]FormulaKline  `json:"-"`
@@ -115,10 +117,11 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 	if cfg.BatchSize > 200 {
 		cfg.BatchSize = 200
 	}
-	symbols, err := r.strategyUniverse(cfg)
+	universe, err := r.strategyUniverseResult(cfg, strategyMaxCodes(cfg))
 	if err != nil {
 		return StrategyRunResult{}, err
 	}
+	symbols := universe.Symbols
 	if len(symbols) == 0 {
 		return StrategyRunResult{}, errors.New("策略股票范围为空")
 	}
@@ -127,6 +130,7 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 		Strategy:      strategy,
 		Config:        cfg,
 		Total:         len(symbols),
+		Universe:      universe,
 		Errors:        map[string]string{},
 		FormulaCache:  map[string]map[string]bool{},
 		FormulaDetail: map[string]map[string]any{},
@@ -134,6 +138,9 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 		PoolCache:     map[string]map[string]bool{},
 		FormulaByName: map[string]Formula{},
 		FormulaByID:   map[string]Formula{},
+	}
+	if universe.Truncated {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("选股范围覆盖 %d 只，当前运行保护仅扫描前 %d 只", universe.Total, len(universe.Symbols)))
 	}
 	if err := r.prepareStrategyFormulas(ctx, &result, symbols); err != nil {
 		return StrategyRunResult{}, err
@@ -177,39 +184,8 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 }
 
 func (r *AutomationRunner) strategyUniverse(cfg StrategyConfig) ([]string, error) {
-	switch strings.ToLower(strings.TrimSpace(cfg.Universe)) {
-	case "symbols":
-		return normalizeSymbols(cfg.Symbols), nil
-	case "all_a", "all":
-		if len(cfg.Symbols) > 0 {
-			return normalizeSymbols(cfg.Symbols), nil
-		}
-		if symbols := limitedMarketPoolSymbols("market-all-a", strategyMaxCodes(cfg)); len(symbols) > 0 {
-			return symbols, nil
-		}
-		return nil, errors.New("全市场代码列表不可用")
-	case "market":
-		poolID := cfg.PoolID
-		if poolID == "" {
-			poolID = "market-all-a"
-		}
-		if symbols := limitedMarketPoolSymbols(poolID, strategyMaxCodes(cfg)); len(symbols) > 0 {
-			return symbols, nil
-		}
-		return nil, fmt.Errorf("市场分组代码列表不可用: %s", poolID)
-	case "", "pool":
-		poolID := cfg.PoolID
-		if poolID == "" {
-			poolID = DecisionWatchPoolID
-		}
-		pool, err := r.store.GetStockPool(poolID)
-		if err != nil {
-			return nil, err
-		}
-		return normalizeSymbols(pool.Symbols), nil
-	default:
-		return nil, fmt.Errorf("未知策略股票范围: %s", cfg.Universe)
-	}
+	result, err := r.strategyUniverseResult(cfg, strategyMaxCodes(cfg))
+	return result.Symbols, err
 }
 
 func strategyMaxCodes(cfg StrategyConfig) int {

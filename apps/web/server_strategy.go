@@ -57,6 +57,10 @@ func handleStrategyOperations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parts[0]
+	if id == "range-preview" {
+		handleStrategyRangePreview(w, r)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "clone" {
 		if r.Method != http.MethodPost {
 			errorResponse(w, "只支持POST请求")
@@ -117,6 +121,31 @@ func handleStrategyOperations(w http.ResponseWriter, r *http.Request) {
 	default:
 		errorResponse(w, "不支持的请求方法")
 	}
+}
+
+func handleStrategyRangePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "只支持POST请求")
+		return
+	}
+	var req struct {
+		StrategyConfig
+		MaxCodes int `json:"max_codes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+	maxCodes := req.MaxCodes
+	if maxCodes <= 0 {
+		maxCodes = 300
+	}
+	result, err := automationRunner.strategyUniverseResult(req.StrategyConfig, maxCodes)
+	if err != nil {
+		errorResponse(w, "选股范围预览失败: "+err.Error())
+		return
+	}
+	successResponse(w, result)
 }
 
 func handleStrategyRun(w http.ResponseWriter, r *http.Request, id string) {

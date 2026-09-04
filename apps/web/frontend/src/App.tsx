@@ -8,6 +8,7 @@ import { DailyReviewWorkspace } from './components/DailyReviewWorkspace';
 import { SelectionResultsWorkspace } from './components/SelectionResultsWorkspace';
 import { StrategiesWorkspace } from './components/StrategiesWorkspace';
 import { TradingSystemWorkspace } from './components/TradingSystemWorkspace';
+import { UniverseWorkspace } from './components/UniverseWorkspace';
 import { WebhooksWorkspace } from './components/WebhooksWorkspace';
 import { MarketWorkspace } from './components/MarketWorkspace';
 import { KlineAnalysisWorkspace } from './components/KlineAnalysisWorkspace';
@@ -26,6 +27,7 @@ const workspaces = [
   { key: 'selectionResults', label: '选股结果' },
   { key: 'dailyReview', label: '每日复盘' },
   { key: 'tradingSystem', label: '交易系统' },
+  { key: 'universe', label: '选股范围' },
   { key: 'strategies', label: '策略中心' },
   { key: 'automations', label: '自动化' },
   { key: 'aiConfigs', label: 'AI 模型' },
@@ -42,6 +44,7 @@ const workspaceCodes: Record<string, string> = {
   selectionResults: 'SIGNAL_RESULTS',
   dailyReview: 'DAILY_REVIEW',
   tradingSystem: 'TRADING_PLAN',
+  universe: 'UNIVERSE',
   strategies: 'STRATEGY_LAB',
   automations: 'RUN_SCHEDULER',
   aiConfigs: 'MODEL_ROUTER',
@@ -107,6 +110,8 @@ export default function App() {
           <DailyReviewWorkspace />
         ) : workspace.key === 'tradingSystem' ? (
           <TradingSystemWorkspace />
+        ) : workspace.key === 'universe' ? (
+          <UniverseWorkspace />
         ) : workspace.key === 'strategies' ? (
           <StrategiesWorkspace />
         ) : workspace.key === 'automations' ? (
