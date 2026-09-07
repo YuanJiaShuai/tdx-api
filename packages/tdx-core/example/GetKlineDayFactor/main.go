@@ -1,10 +1,11 @@
 package main
 
 import (
+	"time"
+
 	"github.com/injoyai/logs"
 	"github.com/injoyai/tdx"
 	"github.com/injoyai/tdx/extend"
-	"time"
 )
 
 func main() {
@@ -15,17 +16,17 @@ func main() {
 	ks, fs, err := extend.GetTHSDayKlineFactorFull("000001", c)
 	logs.PanicErr(err)
 
-	m := map[int64]*extend.THSFactor{}
+	m := map[int64]*extend.Factor{}
 	for _, v := range fs {
 		m[v.Date] = v
 	}
 
 	for _, v := range ks[0] {
 		logs.Debugf("%s  不复权:%.2f  前复权:%.2f  后复权:%.2f \n",
-			time.Unix(v.Date, 0).Format(time.DateOnly),
+			v.Time.Format(time.DateOnly),
 			v.Close.Float64(),
-			v.Close.Float64()*m[v.Date].QFactor,
-			v.Close.Float64()*m[v.Date].HFactor,
+			v.Close.Float64()*m[v.Time.Unix()].QFactor,
+			v.Close.Float64()*m[v.Time.Unix()].HFactor,
 		)
 	}
 

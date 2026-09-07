@@ -11,43 +11,43 @@ const TypeFinance uint16 = 0x0010
 
 // FinanceInfo 单只标的财务/基本面信息。股本与资产类字段单位为「股/元」（已 ×10000）。
 type FinanceInfo struct {
-	Market             uint8
-	Code               string
-	LiuTongGuBen       float64 // 流通股本
-	Province           uint16  // 地域码
-	Industry           uint16  // 行业码
-	UpdatedDate        uint32  // 更新日期
-	IPODate            uint32  // 上市日期
-	ZongGuBen          float64 // 总股本
-	GuoJiaGu           float64 // 国家股
-	FaQiRenFaRenGu     float64
-	FaRenGu            float64
-	BGu                float64
-	HGu                float64
-	ZhiGongGu          float64
-	ZongZiChan         float64 // 总资产
-	LiuDongZiChan      float64 // 流动资产
-	GuDingZiChan       float64 // 固定资产
-	WuXingZiChan       float64 // 无形资产
-	GuDongRenShu       float64 // 股东户数
-	LiuDongFuZhai      float64 // 流动负债
-	ChangQiFuZhai      float64 // 长期负债
-	ZiBenGongJiJin     float64 // 资本公积金
-	JingZiChan         float64 // 净资产
-	ZhuYingShouRu      float64 // 主营收入
-	ZhuYingLiRun       float64 // 主营利润
-	YingShouZhangKuan  float64 // 应收账款
-	YingYeLiRun        float64 // 营业利润
-	TouZiShouYi        float64 // 投资收益
+	Market   uint8
+	Code     string
+	LiuTongGuBen   float64 // 流通股本
+	Province       uint16  // 地域码
+	Industry       uint16  // 行业码
+	UpdatedDate    uint32  // 更新日期
+	IPODate        uint32  // 上市日期
+	ZongGuBen      float64 // 总股本
+	GuoJiaGu       float64 // 国家股
+	FaQiRenFaRenGu float64
+	FaRenGu        float64
+	BGu            float64
+	HGu            float64
+	ZhiGongGu      float64
+	ZongZiChan     float64 // 总资产
+	LiuDongZiChan  float64 // 流动资产
+	GuDingZiChan   float64 // 固定资产
+	WuXingZiChan   float64 // 无形资产
+	GuDongRenShu   float64 // 股东户数
+	LiuDongFuZhai  float64 // 流动负债
+	ChangQiFuZhai  float64 // 长期负债
+	ZiBenGongJiJin float64 // 资本公积金
+	JingZiChan     float64 // 净资产
+	ZhuYingShouRu  float64 // 主营收入
+	ZhuYingLiRun   float64 // 主营利润
+	YingShouZhangKuan float64 // 应收账款
+	YingYeLiRun    float64 // 营业利润
+	TouZiShouYi    float64 // 投资收益
 	JingYingXianJinLiu float64 // 经营现金流
-	ZongXianJinLiu     float64 // 总现金流
-	CunHuo             float64 // 存货
-	LiRunZongHe        float64 // 利润总额
-	ShuiHouLiRun       float64 // 税后利润
-	JingLiRun          float64 // 净利润
-	WeiFenLiRun        float64 // 未分配利润
-	BaoLiu1            float64
-	BaoLiu2            float64
+	ZongXianJinLiu float64 // 总现金流
+	CunHuo         float64 // 存货
+	LiRunZongHe    float64 // 利润总额
+	ShuiHouLiRun   float64 // 税后利润
+	JingLiRun      float64 // 净利润
+	WeiFenLiRun    float64 // 未分配利润
+	BaoLiu1        float64
+	BaoLiu2        float64
 }
 
 type finance struct{}

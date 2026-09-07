@@ -46,7 +46,7 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 	defer marketRuntimeMu.Unlock()
 	if client != nil {
 		if startCron && syncData && manager != nil && !managerCronOn {
-			manager.Cron.Start()
+			// 新版 tdx.Manage 定时器按需惰性启动,无需显式 Start
 			managerCronOn = true
 		}
 		return nil
@@ -63,7 +63,7 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		log.Printf("创建数据目录失败: %v", err)
 		startupWarnings = append(startupWarnings, fmt.Sprintf("创建数据目录失败: %v", err))
 	}
-	codes, err := tdx.NewCodesSqlite(client)
+	codes, err := tdx.NewCodesSqlite(tdx.WithCodesClient(client))
 	if codes != nil {
 		tdx.DefaultCodes = codes
 	}
@@ -71,34 +71,28 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		log.Printf("初始化代码库失败: %v", err)
 		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化代码库失败: %v", err))
 	} else if syncData {
-		if err := tdx.DefaultCodes.Update(); err != nil {
+		if err := codes.Update(); err != nil {
 			log.Printf("更新代码库失败: %v", err)
 			startupWarnings = append(startupWarnings, fmt.Sprintf("更新代码库失败: %v", err))
 		} else {
-			log.Printf("已加载股票代码，共 %d 条", len(tdx.DefaultCodes.Map))
+			log.Printf("已加载股票代码，共 %d 条", len(codes.GetStocks())+len(codes.GetETFs())+len(codes.GetIndexes()))
 		}
 	}
 
-	manager, err = tdx.NewManage(&tdx.ManageConfig{
-		Number: 4,
-	})
+	manager, err = tdx.NewManage(tdx.WithClients(4))
 	if err != nil {
 		log.Printf("初始化数据管理器失败，部分任务和交易日接口将不可用: %v", err)
 		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化数据管理器失败: %v", err))
 		return nil
 	}
 	if syncData {
-		if err := manager.Codes.Update(); err != nil {
-			log.Printf("更新管理器代码库失败: %v", err)
-			startupWarnings = append(startupWarnings, fmt.Sprintf("更新管理器代码库失败: %v", err))
-		}
 		if err := manager.Workday.Update(); err != nil {
 			log.Printf("更新交易日数据失败: %v", err)
 			startupWarnings = append(startupWarnings, fmt.Sprintf("更新交易日数据失败: %v", err))
 		}
 	}
 	if startCron && syncData {
-		manager.Cron.Start()
+		// 新版 tdx.Manage 定时器按需惰性启动,无需显式 Start
 		managerCronOn = true
 	}
 	return nil
@@ -233,10 +227,12 @@ func getAllCodeModels() ([]*tdx.CodeModel, error) {
 		return nil, err
 	}
 	if tdx.DefaultCodes != nil {
-		if list, err := tdx.DefaultCodes.GetCodes(true); err == nil && len(list) > 0 {
+		list := []*tdx.CodeModel(nil)
+		for _, m := range tdx.DefaultCodes.Iter() {
+			list = append(list, m)
+		}
+		if len(list) > 0 {
 			return list, nil
-		} else if err != nil {
-			log.Printf("从数据库读取代码失败: %v", err)
 		}
 	}
 	if client == nil {

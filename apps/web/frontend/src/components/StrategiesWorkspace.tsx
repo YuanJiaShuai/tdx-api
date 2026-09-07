@@ -2,8 +2,9 @@ import { Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, Typography
 import { BarChartOutlined, CheckCircleOutlined, CloseOutlined, CodeOutlined, CopyOutlined, DatabaseOutlined, EditOutlined, ExperimentOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { parseConfigJson, summarizeStrategyUniverse } from '../lib/format';
 import { JsonPane } from './JsonPane';
-import type { AutomationRun, Strategy } from '../types';
+import type { AutomationRun, StockPool, Strategy } from '../types';
 
 const { Text } = Typography;
 type StrategyAction = 'run' | 'backtest' | 'hikyuu';
@@ -40,8 +41,15 @@ function formatAutomationRun(run: AutomationRun) {
   return run.log || run;
 }
 
+interface StrategyCoverage {
+  total: number;
+  truncated?: boolean;
+  scanned?: number;
+}
+
 export function StrategiesWorkspace() {
   const [items, setItems] = useState<Strategy[]>([]);
+  const [pools, setPools] = useState<StockPool[]>([]);
   const [factors, setFactors] = useState<Array<Record<string, unknown>>>([]);
   const [selected, setSelected] = useState<Strategy | null>(null);
   const [runOutput, setRunOutput] = useState<unknown>('暂无运行');
@@ -50,18 +58,22 @@ export function StrategiesWorkspace() {
   const [loading, setLoading] = useState(false);
   const [runningAction, setRunningAction] = useState<StrategyAction | null>(null);
   const [pendingRunId, setPendingRunId] = useState<string | null>(null);
+  const [rangeCoverage, setRangeCoverage] = useState<StrategyCoverage | null>(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
   const [form] = Form.useForm<Strategy>();
 
   const load = async () => {
     setLoading(true);
     try {
-      const [strategies, factorDefs] = await Promise.all([
+      const [strategies, factorDefs, stockPools] = await Promise.all([
         apiFetch<Strategy[]>('/api/strategies'),
-        apiFetch<Array<Record<string, unknown>>>('/api/factors')
+        apiFetch<Array<Record<string, unknown>>>('/api/factors'),
+        apiFetch<StockPool[]>('/api/stock-pools')
       ]);
       const nextItems = strategies || [];
       setItems(nextItems);
       setFactors(factorDefs || []);
+      setPools(stockPools || []);
       setSelected((current) => nextItems.find((item) => item.id === current?.id) || nextItems[0] || null);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '策略加载失败');
@@ -71,6 +83,29 @@ export function StrategiesWorkspace() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!selected) {
+      setRangeCoverage(null);
+      return;
+    }
+    let active = true;
+    setCoverageLoading(true);
+    const cfg = parseConfigJson(selected.config_json);
+    apiFetch<StrategyCoverage>('/api/strategies/range-preview', {
+      method: 'POST',
+      body: JSON.stringify({
+        universe: cfg.universe || '',
+        pool_id: typeof cfg.pool_id === 'string' ? cfg.pool_id : '',
+        symbols: Array.isArray(cfg.symbols) ? cfg.symbols : [],
+        max_codes: 300
+      })
+    })
+      .then((data) => { if (active) setRangeCoverage(data); })
+      .catch(() => { if (active) setRangeCoverage(null); })
+      .finally(() => { if (active) setCoverageLoading(false); });
+    return () => { active = false; };
+  }, [selected]);
 
   useEffect(() => {
     if (!pendingRunId) return;
@@ -102,6 +137,12 @@ export function StrategiesWorkspace() {
 
   const enabledCount = useMemo(() => items.filter((item) => item.enabled).length, [items]);
   const templateCount = useMemo(() => items.filter((item) => item.readonly).length, [items]);
+  const selectedSummary = selected ? summarizeStrategyUniverse(parseConfigJson(selected.config_json), pools) : '';
+  const coverageText = !selected ? '--' : coverageLoading
+    ? '计算中'
+    : rangeCoverage
+      ? `${rangeCoverage.total} 只${rangeCoverage.truncated && rangeCoverage.scanned ? `(保护上限 ${rangeCoverage.scanned})` : ''}`
+      : '计算失败';
 
   function openDialog(strategy?: Strategy) {
     const next = strategy || {
@@ -239,6 +280,14 @@ export function StrategiesWorkspace() {
                 render: (value: string) => <span className="strategy-description">{value || '未填写说明'}</span>
               },
               {
+                title: '选股范围',
+                width: 210,
+                render: (_value, record: Strategy) => {
+                  const summary = summarizeStrategyUniverse(parseConfigJson(record.config_json), pools);
+                  return <span className="strategy-range-cell" title={summary}>{summary}</span>;
+                }
+              },
+              {
                 title: '来源',
                 width: 82,
                 render: (_value, record) => <Tag className={`strategy-source-tag ${record.readonly ? 'is-template' : ''}`}>{record.readonly ? '系统' : '自建'}</Tag>
@@ -255,7 +304,7 @@ export function StrategiesWorkspace() {
                 render: (value: string) => <span className="strategy-time">{value || '--'}</span>
               }
             ]}
-            scroll={{ x: 780 }}
+            scroll={{ x: 990 }}
           />
         </Card>
 
@@ -281,6 +330,8 @@ export function StrategiesWorkspace() {
               <div className="strategy-inspector-meta">
                 <div><span>策略来源</span><strong>{selected.readonly ? '系统模板' : '自定义'}</strong></div>
                 <div><span>配置状态</span><strong>{selected.config_json ? 'JSON 已载入' : '空配置'}</strong></div>
+                <div><span>选股范围</span><strong title={selectedSummary}>{selectedSummary}</strong></div>
+                <div><span>候选覆盖</span><strong>{coverageText}</strong></div>
               </div>
               <div className="strategy-inspector-actions">
                 {!selected.readonly ? <Button disabled={Boolean(runningAction)} icon={<EditOutlined />} onClick={() => openDialog(selected)}>编辑策略</Button> : null}

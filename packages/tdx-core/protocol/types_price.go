@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"time"
 )
 
 // Price 价格，单位厘
@@ -53,22 +54,11 @@ func (this PriceLevels) String() string {
 	return s
 }
 
-// K k线图
-type K struct {
-	Last  Price //昨天收盘价
-	Open  Price //今日开盘价
-	High  Price //今日最高价
-	Low   Price //今日最低价
-	Close Price //今日收盘价
-}
-
-func (this K) String() string {
-	return fmt.Sprintf("昨收:%s, 今开:%s, 最高:%s, 最低:%s, 今收:%s", this.Last, this.Open, this.High, this.Low, this.Close)
-}
-
-// DecodeK 一般是占用6字节
-func DecodeK(bs []byte) ([]byte, K) {
-	k := K{}
+// DecodeKline 一般是占用6字节
+func DecodeKline(bs []byte) ([]byte, *Kline) {
+	k := &Kline{
+		Time: time.Now(),
+	}
 
 	//当日收盘价，一般2字节
 	bs, k.Close = GetPrice(bs)
@@ -117,8 +107,13 @@ func CutInt(bs []byte) ([]byte, int) {
 	return bs, 0
 }
 
-func getPrice(bs []byte) Price {
-	return Price(getData(bs))
+func CutInt64(bs []byte) ([]byte, int64) {
+	for i := range bs {
+		if bs[i]&0x80 == 0 {
+			return bs[i+1:], int64(getData(bs[:i+1]))
+		}
+	}
+	return bs, 0
 }
 
 /*

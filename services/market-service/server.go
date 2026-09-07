@@ -33,7 +33,7 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 	defer marketRuntimeMu.Unlock()
 	if client != nil {
 		if startCron && syncData && manager != nil && !managerCronOn {
-			manager.Cron.Start()
+			// 新版 tdx.Manage 定时器按需惰性启动,无需显式 Start
 			managerCronOn = true
 		}
 		return nil
@@ -57,7 +57,7 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		log.Printf("创建数据目录失败: %v", err)
 		startupWarnings = append(startupWarnings, fmt.Sprintf("创建数据目录失败: %v", err))
 	}
-	codes, err := tdx.NewCodesSqlite(client)
+	codes, err := tdx.NewCodesSqlite(tdx.WithCodesClient(client))
 	if codes != nil {
 		tdx.DefaultCodes = codes
 	}
@@ -65,34 +65,28 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		log.Printf("初始化代码库失败: %v", err)
 		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化代码库失败: %v", err))
 	} else if syncData {
-		if err := tdx.DefaultCodes.Update(); err != nil {
+		if err := codes.Update(); err != nil {
 			log.Printf("更新代码库失败: %v", err)
 			startupWarnings = append(startupWarnings, fmt.Sprintf("更新代码库失败: %v", err))
 		} else {
-			log.Printf("已加载股票代码，共 %d 条", len(tdx.DefaultCodes.Map))
+			log.Printf("已加载股票代码，共 %d 条", len(codes.GetStocks())+len(codes.GetETFs())+len(codes.GetIndexes()))
 		}
 	}
 
-	manager, err = tdx.NewManage(&tdx.ManageConfig{
-		Number: 4,
-	})
+	manager, err = tdx.NewManage(tdx.WithClients(4))
 	if err != nil {
 		log.Printf("初始化数据管理器失败，部分任务和交易日接口将不可用: %v", err)
 		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化数据管理器失败: %v", err))
 		return nil
 	}
 	if syncData {
-		if err := manager.Codes.Update(); err != nil {
-			log.Printf("更新管理器代码库失败: %v", err)
-			startupWarnings = append(startupWarnings, fmt.Sprintf("更新管理器代码库失败: %v", err))
-		}
 		if err := manager.Workday.Update(); err != nil {
 			log.Printf("更新交易日数据失败: %v", err)
 			startupWarnings = append(startupWarnings, fmt.Sprintf("更新交易日数据失败: %v", err))
 		}
 	}
 	if startCron && syncData {
-		manager.Cron.Start()
+		// 新版 tdx.Manage 定时器按需惰性启动,无需显式 Start
 		managerCronOn = true
 	}
 	return nil
@@ -251,7 +245,7 @@ func getQfqKlineDay(code string) (*protocol.KlineResp, error) {
 
 	for i, k := range klines {
 		pk := &protocol.Kline{
-			Time:   time.Unix(k.Date, 0),
+			Time:   k.Time,
 			Open:   k.Open,
 			High:   k.High,
 			Low:    k.Low,
@@ -604,17 +598,22 @@ func handleCreatePullKlineTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := extend.PullKlineConfig{
-		Codes:   req.Codes,
-		Tables:  tables,
-		Dir:     dir,
-		Limit:   req.Limit,
-		StartAt: startAt,
+		Codes:      req.Codes,
+		Types:      tables,
+		Dir:        dir,
+		Goroutines: req.Limit,
+		StartAt:    startAt,
 	}
 
-	puller := extend.NewPullKline(cfg)
+	puller, err := extend.NewPullKline(cfg)
+	if err != nil {
+		errorResponse(w, "初始化拉取器失败: "+err.Error())
+		return
+	}
 
-	taskID := taskManager.Run("pull_kline", func(ctx context.Context) error {
-		return puller.Run(ctx, manager)
+	taskID := taskManager.Run("pull_kline", func(_ context.Context) error {
+		// 新版 PullKline.Run 为定时任务入口,一次性拉取改用 Update
+		return puller.Update(manager, true)
 	})
 
 	successResponse(w, map[string]string{
@@ -684,10 +683,23 @@ func handleCreatePullTradeTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	puller := extend.NewPullTrade(dir)
-	puller.StartYear = req.StartYear
-	puller.EndYear = req.EndYear
 
 	taskID := taskManager.Run("pull_trade", func(ctx context.Context) error {
+		if req.StartYear > 0 || req.EndYear > 0 {
+			start, end := req.StartYear, req.EndYear
+			if start <= 0 {
+				start = 2000
+			}
+			if end <= 0 {
+				end = time.Now().Year()
+			}
+			for year := start; year <= end; year++ {
+				if err := puller.PullYear(ctx, manager, year, req.Code); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		return puller.Pull(ctx, manager, req.Code)
 	})
 

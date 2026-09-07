@@ -6505,6 +6505,15 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+.strategy-range-cell {
+  display: block;
+  max-width: 210px;
+  overflow: hidden;
+  color: var(--text-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .strategy-time,
 .automation-time,
 .automation-code {

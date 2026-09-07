@@ -1,9 +1,10 @@
 import { Button, Card, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { CopyOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { CopyOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SendOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { parseConfigJson, summarizeStrategyUniverse } from '../lib/format';
 import { JsonPane } from './JsonPane';
-import type { StockPool } from '../types';
+import type { StockPool, Strategy } from '../types';
 
 const { Text } = Typography;
 
@@ -59,6 +60,10 @@ export function UniverseWorkspace() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [poolDialogOpen, setPoolDialogOpen] = useState(false);
   const [poolSaving, setPoolSaving] = useState(false);
+  const [applyDialogOpen, setApplyDialogOpen] = useState(false);
+  const [applySaving, setApplySaving] = useState(false);
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [applyTarget, setApplyTarget] = useState<string>('');
   const [poolForm] = Form.useForm();
 
   async function loadPools() {
@@ -159,12 +164,53 @@ export function UniverseWorkspace() {
     }
   }
 
+  async function openApplyDialog() {
+    if (!expression.include.length || expression.include.some((term) => !term.pool)) {
+      message.warning('请先设置至少一个有效的起点池');
+      return;
+    }
+    try {
+      const data = await apiFetch<Strategy[]>('/api/strategies');
+      setStrategies((data || []).filter((item) => !item.readonly));
+      setApplyTarget('');
+      setApplyDialogOpen(true);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '策略列表加载失败');
+    }
+  }
+
+  async function applyToStrategy() {
+    if (!applyTarget) {
+      message.warning('请选择目标策略');
+      return;
+    }
+    setApplySaving(true);
+    try {
+      await apiFetch(`/api/strategies/${applyTarget}/apply-universe`, {
+        method: 'POST',
+        body: JSON.stringify({ universe: expression })
+      });
+      message.success('选股范围已应用到策略');
+      setApplyDialogOpen(false);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '应用范围失败');
+    } finally {
+      setApplySaving(false);
+    }
+  }
+
+  const applyTargetSummary = useMemo(() => {
+    const target = strategies.find((item) => item.id === applyTarget);
+    if (!target) return '';
+    return summarizeStrategyUniverse(parseConfigJson(target.config_json), pools);
+  }, [strategies, applyTarget, pools]);
+
   return (
     <div className="universe-workspace">
       <Card
         className="work-card universe-overview"
         title={<div className="universe-panel-title"><div><span>选股范围</span><Text type="secondary">先圈定候选，再交给策略和 AI</Text></div><small>UNIVERSE BUILDER</small></div>}
-        extra={<Space><Button aria-label="刷新股票池" icon={<ReloadOutlined />} onClick={() => void loadPools()} loading={loading} /><Button type="primary" icon={<PlusOutlined />} onClick={() => setPoolDialogOpen(true)}>新建股票池</Button></Space>}
+        extra={<Space><Button aria-label="刷新股票池" icon={<ReloadOutlined />} onClick={() => void loadPools()} loading={loading} /><Button icon={<SendOutlined />} onClick={() => void openApplyDialog()}>应用到策略</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => setPoolDialogOpen(true)}>新建股票池</Button></Space>}
       >
         <div className="universe-overview-grid">
           <div><span>最终覆盖</span><strong>{previewLoading ? '...' : preview?.total ?? '--'}</strong><small>只候选股票</small></div>
@@ -232,6 +278,22 @@ export function UniverseWorkspace() {
           { title: '操作', fixed: 'right', width: 80, render: (_value, item) => item.readonly || item.system ? null : <Popconfirm title="删除股票池" description={`确认删除 ${item.name}？`} okText="删除" cancelText="取消" onConfirm={() => void deletePool(item)}><Button aria-label={`删除${item.name}`} type="text" danger icon={<DeleteOutlined />} /></Popconfirm> }
         ]} />
       </Card>
+
+      <Modal open={applyDialogOpen} onCancel={() => setApplyDialogOpen(false)} footer={null} width={560} centered destroyOnHidden title={<div className="quote-dialog-title"><div><strong>应用到策略</strong><span>把当前范围写入目标策略</span></div><small>UNIVERSE → STRATEGY</small></div>}>
+        <div className="universe-apply-body">
+          <Text type="secondary">仅替换目标策略 config_json 中的 universe 字段,过滤、评分与输出参数保持不变。系统模板不能直接修改,请先复制副本。</Text>
+          <Select
+            showSearch
+            value={applyTarget || undefined}
+            placeholder="选择目标策略"
+            optionFilterProp="label"
+            options={strategies.map((item) => ({ value: item.id, label: `${item.name}` }))}
+            onChange={setApplyTarget}
+          />
+          {applyTarget ? <div className="universe-apply-current"><span>该策略当前范围</span><strong>{applyTargetSummary || '--'}</strong></div> : null}
+        </div>
+        <div className="universe-modal-actions"><Text type="secondary">当前范围覆盖 {previewLoading ? '...' : preview?.total ?? '--'} 只候选股票</Text><Space><Button onClick={() => setApplyDialogOpen(false)}>取消</Button><Button type="primary" icon={<SendOutlined />} loading={applySaving} onClick={() => void applyToStrategy()}>应用范围</Button></Space></div>
+      </Modal>
 
       <Modal open={poolDialogOpen} onCancel={() => setPoolDialogOpen(false)} footer={null} width={640} centered destroyOnHidden title="新建股票池">
         <Form form={poolForm} layout="vertical" onFinish={savePool}>

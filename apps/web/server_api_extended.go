@@ -383,7 +383,7 @@ func handleGetStockCodes(w http.ResponseWriter, r *http.Request) {
 		includePrefix = strings.ToLower(prefixParam) != "false"
 	}
 
-	codes := tdx.DefaultCodes.GetStocks()
+	codes := tdx.DefaultCodes.GetStockCodes()
 	if limit > 0 && len(codes) > limit {
 		codes = codes[:limit]
 	}
@@ -416,7 +416,7 @@ func handleGetETFCodes(w http.ResponseWriter, r *http.Request) {
 		includePrefix = strings.ToLower(prefixParam) != "false"
 	}
 
-	codes := tdx.DefaultCodes.GetETFs()
+	codes := tdx.DefaultCodes.GetETFCodes()
 	if limit > 0 && len(codes) > limit {
 		codes = codes[:limit]
 	}
@@ -998,10 +998,12 @@ func getAllCodeModels() ([]*tdx.CodeModel, error) {
 		}
 	}
 	if tdx.DefaultCodes != nil {
-		if list, err := tdx.DefaultCodes.GetCodes(true); err == nil && len(list) > 0 {
+		list := []*tdx.CodeModel(nil)
+		for _, m := range tdx.DefaultCodes.Iter() {
+			list = append(list, m)
+		}
+		if len(list) > 0 {
 			return list, nil
-		} else if err != nil {
-			log.Printf("从数据库读取代码失败: %v", err)
 		}
 	}
 	if client == nil {
@@ -1111,25 +1113,16 @@ func parseDaysParam(value string) []int {
 	return days
 }
 
-func buildExtendKlines(code string, list []*protocol.Kline) extend.Klines {
-	ks := make(extend.Klines, 0, len(list))
+func buildExtendKlines(code string, list []*protocol.Kline) protocol.Klines {
+	ks := make(protocol.Klines, 0, len(list))
 	for _, item := range list {
 		if item == nil {
 			continue
 		}
-		ks = append(ks, &extend.Kline{
-			Code:   code,
-			Date:   item.Time.Unix(),
-			Open:   item.Open,
-			High:   item.High,
-			Low:    item.Low,
-			Close:  item.Close,
-			Volume: item.Volume,
-			Amount: item.Amount,
-		})
+		ks = append(ks, item)
 	}
 	sort.Slice(ks, func(i, j int) bool {
-		return ks[i].Date < ks[j].Date
+		return ks[i].Time.Before(ks[j].Time)
 	})
 	return ks
 }

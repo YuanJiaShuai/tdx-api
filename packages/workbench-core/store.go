@@ -557,6 +557,14 @@ func defaultStrategyTemplates() []Strategy {
 			Enabled:     true,
 			Readonly:    true,
 		},
+		{
+			ID:          "template-pullback",
+			Name:        "强势股回调低吸",
+			Description: "内置模板：用N日涨幅圈强势股，用距高点回撤与振幅过滤定位回调，配合低位KDJ金叉评分。",
+			ConfigJSON:  `{"universe":{"include":[{"pool":"market-all-a"}],"exclude":[{"pool":"exclude"}]},"calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}},{"id":"max_amplitude","factor":"max_amplitude","params":{"days":5,"max":8}}],"scores":[{"id":"gain_days","factor":"gain_days","weight":25,"params":{"days":20,"min":5,"max":50}},{"id":"drawdown","factor":"drawdown_from_high","weight":35,"params":{"days":60,"min":5,"max":15}},{"id":"kdj_low","factor":"kdj_golden_cross","weight":20,"params":{"n":9,"k":3,"d":3}}],"pass":{"min_score":50,"top_n":15}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
 	}
 }
 

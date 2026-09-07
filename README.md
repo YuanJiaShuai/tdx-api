@@ -306,7 +306,7 @@ curl -X POST "http://localhost:8080/api/ai/research/stock" \
 
 要求：
 
-- Go 1.23+
+- Go 1.25+
 - Python 3.11+
 - Node.js 18+
 - SQLite

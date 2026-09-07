@@ -1,6 +1,6 @@
 module workbench-core
 
-go 1.23
+go 1.25
 
 require (
 	github.com/glebarez/go-sqlite v1.22.0

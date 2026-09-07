@@ -418,7 +418,7 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 		if manager == nil {
 			return nil, 0, errors.New("数据管理器未初始化")
 		}
-		if err := manager.Codes.Update(); err != nil {
+		if err := updateManagerCodes(manager); err != nil {
 			return nil, 0, err
 		}
 		if err := manager.Workday.Update(); err != nil {
@@ -433,7 +433,7 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 		if manager == nil {
 			return nil, 0, errors.New("数据管理器未初始化")
 		}
-		err := manager.Codes.Update()
+		err := updateManagerCodes(manager)
 		return map[string]interface{}{"scope": "codes"}, 0, err
 	case "workday":
 		if useMarketService() {
@@ -516,14 +516,18 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 			}
 			startAt = parsed
 		}
-		puller := extend.NewPullKline(extend.PullKlineConfig{
-			Codes:   codes,
-			Tables:  validTables,
-			Dir:     filepath.Join(tdx.DefaultDatabaseDir, "kline"),
-			Limit:   limit,
-			StartAt: startAt,
+		puller, err := extend.NewPullKline(extend.PullKlineConfig{
+			Codes:      codes,
+			Types:      validTables,
+			Dir:        filepath.Join(tdx.DefaultDatabaseDir, "kline"),
+			Goroutines: limit,
+			StartAt:    startAt,
 		})
-		if err := puller.Run(ctx, manager); err != nil {
+		if err != nil {
+			return nil, 0, err
+		}
+		// 新版 PullKline.Run 为定时任务入口,一次性拉取改用 Update
+		if err := puller.Update(manager, true); err != nil {
 			return nil, 0, err
 		}
 		return map[string]interface{}{
@@ -726,7 +730,7 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 			if manager == nil {
 				return nil, 0, errors.New("数据管理器未初始化")
 			}
-			if err := manager.Codes.Update(); err != nil {
+			if err := updateManagerCodes(manager); err != nil {
 				return nil, 0, err
 			}
 			results["codes"] = "success"
@@ -836,6 +840,14 @@ func mergeFormulaData(target map[string]interface{}, data interface{}) {
 	}
 }
 
+// updateManagerCodes 手动更新数据管理器的代码库(新版 ICodes 接口无 Update,实际实现为 *tdx.Codes)
+func updateManagerCodes(m *tdx.Manage) error {
+	if c, ok := m.Codes.(*tdx.Codes); ok {
+		return c.Update()
+	}
+	return errors.New("代码库未初始化")
+}
+
 func limitedSyncCodes(ctx context.Context, payload SystemSyncPayload) []string {
 	codes := normalizeSymbols(payload.Codes)
 	if len(codes) == 0 && payload.MaxCodes > 0 && useMarketService() {
@@ -845,7 +857,7 @@ func limitedSyncCodes(ctx context.Context, payload SystemSyncPayload) []string {
 		}
 	}
 	if len(codes) == 0 && payload.MaxCodes > 0 && !useMarketService() && tdx.DefaultCodes != nil {
-		codes = normalizeSymbols(tdx.DefaultCodes.GetStocks(payload.MaxCodes))
+		codes = normalizeSymbols(tdx.DefaultCodes.GetStockCodes(payload.MaxCodes))
 	}
 	if payload.MaxCodes > 0 && len(codes) > payload.MaxCodes {
 		codes = codes[:payload.MaxCodes]

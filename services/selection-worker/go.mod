@@ -1,6 +1,6 @@
 module selection-worker
 
-go 1.23
+go 1.25
 
 require (
 	github.com/injoyai/tdx v0.0.0

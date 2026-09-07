@@ -19,13 +19,11 @@ type Quote struct {
 	Exchange       Exchange // 市场
 	Code           string   // 股票代码 6个ascii字符串
 	Active1        uint16   // 活跃度
-	K              K        //k线
+	Kline          *Kline   //k线,这里的时间取得是当前时间,昨收盘好像不太对
 	ServerTime     string   // 时间
 	ReversedBytes0 int      // 保留(时间 ServerTime)
 	ReversedBytes1 int      // 保留 这个等于 负的收盘价格?
-	TotalHand      int      // 总手（东财的盘口-总手）
 	Intuition      int      // 现量（东财的盘口-现量）现在成交量
-	Amount         float64  // 金额（东财的盘口-金额）
 	InsideDish     int      // 内盘（东财的盘口-内盘）（和东财对不上）
 	OuterDisc      int      // 外盘（东财的盘口-外盘）（和东财对不上）
 
@@ -47,12 +45,12 @@ type Quote struct {
 func (this *Quote) String() string {
 	return fmt.Sprintf(`%s%s
 %s
-总手：%s, 现量：%s, 总金额：%s, 内盘：%s, 外盘：%s
+现量：%s,  内盘：%s, 外盘：%s
 %s%s
 `,
-		this.Exchange.String(), this.Code, this.K,
-		IntUnitString(this.TotalHand), IntUnitString(this.Intuition),
-		FloatUnitString(this.Amount), IntUnitString(this.InsideDish), IntUnitString(this.OuterDisc),
+		this.Exchange.String(), this.Code, this.Kline,
+		IntUnitString(this.Intuition),
+		IntUnitString(this.InsideDish), IntUnitString(this.OuterDisc),
 		this.SellLevel.String(), this.BuyLevel.String(),
 	)
 }
@@ -124,13 +122,13 @@ func (this quote) Decode(bs []byte) QuotesResp {
 			Code:     string(UTF8ToGBK(bs[1:7])),
 			Active1:  Uint16(bs[7:9]),
 		}
-		bs, sec.K = DecodeK(bs[9:])
+		bs, sec.Kline = DecodeKline(bs[9:])
 		bs, sec.ReversedBytes0 = CutInt(bs)
 		sec.ServerTime = fmt.Sprintf("%d", sec.ReversedBytes0)
 		bs, sec.ReversedBytes1 = CutInt(bs)
-		bs, sec.TotalHand = CutInt(bs)
+		bs, sec.Kline.Volume = CutInt64(bs)
 		bs, sec.Intuition = CutInt(bs)
-		sec.Amount = getVolume(Uint32(bs[:4]))
+		sec.Kline.Amount = Yuan(getVolume(Uint32(bs[:4])))
 		bs, sec.InsideDish = CutInt(bs[4:])
 		bs, sec.OuterDisc = CutInt(bs)
 		bs, sec.ReversedBytes2 = CutInt(bs)
@@ -142,9 +140,9 @@ func (this quote) Decode(bs []byte) QuotesResp {
 			sellLevel := PriceLevel{}
 
 			bs, p = GetPrice(bs)
-			buyLevel.Price = p*10 + sec.K.Close
+			buyLevel.Price = p*10 + sec.Kline.Close
 			bs, p = GetPrice(bs)
-			sellLevel.Price = p*10 + sec.K.Close
+			sellLevel.Price = p*10 + sec.Kline.Close
 
 			bs, buyLevel.Number = CutInt(bs)
 			bs, sellLevel.Number = CutInt(bs)

@@ -24,7 +24,7 @@ func getQfqKlineDay(code string) (*protocol.KlineResp, error) {
 	}
 	for i, k := range klines {
 		pk := &protocol.Kline{
-			Time:   time.Unix(k.Date, 0),
+			Time:   k.Time,
 			Open:   k.Open,
 			High:   k.High,
 			Low:    k.Low,

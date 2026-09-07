@@ -118,10 +118,10 @@ func normalizeMonitorSymbol(symbol string) string {
 }
 
 func (m *QuoteMonitor) handleEvent(event MarketQuoteStreamEvent) {
-	if event.Type != "quote" || event.Snapshot == nil || event.Snapshot.Quote == nil {
+	if event.Type != "quote" || event.Snapshot == nil || event.Snapshot.Quote == nil || event.Snapshot.Quote.Kline == nil {
 		return
 	}
-	price := event.Snapshot.Quote.K.Close.Float64()
+	price := event.Snapshot.Quote.Kline.Close.Float64()
 	if price <= 0 {
 		return
 	}

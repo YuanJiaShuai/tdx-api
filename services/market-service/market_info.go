@@ -513,7 +513,7 @@ func normalizeMarketInfoSyncCodes(values []string, maxCodes int) []string {
 		maxCodes = 1000
 	}
 	if len(values) == 0 && tdx.DefaultCodes != nil {
-		values = tdx.DefaultCodes.GetStocks(maxCodes)
+		values = tdx.DefaultCodes.GetStockCodes(maxCodes)
 	}
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))

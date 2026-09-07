@@ -8,18 +8,18 @@ import (
 // 移植自 pytdx exhq 解析器。与标准行情共用传输层(0xB1CB7400 响应帧+zlib),
 // 区别仅在请求帧头前缀为 0x01(标准为 0x0C),故复用 Frame{Prefix:0x01,...}。
 const (
-	TypeExSetup      uint16 = 0x2454 // 扩展行情握手(setup)
-	TypeExMarkets    uint16 = 0x23F4 // 市场代码表
-	TypeExCount      uint16 = 0x23F0 // 品种数量
-	TypeExInstrument uint16 = 0x23F5 // 品种(代码)列表
-	TypeExQuote      uint16 = 0x23FA // 单品种五档行情
-	TypeExQuoteList  uint16 = 0x2400 // 批量行情列表
-	TypeExBars       uint16 = 0x23FF // K线
-	TypeExMinute     uint16 = 0x240B // 当日分时
-	TypeExHistMinute uint16 = 0x240C // 历史分时
-	TypeExTrade      uint16 = 0x23FC // 分笔成交
-	TypeExHistTrade  uint16 = 0x2406 // 历史分笔成交
-	TypeExBarsRange  uint16 = 0x240D // 历史K线区间
+	TypeExSetup        uint16 = 0x2454 // 扩展行情握手(setup)
+	TypeExMarkets      uint16 = 0x23F4 // 市场代码表
+	TypeExCount        uint16 = 0x23F0 // 品种数量
+	TypeExInstrument   uint16 = 0x23F5 // 品种(代码)列表
+	TypeExQuote        uint16 = 0x23FA // 单品种五档行情
+	TypeExQuoteList    uint16 = 0x2400 // 批量行情列表
+	TypeExBars         uint16 = 0x23FF // K线
+	TypeExMinute       uint16 = 0x240B // 当日分时
+	TypeExHistMinute   uint16 = 0x240C // 历史分时
+	TypeExTrade        uint16 = 0x23FC // 分笔成交
+	TypeExHistTrade    uint16 = 0x2406 // 历史分笔成交
+	TypeExBarsRange    uint16 = 0x240D // 历史K线区间
 )
 
 const exPrefix byte = 0x01
@@ -116,7 +116,7 @@ type ExRangeKline struct {
 type ExQuoteListItem struct {
 	Market    uint8      `json:"market"`
 	Code      string     `json:"code"`
-	PreClose  float64    `json:"preClose"` // 昨收/昨结
+	PreClose  float64    `json:"preClose"`  // 昨收/昨结
 	Open      float64    `json:"open"`
 	High      float64    `json:"high"`
 	Low       float64    `json:"low"`
@@ -678,9 +678,9 @@ func parseExFutures(bs []byte, p int, it *ExQuoteListItem) {
 	it.ZongLiang = rd.u32()
 	rd.skip(4) // XianLiang
 	it.Amount = rd.f32()
-	it.Inner = rd.u32()   // NeiPan
-	it.Outer = rd.u32()   // WaiPan
-	rd.skip(4)            // 未知 float
+	it.Inner = rd.u32()  // NeiPan
+	it.Outer = rd.u32()  // WaiPan
+	rd.skip(4)           // 未知 float
 	it.ChiCang = rd.u32() // ChiCangLiang
 	it.Ask[0] = rd.f32()  // MaiRuJia
 	rd.skip(16)           // 4 未知
@@ -726,7 +726,7 @@ func (r *exReader) u32() uint32 {
 	r.p += 4
 	return v
 }
-func (r *exReader) i32() int32 { return int32(r.u32()) }
+func (r *exReader) i32() int32  { return int32(r.u32()) }
 func (r *exReader) f32() float64 {
 	v := Float32(r.b[r.p : r.p+4])
 	r.p += 4
@@ -737,8 +737,8 @@ func (r *exReader) bytes(n int) []byte {
 	r.p += n
 	return v
 }
-func (r *exReader) skip(n int)  { r.p += n }
-func (r *exReader) remain() int { return len(r.b) - r.p }
+func (r *exReader) skip(n int)    { r.p += n }
+func (r *exReader) remain() int   { return len(r.b) - r.p }
 
 // exGBK 去尾随 null 并 GBK 解码(复用标准行情同款解码)。
 func exGBK(b []byte) string {

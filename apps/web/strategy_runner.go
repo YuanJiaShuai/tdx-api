@@ -290,8 +290,10 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 		item.Reasons = append(item.Reasons, fr.Reason)
 		if !fr.Hit {
 			item.Hit = false
-			return item, false, nil
 		}
+	}
+	if !item.Hit {
+		return item, false, nil
 	}
 	score := 0.0
 	for _, rule := range result.Config.Scores {
@@ -332,17 +334,24 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 	if filter {
 		weight = 0
 	}
+	// 每个 case 命中后把 fr.Score 设为归一化强度(0~1]，末尾再乘权重。
 	switch rule.Factor {
 	case "pool_exclude":
 		poolID := stringParam(rule.Params, "pool_id", DecisionExcludePoolID)
 		inPool := r.strategyPoolContains(result, poolID, symbol)
 		fr.Hit = !inPool
+		fr.Score = 1
 		fr.Value = inPool
 		fr.Reason = fmt.Sprintf("不在%s: %t", poolID, fr.Hit)
 	case "min_amount":
 		value := floatParam(rule.Params, "value", 0)
 		amount := latest(rows).Amount
 		fr.Hit = amount >= value
+		if value > 0 {
+			fr.Score = clamp01(amount / value / 3)
+		} else {
+			fr.Score = 1
+		}
 		fr.Value = amount
 		fr.Reason = fmt.Sprintf("成交额 %.0f >= %.0f", amount, value)
 	case "price_range":
@@ -350,6 +359,7 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		maxValue := floatParam(rule.Params, "max", math.MaxFloat64)
 		closePrice := latest(rows).Close
 		fr.Hit = closePrice >= minValue && closePrice <= maxValue
+		fr.Score = 1
 		fr.Value = closePrice
 		fr.Reason = fmt.Sprintf("收盘价 %.2f 在 %.2f-%.2f", closePrice, minValue, maxValue)
 	case "change_range":
@@ -361,8 +371,37 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 			change = (row.Close - row.YClose) * 100 / row.YClose
 		}
 		fr.Hit = change >= minValue && change <= maxValue
+		fr.Score = 1
 		fr.Value = change
 		fr.Reason = fmt.Sprintf("涨跌幅 %.2f%% 在 %.2f-%.2f", change, minValue, maxValue)
+	case "max_amplitude":
+		days := intParam(rule.Params, "days", 5)
+		maxPct := floatParam(rule.Params, "max", 8)
+		if days <= 0 || len(rows) < days {
+			fr.Reason = fmt.Sprintf("振幅数据不足，需要至少%d根K线", days)
+			break
+		}
+		sum, count := 0.0, 0
+		for _, row := range rows[len(rows)-days:] {
+			base := row.YClose
+			if base <= 0 {
+				base = row.Close
+			}
+			if base <= 0 {
+				continue
+			}
+			sum += (row.High - row.Low) * 100 / base
+			count++
+		}
+		if count == 0 {
+			fr.Reason = "振幅基准价格无效"
+			break
+		}
+		avgAmp := sum / float64(count)
+		fr.Hit = avgAmp <= maxPct
+		fr.Score = 1
+		fr.Value = avgAmp
+		fr.Reason = fmt.Sprintf("近%d日平均振幅 %.2f%% <= %.2f%%", days, avgAmp, maxPct)
 	case "ma_trend":
 		short := intParam(rule.Params, "short", 5)
 		mid := intParam(rule.Params, "mid", 10)
@@ -370,6 +409,7 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		maShort, maMid, maLong := ma(rows, short), ma(rows, mid), ma(rows, long)
 		closePrice := latest(rows).Close
 		fr.Hit = closePrice >= maShort && maShort >= maMid && maMid >= maLong
+		fr.Score = 1
 		fr.Value = map[string]float64{"close": closePrice, "short": maShort, "mid": maMid, "long": maLong}
 		fr.Reason = fmt.Sprintf("均线多头 C %.2f / MA%d %.2f / MA%d %.2f / MA%d %.2f", closePrice, short, maShort, mid, maMid, long, maLong)
 	case "volume_up":
@@ -378,6 +418,9 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		avg := strategyAvgVol(rows, days)
 		vol := latest(rows).Vol
 		fr.Hit = avg > 0 && vol >= avg*ratio
+		if fr.Hit {
+			fr.Score = clamp01((vol/avg - ratio) / (ratio * 0.5))
+		}
 		fr.Value = map[string]float64{"volume": vol, "avg_volume": avg}
 		fr.Reason = fmt.Sprintf("放量 %.0f >= %.2fx %d日均量 %.0f", vol, ratio, days, avg)
 	case "break_high":
@@ -385,29 +428,119 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		high := highestHigh(rows, days)
 		closePrice := latest(rows).Close
 		fr.Hit = high > 0 && closePrice >= high
+		if fr.Hit {
+			fr.Score = clamp01((closePrice - high) / high * 100 / 3)
+		}
 		fr.Value = map[string]float64{"close": closePrice, "high": high}
 		fr.Reason = fmt.Sprintf("突破%d日高点 C %.2f / H %.2f", days, closePrice, high)
+	case "gain_days":
+		days := intParam(rule.Params, "days", 20)
+		minPct := floatParam(rule.Params, "min", 5)
+		maxPct := floatParam(rule.Params, "max", 50)
+		if days <= 0 || len(rows) < days+1 {
+			fr.Reason = fmt.Sprintf("N日涨幅数据不足，需要至少%d根K线", days+1)
+			break
+		}
+		base := rows[len(rows)-1-days].Close
+		closePrice := latest(rows).Close
+		if base <= 0 {
+			fr.Reason = "N日涨幅基准价格无效"
+			break
+		}
+		gain := (closePrice - base) * 100 / base
+		fr.Hit = true
+		fr.Value = map[string]float64{"base": base, "close": closePrice, "gain": gain}
+		switch {
+		case gain < minPct:
+			fr.Score = clamp01(gain / math.Max(minPct, 0.01))
+			fr.Reason = fmt.Sprintf("%d日涨幅 %.2f%% 低于下限 %.2f%%", days, gain, minPct)
+		case gain > maxPct:
+			fr.Score = clamp01(1 - (gain-maxPct)/15)
+			fr.Reason = fmt.Sprintf("%d日涨幅 %.2f%% 超出上限 %.2f%%", days, gain, maxPct)
+		default:
+			fr.Score = 1
+			fr.Reason = fmt.Sprintf("%d日涨幅 %.2f%% 落在 %.2f-%.2f%%", days, gain, minPct, maxPct)
+		}
+	case "drawdown_from_high":
+		days := intParam(rule.Params, "days", 60)
+		minPct := floatParam(rule.Params, "min", 5)
+		maxPct := floatParam(rule.Params, "max", 15)
+		high := highestHigh(rows, days)
+		closePrice := latest(rows).Close
+		if days <= 0 || high <= 0 || closePrice <= 0 {
+			fr.Reason = fmt.Sprintf("距高点回撤参数或数据不足 days=%d high=%.2f close=%.2f", days, high, closePrice)
+			break
+		}
+		depth := (high - closePrice) * 100 / high
+		fr.Hit = true
+		fr.Value = map[string]float64{"high": high, "close": closePrice, "depth": depth}
+		switch {
+		case depth < minPct:
+			fr.Score = clamp01(depth / math.Max(minPct, 0.01))
+			fr.Reason = fmt.Sprintf("距%d日高点回撤 %.2f%% 低于下限 %.2f%%", days, depth, minPct)
+		case depth > maxPct:
+			fr.Score = clamp01(1 - (depth-maxPct)/10)
+			fr.Reason = fmt.Sprintf("距%d日高点回撤 %.2f%% 超出上限 %.2f%%", days, depth, maxPct)
+		default:
+			fr.Score = 1
+			fr.Reason = fmt.Sprintf("距%d日高点回撤 %.2f%% 落在 %.2f-%.2f%%", days, depth, minPct, maxPct)
+		}
 	case "macd_golden_cross":
-		fr.Hit, fr.Score, fr.Reason = evaluateMACDSignal(rows, rule, true)
-		fr.Value = fr.Score
+		hit, raw, reason := evaluateMACDSignal(rows, rule, true)
+		fr.Hit, fr.Reason = hit, reason
+		fr.Value = raw
+		if hit {
+			fr.Score = clamp01(raw / 0.05)
+		}
 	case "macd_dead_cross":
-		fr.Hit, fr.Score, fr.Reason = evaluateMACDSignal(rows, rule, false)
-		fr.Value = fr.Score
+		hit, raw, reason := evaluateMACDSignal(rows, rule, false)
+		fr.Hit, fr.Reason = hit, reason
+		fr.Value = raw
+		if hit {
+			fr.Score = clamp01(raw / 0.05)
+		}
 	case "kdj_golden_cross":
-		fr.Hit, fr.Score, fr.Reason = evaluateKDJGoldenCross(rows, rule)
-		fr.Value = fr.Score
+		hit, raw, reason := evaluateKDJGoldenCross(rows, rule)
+		fr.Hit, fr.Reason = hit, reason
+		fr.Value = raw
+		if hit {
+			fr.Score = clamp01((100 - raw) / 100)
+		}
 	case "rsi_oversold":
-		fr.Hit, fr.Score, fr.Reason = evaluateRSIOversold(rows, rule)
-		fr.Value = fr.Score
+		hit, raw, reason := evaluateRSIOversold(rows, rule)
+		threshold := floatParam(rule.Params, "threshold", 30)
+		fr.Hit, fr.Reason = hit, reason
+		fr.Value = raw
+		if hit {
+			fr.Score = clamp01((threshold - raw) / math.Max(threshold, 0.01))
+		}
 	case "boll_breakout":
-		fr.Hit, fr.Score, fr.Reason = evaluateBOLLBreakout(rows, rule)
-		fr.Value = fr.Score
+		hit, raw, reason := evaluateBOLLBreakout(rows, rule)
+		fr.Hit, fr.Reason = hit, reason
+		fr.Value = raw
+		if hit {
+			closePrice := latest(rows).Close
+			if closePrice > 0 {
+				fr.Score = clamp01(raw / closePrice / 0.05)
+			} else {
+				fr.Score = 1
+			}
+		}
 	case "volume_breakout":
-		fr.Hit, fr.Score, fr.Reason = evaluateVolumeBreakout(rows, rule)
-		fr.Value = fr.Score
+		hit, raw, reason := evaluateVolumeBreakout(rows, rule)
+		ratio := floatParam(rule.Params, "ratio", 1.5)
+		fr.Hit, fr.Reason = hit, reason
+		fr.Value = raw
+		if hit {
+			fr.Score = clamp01((raw - ratio) / (ratio * 0.5))
+		}
 	case "local_rocket":
-		fr.Hit, fr.Score, fr.Reason = evaluateLocalRocket(rows, rule)
-		fr.Value = fr.Score
+		hit, raw, reason := evaluateLocalRocket(rows, rule)
+		fr.Hit, fr.Reason = hit, reason
+		fr.Value = raw
+		if hit {
+			fr.Score = clamp01(raw / 12)
+		}
 	case "formula":
 		formula, err := r.strategyFormula(rule)
 		if err != nil {
@@ -417,6 +550,7 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		}
 		hits := result.FormulaCache[formula.ID]
 		fr.Hit = hits[strategyNormalizeSymbol(symbol)]
+		fr.Score = 1
 		fr.Value = formula.Name
 		fr.Reason = fmt.Sprintf("公式%s命中: %t", formula.Name, fr.Hit)
 	default:
@@ -424,9 +558,20 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		fr.Reason = "未知因子: " + rule.Factor
 	}
 	if fr.Hit {
-		fr.Score = weight
+		fr.Score *= weight
 	}
 	return fr
+}
+
+// clamp01 squeezes a value into [0,1].
+func clamp01(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+	if value >= 1 {
+		return 1
+	}
+	return value
 }
 
 func (r *AutomationRunner) strategyPoolContains(result *StrategyRunResult, poolID string, symbol string) bool {

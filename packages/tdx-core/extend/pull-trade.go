@@ -2,12 +2,13 @@ package extend
 
 import (
 	"context"
+	"path/filepath"
+	"time"
+
 	"github.com/injoyai/conv"
 	"github.com/injoyai/logs"
 	"github.com/injoyai/tdx"
 	"github.com/injoyai/tdx/protocol"
-	"path/filepath"
-	"time"
 )
 
 func NewPullTrade(dir string) *PullTrade {
@@ -17,22 +18,11 @@ func NewPullTrade(dir string) *PullTrade {
 }
 
 type PullTrade struct {
-	Dir       string
-	StartYear int
-	EndYear   int
+	Dir string
 }
 
 func (this *PullTrade) Pull(ctx context.Context, m *tdx.Manage, code string) error {
-	startYear := this.StartYear
-	if startYear <= 0 {
-		startYear = 2000
-	}
-	endYear := this.EndYear
-	if endYear <= 0 {
-		endYear = time.Now().Year()
-	}
-
-	for i := startYear; i <= endYear; i++ {
+	for i := 2000; i <= time.Now().Year(); i++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

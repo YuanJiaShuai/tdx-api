@@ -82,6 +82,14 @@ func handleStrategyOperations(w http.ResponseWriter, r *http.Request) {
 		handleStrategyRun(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "apply-universe" {
+		if r.Method != http.MethodPost {
+			errorResponse(w, "只支持POST请求")
+			return
+		}
+		handleStrategyApplyUniverse(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "backtest" {
 		if r.Method != http.MethodPost {
 			errorResponse(w, "只支持POST请求")
@@ -146,6 +154,54 @@ func handleStrategyRangePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	successResponse(w, result)
+}
+
+// handleStrategyApplyUniverse merges a range expression into a strategy's config_json,
+// replacing only the universe field while keeping filters/scores/pass untouched.
+func handleStrategyApplyUniverse(w http.ResponseWriter, r *http.Request, id string) {
+	var req struct {
+		Universe StrategyUniverseExpression `json:"universe"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+	if !req.Universe.isExpression() {
+		errorResponse(w, "选股范围表达式为空，请先设置起点池")
+		return
+	}
+	strategy, err := appStore.GetStrategy(id)
+	if err != nil {
+		errorResponse(w, notFoundMessage(err, "策略不存在"))
+		return
+	}
+	if strategy.Readonly {
+		errorResponse(w, "系统策略模板不能应用范围，请先复制副本")
+		return
+	}
+	var cfg StrategyConfig
+	if err := json.Unmarshal([]byte(strategy.ConfigJSON), &cfg); err != nil {
+		errorResponse(w, "策略配置解析失败: "+err.Error())
+		return
+	}
+	cfg.Universe = req.Universe
+	// 先跑一次范围求值做校验:引用的池必须都存在,避免保存后运行时才报错。
+	if _, err := automationRunner.strategyUniverseResult(cfg, strategyMaxCodes(cfg)); err != nil {
+		errorResponse(w, "选股范围校验失败: "+err.Error())
+		return
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		errorResponse(w, "策略配置生成失败: "+err.Error())
+		return
+	}
+	strategy.ConfigJSON = string(raw)
+	item, err := appStore.UpsertStrategy(strategy)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	successResponse(w, item)
 }
 
 func handleStrategyRun(w http.ResponseWriter, r *http.Request, id string) {
@@ -348,6 +404,38 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 				{Name: "min_change", Label: "最低涨幅", Type: "number", Default: 3},
 				{Name: "short_ma", Label: "短均线", Type: "number", Default: 5},
 				{Name: "mid_ma", Label: "中均线", Type: "number", Default: 10},
+			},
+		},
+		{
+			ID:          "drawdown_from_high",
+			Name:        "距高点回撤",
+			Kind:        "score",
+			Description: "最新收盘价相对前N日高点的回撤幅度，落在期望区间时强度最高，用于捕捉强势股回调。",
+			Params: []StrategyFactorParamDef{
+				{Name: "days", Label: "回看天数", Type: "number", Default: 60},
+				{Name: "min", Label: "最小回撤%", Type: "number", Default: 5},
+				{Name: "max", Label: "最大回撤%", Type: "number", Default: 15},
+			},
+		},
+		{
+			ID:          "gain_days",
+			Name:        "N日涨幅",
+			Kind:        "score",
+			Description: "最新收盘价相对N日前的涨幅，落在期望区间时强度最高，用于圈定强势股。",
+			Params: []StrategyFactorParamDef{
+				{Name: "days", Label: "回看天数", Type: "number", Default: 20},
+				{Name: "min", Label: "最小涨幅%", Type: "number", Default: 5},
+				{Name: "max", Label: "最大涨幅%", Type: "number", Default: 50},
+			},
+		},
+		{
+			ID:          "max_amplitude",
+			Name:        "最大平均振幅",
+			Kind:        "filter",
+			Description: "近N日平均振幅(高低价差/昨收)不超过指定百分比，过滤日内波动过大的标的。",
+			Params: []StrategyFactorParamDef{
+				{Name: "days", Label: "统计天数", Type: "number", Default: 5},
+				{Name: "max", Label: "最大振幅%", Type: "number", Default: 8},
 			},
 		},
 		{

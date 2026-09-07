@@ -17,7 +17,6 @@ import (
 	"github.com/injoyai/ios/client"
 	"github.com/injoyai/ios/module/common"
 	"github.com/injoyai/logs"
-	"github.com/injoyai/tdx/lib/bse"
 	"github.com/injoyai/tdx/protocol"
 )
 
@@ -289,23 +288,19 @@ func (this *Client) GetCode(exchange protocol.Exchange, start uint16) (*protocol
 func (this *Client) GetCodeAll(exchange protocol.Exchange) (*protocol.CodeResp, error) {
 	resp := &protocol.CodeResp{}
 
-	//通达信没有北交所代码列表,通过爬虫的方式从北交所官网获取,放在这里是为了方便业务逻辑
-	//不放在extend包时防止循环引用
-	//todo 这是临时方案,等通达信有北交所代码列表时再改
+	//通达信标准协议(GetCount/GetCode)不支持北交所(market=2),会超时;
+	//通过 zhb.zip 中的 tdxbjmore.cfg 获取北交所代码和名称。
 	if exchange == protocol.ExchangeBJ {
-		codes, err := bse.GetCodes()
+		files, err := this.GetZHBFiles()
 		if err != nil {
-			logs.Err(fmt.Errorf("跳过北交所代码列表初始化: %w", err))
-			return resp, nil
+			return nil, err
 		}
-		resp.Count = uint16(len(codes))
-		for _, v := range codes {
-			resp.List = append(resp.List, &protocol.Code{
-				Code:      v.Code,
-				Name:      v.Name,
-				LastPrice: v.Last,
-			})
+		data, ok := files[protocol.FileTdxBjMore]
+		if !ok {
+			return nil, fmt.Errorf("%s 中缺少 %s", protocol.ReportZHB, protocol.FileTdxBjMore)
 		}
+		resp.List = protocol.ParseTdxBjMore(data)
+		resp.Count = uint16(len(resp.List))
 		return resp, nil
 	}
 
@@ -358,16 +353,6 @@ func (this *Client) GetETFCodeAll() ([]string, error) {
 	return ls, nil
 }
 
-// GetStockAll 保留 tdx-api 旧方法名，返回带交易所前缀的股票代码。
-func (this *Client) GetStockAll() ([]string, error) {
-	return this.GetStockCodeAll()
-}
-
-// GetETFAll 保留 tdx-api 旧方法名，返回带交易所前缀的 ETF 代码。
-func (this *Client) GetETFAll() ([]string, error) {
-	return this.GetETFCodeAll()
-}
-
 // GetIndexCodeAll 获取所有指数代码,带前缀例sz399001
 func (this *Client) GetIndexCodeAll() ([]string, error) {
 	ls := []string{"bj899050"}
@@ -390,11 +375,11 @@ func (this *Client) GetQuote(codes ...string) (protocol.QuotesResp, error) {
 	for i := range codes {
 		//如果是股票代码,则加上前缀
 		codes[i] = protocol.AddPrefix(codes[i])
-		if !protocol.IsStock(codes[i]) {
+		if !protocol.IsStock(codes[i]) && !protocol.IsIndex(codes[i]) {
 			if DefaultCodes == nil {
 				return nil, errors.New("DefaultCodes未初始化")
 			}
-			//不是股票代码的话，根据codes的信息加上前缀
+			//不是股票/指数代码的话，根据codes的信息加上前缀
 			//codes[i] = DefaultCodes.AddExchange(codes[i])
 			codes[i] = protocol.AddPrefix(codes[i])
 		}
@@ -416,7 +401,9 @@ func (this *Client) GetQuote(codes ...string) (protocol.QuotesResp, error) {
 			return nil, fmt.Errorf("预期%d个，实际%d个", len(codes), len(quotes))
 		}
 		for i, code := range codes {
-			if !protocol.IsStock(code) {
+			// 股票类代码才需要按 Decimal 修正价格;
+			// 指数(含板块指数 880xxx)与基金行情原始解码价格即正确, 跳过修正。
+			if !protocol.IsStock(code) && !protocol.IsIndex(code) {
 				m := DefaultCodes.Get(code)
 				if m == nil {
 					return nil, fmt.Errorf("未查询到代码[%s]相关信息", code)
@@ -427,13 +414,11 @@ func (this *Client) GetQuote(codes ...string) (protocol.QuotesResp, error) {
 				for ii, v := range quotes[i].BuyLevel {
 					quotes[i].BuyLevel[ii].Price = m.Price(v.Price)
 				}
-				quotes[i].K = protocol.K{
-					Last:  m.Price(quotes[i].K.Last),
-					Open:  m.Price(quotes[i].K.Open),
-					High:  m.Price(quotes[i].K.High),
-					Low:   m.Price(quotes[i].K.Low),
-					Close: m.Price(quotes[i].K.Close),
-				}
+				quotes[i].Kline.Last = m.Price(quotes[i].Kline.Last)
+				quotes[i].Kline.Open = m.Price(quotes[i].Kline.Open)
+				quotes[i].Kline.High = m.Price(quotes[i].Kline.High)
+				quotes[i].Kline.Low = m.Price(quotes[i].Kline.Low)
+				quotes[i].Kline.Close = m.Price(quotes[i].Kline.Close)
 			}
 		}
 	}
@@ -697,6 +682,23 @@ func (this *Client) GetXgsg() ([]*protocol.TdxXgsg, error) {
 	return protocol.ParseXgsg(data), nil
 }
 
+// GetSpBlock 下载并解析 spblock.dat(来自 zhb.zip) → 专业板块成分列表。
+//
+// spblock.dat 承载 block_zs.dat 无法容纳的大型指数成分, 如
+// 中证2000/中证1000/中证500/中证A500/国证2000/深证成指 等(block_*.dat 单板块成分上限 400)。
+// 用 protocol.SpBlockByName 按名取单个板块。注意: 沪深300 不在此文件, 在 block_zs.dat(见 GetBlockData)。
+func (this *Client) GetSpBlock() ([]*protocol.SpBlock, error) {
+	files, err := this.GetZHBFiles()
+	if err != nil {
+		return nil, err
+	}
+	data, ok := files[protocol.FileSpBlock]
+	if !ok {
+		return nil, fmt.Errorf("%s 中缺少 %s", protocol.ReportZHB, protocol.FileSpBlock)
+	}
+	return protocol.ParseSpBlock(data), nil
+}
+
 // GetTdxHy 下载并解析 tdxhy.cfg → 每只股票的通达信/申万行业归属。
 func (this *Client) GetTdxHy() ([]*protocol.TdxHy, error) {
 	buf, err := this.GetBlockFileRaw(protocol.FileTdxHy)
@@ -750,7 +752,7 @@ func (this *Client) GetTradeAll(code string) (*protocol.TradeResp, error) {
 	return this.GetMinuteTradeAll(code)
 }
 
-// GetMinuteTradeAll 获取分时全部交易详情,todo 只做参考 因为交易实时在进行,然后又是分页读取的,所以会出现读取间隔内产生的交易会丢失
+// GetMinuteTradeAll 获取分时全部交易详情,只能盘后调用,因为交易实时在进行,然后又是分页读取的,所以会出现读取间隔内产生的交易会丢失
 func (this *Client) GetMinuteTradeAll(code string) (*protocol.TradeResp, error) {
 	resp := &protocol.TradeResp{}
 	size := uint16(1800)
@@ -862,7 +864,7 @@ func (this *Client) GetIndex(Type uint8, code string, start, count uint16) (*pro
 	if err != nil {
 		return nil, err
 	}
-	result, err := this.SendFrame(f, protocol.KlineCache{Type: Type, Kind: protocol.KindIndex})
+	result, err := this.SendFrame(f, protocol.KlineCache{Type: Type, Kind: protocol.KindIndex, Code: code})
 	if err != nil {
 		return nil, err
 	}
@@ -966,7 +968,7 @@ func (this *Client) GetKline(Type uint8, code string, start, count uint16) (*pro
 	if err != nil {
 		return nil, err
 	}
-	result, err := this.SendFrame(f, protocol.KlineCache{Type: Type, Kind: protocol.KindStock})
+	result, err := this.SendFrame(f, protocol.KlineCache{Type: Type, Kind: protocol.KindStock, Code: code})
 	if err != nil {
 		return nil, err
 	}

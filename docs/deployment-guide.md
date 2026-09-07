@@ -41,7 +41,7 @@ docker compose up -d --build selection-worker
 
 ## 源码运行
 
-要求 Go 1.23+。
+要求 Go 1.25+。
 
 ```bash
 python3 services/formula-worker/worker.py
@@ -107,7 +107,7 @@ GOPROXY=https://goproxy.cn,direct go test ./...
 
 | 问题 | 处理 |
 | --- | --- |
-| `go` 命令找不到 | 安装 Go 1.23+，确认 `go version` 正常 |
+| `go` 命令找不到 | 安装 Go 1.25+，确认 `go version` 正常 |
 | 模块下载慢 | 设置 `GOPROXY=https://goproxy.cn,direct` |
 | 端口 8080 被占用 | 源码运行设置 `PORT=18080`，Docker 调整端口映射 |
 | 公式测试失败 | Docker 看容器日志；源码运行确认 `python3 services/formula-worker/worker.py` 正在运行 |

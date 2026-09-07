@@ -86,3 +86,18 @@ func (this *Updated) Updated(key string) (bool, error) {
 	}
 	return true, nil
 }
+
+/*
+
+
+
+ */
+
+type UpdateModel struct {
+	Key  string
+	Time int64 //更新时间
+}
+
+func (*UpdateModel) TableName() string {
+	return "update"
+}

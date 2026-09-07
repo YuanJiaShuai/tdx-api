@@ -1,3 +1,5 @@
+import type { StockPool } from '../types';
+
 export function normalizeSymbol(value: unknown): string {
   return String(value || '')
     .trim()
@@ -40,4 +42,69 @@ export function localTime(value?: string): string {
   const date = value ? new Date(value) : new Date();
   if (Number.isNaN(date.getTime())) return new Date().toLocaleTimeString('zh-CN', { hour12: false });
   return date.toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+interface UniverseTermLike {
+  pool?: string;
+  pool_id?: string;
+  symbols?: string[];
+}
+
+function poolDisplayName(pools: StockPool[], poolID: string): string {
+  const pool = pools.find((item) => item.id === poolID);
+  return pool?.name || poolID || '未知池';
+}
+
+function termSummary(term: UniverseTermLike, pools: StockPool[]): string {
+  const symbols = Array.isArray(term.symbols) ? term.symbols : [];
+  if (symbols.length) return `手动代码${symbols.length}只`;
+  const poolID = term.pool || term.pool_id || '';
+  return poolDisplayName(pools, poolID);
+}
+
+function joinTerms(terms: UniverseTermLike[] | undefined, pools: StockPool[], fallback: string): string {
+  if (!Array.isArray(terms) || terms.length === 0) return fallback;
+  return terms.map((term) => termSummary(term, pools)).join(' + ');
+}
+
+// summarizeStrategyUniverse renders a strategy config's candidate-range description,
+// e.g. "沪市主板 + 创业板 − 排除池" for expression configs or "全市场A股" for legacy ones.
+export function summarizeStrategyUniverse(config: Record<string, unknown>, pools: StockPool[]): string {
+  const universe = config.universe;
+  const poolID = typeof config.pool_id === 'string' ? config.pool_id : '';
+  const symbols = Array.isArray(config.symbols) ? config.symbols : [];
+  if (typeof universe === 'string') {
+    switch (universe.toLowerCase()) {
+      case 'all_a':
+      case 'all':
+        return '全市场A股';
+      case 'market':
+        return `市场 · ${poolDisplayName(pools, poolID || 'market-all-a')}`;
+      case 'symbols':
+        return symbols.length ? `手动代码 ${symbols.length}只` : '手动代码(空)';
+      case 'pool':
+      case '':
+        return `股票池 · ${poolDisplayName(pools, poolID || 'watchlist')}`;
+      default:
+        return `范围 ${universe}`;
+    }
+  }
+  if (universe && typeof universe === 'object') {
+    const expr = universe as { include?: UniverseTermLike[]; intersect?: UniverseTermLike[]; exclude?: UniverseTermLike[] };
+    const include = joinTerms(expr.include, pools, '未设置起点');
+    const intersect = joinTerms(expr.intersect, pools, '');
+    const exclude = joinTerms(expr.exclude, pools, '');
+    return `${include}${intersect ? ` ∩ ${intersect}` : ''}${exclude ? ` − ${exclude}` : ''}`;
+  }
+  return `默认观察池 · ${poolDisplayName(pools, poolID || 'watchlist')}`;
+}
+
+export function parseConfigJson(value?: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }

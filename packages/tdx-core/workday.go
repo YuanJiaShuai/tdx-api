@@ -2,97 +2,143 @@ package tdx
 
 import (
 	"errors"
+	"iter"
+	"path/filepath"
+	"time"
+
 	_ "github.com/glebarez/go-sqlite"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/injoyai/base/maps"
 	"github.com/injoyai/conv"
-	"github.com/injoyai/ios/client"
 	"github.com/injoyai/logs"
+	"github.com/injoyai/tdx/lib/xorms"
 	"github.com/injoyai/tdx/protocol"
-	"github.com/robfig/cron/v3"
-	"os"
-	"path/filepath"
-	"time"
-	"xorm.io/core"
-	"xorm.io/xorm"
 )
 
-func DialWorkday(op ...client.Option) (*Workday, error) {
-	c, err := DialDefault(op...)
-	if err != nil {
-		return nil, err
+type (
+	WorkdayOption   func(w *Workday)
+	DialWorkdayFunc func(c *Client) (*Workday, error)
+)
+
+func WithWorkdaySpec(spec string) WorkdayOption {
+	return func(w *Workday) {
+		w.spec = spec
 	}
-	return NewWorkdaySqlite(c)
 }
 
-func NewWorkdayMysql(c *Client, dsn string) (*Workday, error) {
-
-	//连接数据库
-	db, err := xorm.NewEngine("mysql", dsn)
-	if err != nil {
-		return nil, err
+func WithWorkdayRetry(retry int) WorkdayOption {
+	return func(w *Workday) {
+		w.retry = retry
 	}
-	db.SetMapper(core.SameMapper{})
-
-	return NewWorkday(c, db)
 }
 
-func NewWorkdaySqlite(c *Client, filenames ...string) (*Workday, error) {
-
-	defaultFilename := filepath.Join(DefaultDatabaseDir, "workday.db")
-	filename := conv.Default(defaultFilename, filenames...)
-
-	//如果文件夹不存在就创建
-	dir, _ := filepath.Split(filename)
-	_ = os.MkdirAll(dir, 0777)
-
-	//连接数据库
-	db, err := xorm.NewEngine("sqlite", filename)
-	if err != nil {
-		return nil, err
+func WithWorkdayDB(db *xorms.Engine) WorkdayOption {
+	return func(w *Workday) {
+		w.db = db
 	}
-	db.SetMapper(core.SameMapper{})
-	db.DB().SetMaxOpenConns(1)
-
-	return NewWorkday(c, db)
 }
 
-func NewWorkday(c *Client, db *xorm.Engine) (*Workday, error) {
-	if err := db.Sync2(new(WorkdayModel)); err != nil {
-		return nil, err
+func WithWorkdayDialDB(dial DialDBFunc) WorkdayOption {
+	return func(w *Workday) {
+		w.dialDB = dial
 	}
+}
+
+func WithWorkdayClient(c *Client) WorkdayOption {
+	return func(w *Workday) {
+		w.c = c
+	}
+}
+
+func WithWorkdayDialClient(dial DialClientFunc) WorkdayOption {
+	return func(w *Workday) {
+		w.dialClient = dial
+	}
+}
+
+func WithWorkdayOption(op ...WorkdayOption) WorkdayOption {
+	return func(w *Workday) {
+		for _, v := range op {
+			v(w)
+		}
+	}
+}
+
+func NewWorkdayMysql(dsn string, op ...WorkdayOption) (*Workday, error) {
+	return NewWorkday(
+		WithWorkdayDialDB(func() (*xorms.Engine, error) { return xorms.NewMysql(dsn) }),
+		WithWorkdayOption(op...),
+	)
+}
+
+func NewWorkdaySqlite(op ...WorkdayOption) (*Workday, error) {
+	return NewWorkday(op...)
+}
+
+func NewWorkday(op ...WorkdayOption) (*Workday, error) {
 
 	w := &Workday{
-		Client: c,
-		db:     db,
-		cache:  maps.NewBit(),
+		spec:       DefaultWorkdaySpec,
+		retry:      DefaultRetry,
+		dialDB:     nil,
+		dialClient: nil,
+
+		c:     nil,
+		db:    nil,
+		cache: maps.NewBit(),
 	}
-	//设置定时器,每天早上9点更新数据,8点多获取不到今天的数据
-	task := cron.New(cron.WithSeconds())
-	task.AddFunc("0 0 9 * * *", func() {
-		for i := 0; i < 3; i++ {
-			err := w.Update()
-			if err == nil {
-				return
+
+	for _, v := range op {
+		v(w)
+	}
+
+	var err error
+	if w.db == nil {
+		if w.dialDB == nil {
+			w.dialDB = func() (*xorms.Engine, error) {
+				return xorms.NewSqlite(filepath.Join(DefaultDatabaseDir, "workday.db"))
 			}
-			logs.Err(err)
-			<-time.After(time.Minute * 5)
 		}
-	})
-	task.Start()
-	return w, w.Update()
+		w.db, err = w.dialDB()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := w.db.Sync2(new(WorkdayModel)); err != nil {
+		return nil, err
+	}
+
+	if w.c == nil {
+		if w.dialClient == nil {
+			w.dialClient = func() (*Client, error) { return DialDefault() }
+		}
+		w.c, err = w.dialClient()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	//设置定时器,每天早上9点更新数据,8点多获取不到今天的数据
+	err = NewTimer(w.spec, w.retry, w)
+
+	return w, err
 }
 
 type Workday struct {
-	*Client
-	db    *xorm.Engine
+	spec       string
+	retry      int
+	dialDB     DialDBFunc
+	dialClient DialClientFunc
+
+	c     *Client
+	db    *xorms.Engine
 	cache maps.Bit
 }
 
 // Update 更新
 func (this *Workday) Update() error {
 
-	if this.Client == nil {
+	if this.c == nil {
 		return errors.New("client is nil")
 	}
 
@@ -114,7 +160,7 @@ func (this *Workday) Update() error {
 
 	now := time.Now()
 	if lastWorkday.Unix < IntegerDay(now).Unix() {
-		resp, err := this.Client.GetIndexDayAll("sh000001")
+		resp, err := this.c.GetIndexDayAll("sh000001")
 		if err != nil {
 			logs.Err(err)
 			return err
@@ -154,7 +200,7 @@ func (this *Workday) TodayIs() bool {
 func (this *Workday) RangeYear(year int, f func(t time.Time) bool) {
 	this.Range(
 		time.Date(year, 1, 1, 0, 0, 0, 0, time.Local),
-		time.Date(year, 12, 31, 0, 0, 0, 0, time.Local),
+		time.Date(year, 12, 31, 0, 0, 0, 1, time.Local),
 		f,
 	)
 }
@@ -162,8 +208,6 @@ func (this *Workday) RangeYear(year int, f func(t time.Time) bool) {
 // Range 遍历指定范围的工作日,推荐start带上时间15:00,这样当天小于15点不会触发
 func (this *Workday) Range(start, end time.Time, f func(t time.Time) bool) {
 	start = conv.Select(start.Before(protocol.ExchangeEstablish), protocol.ExchangeEstablish, start)
-	//now := IntegerDay(time.Now())
-	//end = conv.Select(end.After(now), now, end).Add(1)
 	for ; start.Before(end); start = start.Add(time.Hour * 24) {
 		if this.Is(start) {
 			if !f(start) {
@@ -173,13 +217,36 @@ func (this *Workday) Range(start, end time.Time, f func(t time.Time) bool) {
 	}
 }
 
-// RangeDesc 倒序遍历工作日,从今天-1990年12月19日(上海交易所成立时间)
-func (this *Workday) RangeDesc(f func(t time.Time) bool) {
-	t := IntegerDay(time.Now())
-	for ; t.After(time.Date(1990, 12, 18, 0, 0, 0, 0, time.Local)); t = t.Add(-time.Hour * 24) {
-		if this.Is(t) {
-			if !f(t) {
-				return
+func (this *Workday) IterYear(year int, desc ...bool) iter.Seq[time.Time] {
+	return this.Iter(
+		time.Date(year, 1, 1, 0, 0, 0, 0, time.Local),
+		time.Date(year, 12, 31, 0, 0, 0, 1, time.Local),
+		desc...,
+	)
+}
+
+// Iter 遍历指定范围的工作日,推荐start带上时间15:00,这样当天小于15点不会触发
+func (this *Workday) Iter(start, end time.Time, desc ...bool) iter.Seq[time.Time] {
+	start = conv.Select(start.Before(protocol.ExchangeEstablish), protocol.ExchangeEstablish, start)
+	if len(desc) > 0 && desc[0] {
+		//倒序遍历
+		return func(yield func(time.Time) bool) {
+			for ; end.After(start); end = end.Add(-time.Hour * 24) {
+				if this.Is(end) {
+					if !yield(end) {
+						return
+					}
+				}
+			}
+		}
+	}
+	//正序遍历
+	return func(yield func(time.Time) bool) {
+		for ; start.Before(end); start = start.Add(time.Hour * 24) {
+			if this.Is(start) {
+				if !yield(start) {
+					return
+				}
 			}
 		}
 	}

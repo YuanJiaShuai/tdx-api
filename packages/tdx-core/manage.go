@@ -1,11 +1,10 @@
 package tdx
 
 import (
-	"errors"
-	"github.com/injoyai/ios/client"
+	"sync"
+
 	"github.com/injoyai/tdx/lib/xorms"
 	"github.com/robfig/cron/v3"
-	"time"
 )
 
 const (
@@ -18,165 +17,226 @@ const (
 	DefaultGbbqSpec    = "0 5 9 * * *"
 )
 
+func NewManageMysql(dsn string, op ...Option) (*Manage, error) {
+	return NewManage(
+		WithDialCodes(func(c *Client) (ICodes, error) {
+			return NewCodesMysql(dsn, WithCodesClient(c))
+		}),
+		WithDialWorkday(func(c *Client) (*Workday, error) {
+			return NewWorkdayMysql(dsn, WithWorkdayClient(c))
+		}),
+		WithOption(op...),
+	)
+}
+
+func NewManage(op ...Option) (m *Manage, err error) {
+
+	m = &Manage{
+		poolClients: DefaultClients,
+		Gbbq:        &Gbbq{}, //默认不初始化股本变迁数据
+	}
+
+	for _, v := range op {
+		if v != nil {
+			v(m)
+		}
+	}
+
+	//连接池
+	if m.IPool == nil {
+		if m.dialPool == nil {
+			m.dialPool = func() (IPool, error) {
+				return NewPool(func() (*Client, error) { return DialDefault() }, m.poolClients)
+			}
+		}
+		m.IPool, err = m.dialPool()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	//取出一个客户端
+	c, err := m.IPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer m.IPool.Put(c)
+
+	//代码管理
+	if m.Codes == nil {
+		if m.dialCodes == nil {
+			m.dialCodes = func(c *Client) (ICodes, error) { return NewCodes(WithCodesClient(c)) }
+		}
+		m.Codes, err = m.dialCodes(c)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	//工作日管理
+	if m.Workday == nil {
+		if m.dialWorkday == nil {
+			m.dialWorkday = func(c *Client) (*Workday, error) { return NewWorkday(WithWorkdayClient(c)) }
+		}
+		m.Workday, err = m.dialWorkday(c)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	//股本管理
+	if m.Gbbq == nil {
+		if m.dialGbbq == nil {
+			m.dialGbbq = func(c *Client) (IGbbq, error) { return NewGbbq(WithGbbqClient(c)) }
+		}
+		m.Gbbq, err = m.dialGbbq(c)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return
+}
+
+/*
+
+
+
+ */
+
 type (
-	DialDBFunc     func() (*xorms.Engine, error)
+	Option func(m *Manage)
+
+	DialDBFunc func() (*xorms.Engine, error)
+
 	DialClientFunc func() (*Client, error)
 )
 
-func NewManageMysql(cfg *ManageConfig, op ...client.Option) (*Manage, error) {
-	//初始化配置
-	if cfg == nil {
-		cfg = &ManageConfig{}
+func WithClients(clients int) Option {
+	return func(m *Manage) {
+		m.poolClients = clients
 	}
-	if cfg.CodesFilename == "" {
-		return nil, errors.New("未配置Codes的数据库")
-	}
-	if cfg.WorkdayFileName == "" {
-		return nil, errors.New("未配置Workday的数据库")
-	}
-	if cfg.Dial == nil {
-		cfg.Dial = DialDefault
-	}
-
-	//通用客户端
-	commonClient, err := cfg.Dial(op...)
-	if err != nil {
-		return nil, err
-	}
-	commonClient.Wait.SetTimeout(time.Second * 5)
-
-	//代码管理
-	codes, err := NewCodesMysql(commonClient, cfg.CodesFilename)
-	if err != nil {
-		return nil, err
-	}
-
-	//工作日管理
-	workday, err := NewWorkdayMysql(commonClient, cfg.WorkdayFileName)
-	if err != nil {
-		return nil, err
-	}
-
-	//连接池
-	p, err := NewPool(func() (*Client, error) {
-		return cfg.Dial(op...)
-	}, cfg.Number)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Manage{
-		Pool:    p,
-		Config:  cfg,
-		Codes:   codes,
-		Workday: workday,
-		Gbbq:    &Gbbq{},
-		Cron:    cron.New(cron.WithSeconds()),
-	}, nil
 }
 
-func NewManage(args ...any) (*Manage, error) {
-	//初始化配置
-	var (
-		cfg *ManageConfig
-		op  []client.Option
-	)
-	for _, arg := range args {
-		switch v := arg.(type) {
-		case nil:
-		case *ManageConfig:
-			cfg = v
-		case client.Option:
-			op = append(op, v)
-		default:
-			return nil, errors.New("NewManage expects *ManageConfig and/or client.Option")
+func WithPool(pool IPool) Option {
+	return func(m *Manage) {
+		m.IPool = pool
+	}
+}
+
+func WithDialPool(dial DialPoolFunc) Option {
+	return func(m *Manage) {
+		m.IPool = nil
+		m.dialPool = dial
+	}
+}
+
+func WithCodes(codes ICodes) Option {
+	return func(m *Manage) {
+		m.Codes = codes
+	}
+}
+
+func WithDialCodes(dial DialCodesFunc) Option {
+	return func(m *Manage) {
+		m.Codes = nil
+		m.dialCodes = dial
+	}
+}
+
+func WithWorkday(w *Workday) Option {
+	return func(m *Manage) {
+		m.Workday = w
+	}
+}
+
+func WithDialWorkday(dial DialWorkdayFunc) Option {
+	return func(m *Manage) {
+		m.Workday = nil
+		m.dialWorkday = dial
+	}
+}
+
+func WithGbbq(gbbq IGbbq) Option {
+	return func(m *Manage) {
+		m.Gbbq = gbbq
+	}
+}
+
+func WithDialGbbq(dial DialGbbqFunc) Option {
+	return func(m *Manage) {
+		m.Gbbq = nil
+		m.dialGbbq = dial
+	}
+}
+
+func WithDialGbbqDefault() Option {
+	return WithDialGbbq(func(c *Client) (IGbbq, error) {
+		return NewGbbq(WithGbbqClient(c))
+	})
+}
+
+func WithOption(op ...Option) Option {
+	return func(m *Manage) {
+		for _, v := range op {
+			if v != nil {
+				v(m)
+			}
 		}
 	}
-	if cfg == nil {
-		cfg = &ManageConfig{}
-	}
-	if cfg.CodesFilename == "" {
-		cfg.CodesFilename = DefaultDatabaseDir + "/codes.db"
-	}
-	if cfg.WorkdayFileName == "" {
-		cfg.WorkdayFileName = DefaultDatabaseDir + "/workday.db"
-	}
-	if cfg.Dial == nil {
-		cfg.Dial = DialDefault
-	}
-
-	//通用客户端
-	commonClient, err := cfg.Dial(op...)
-	if err != nil {
-		return nil, err
-	}
-	commonClient.Wait.SetTimeout(time.Second * 5)
-
-	//代码管理
-	codes, err := NewCodesSqlite(commonClient, cfg.CodesFilename)
-	if err != nil {
-		return nil, err
-	}
-
-	//工作日管理
-	workday, err := NewWorkdaySqlite(commonClient, cfg.WorkdayFileName)
-	if err != nil {
-		return nil, err
-	}
-
-	//连接池
-	p, err := NewPool(func() (*Client, error) {
-		return cfg.Dial(op...)
-	}, cfg.Number)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Manage{
-		Pool:    p,
-		Config:  cfg,
-		Codes:   codes,
-		Workday: workday,
-		Gbbq:    &Gbbq{},
-		Cron:    cron.New(cron.WithSeconds()),
-	}, nil
 }
 
 type Manage struct {
-	*Pool
-	Config  *ManageConfig
-	Codes   *Codes
+	poolClients int
+	dialPool    DialPoolFunc
+	dialCodes   DialCodesFunc
+	dialWorkday DialWorkdayFunc
+	dialGbbq    DialGbbqFunc
+
+	IPool
+	Codes   ICodes
 	Workday *Workday
 	Gbbq    IGbbq
-	Cron    *cron.Cron
+
+	/*
+
+	 */
+
+	cron *cron.Cron
+	once sync.Once
 }
 
 // RangeStocks 遍历所有股票
 func (this *Manage) RangeStocks(f func(code string)) {
 	for _, v := range this.Codes.GetStocks() {
-		f(v)
+		f(v.FullCode())
 	}
 }
 
 // RangeETFs 遍历所有ETF
 func (this *Manage) RangeETFs(f func(code string)) {
 	for _, v := range this.Codes.GetETFs() {
-		f(v)
+		f(v.FullCode())
+	}
+}
+
+// RangeIndexes 遍历所有指数
+func (this *Manage) RangeIndexes(f func(code string)) {
+	for _, v := range this.Codes.GetIndexes() {
+		f(v.FullCode())
 	}
 }
 
 // AddWorkdayTask 添加工作日任务
-func (this *Manage) AddWorkdayTask(spec string, f func(m *Manage)) {
-	this.Cron.AddFunc(spec, func() {
+func (this *Manage) AddWorkdayTask(spec string, f func(m *Manage)) error {
+	this.once.Do(func() {
+		this.cron = cron.New(cron.WithSeconds())
+		this.cron.Start()
+	})
+	_, err := this.cron.AddFunc(spec, func() {
 		if this.Workday.TodayIs() {
 			f(this)
 		}
 	})
-}
-
-type ManageConfig struct {
-	Number          int                                                //客户端数量
-	CodesFilename   string                                             //代码数据库位置
-	WorkdayFileName string                                             //工作日数据库位置
-	Dial            func(op ...client.Option) (cli *Client, err error) //默认连接方式
+	return err
 }

@@ -127,7 +127,7 @@ func limitedMarketPoolSymbols(poolID string, maxCodes int) []string {
 		return symbols[:maxCodes]
 	}
 	if len(symbols) == 0 && poolID == "market-all-a" && tdx.DefaultCodes != nil {
-		return NormalizeSymbols(tdx.DefaultCodes.GetStocks(maxCodes))
+		return NormalizeSymbols(tdx.DefaultCodes.GetStockCodes(maxCodes))
 	}
 	return symbols
 }
