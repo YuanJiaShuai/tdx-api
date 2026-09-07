@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/injoyai/ios/client"
 	"github.com/injoyai/ios/module/common"
 	"github.com/injoyai/logs"
+	"github.com/injoyai/tdx/extend/historyfinancial"
 	"github.com/injoyai/tdx/protocol"
 )
 
@@ -119,10 +121,39 @@ type Client struct {
 	Wait           *wait.Entity //异步回调,设置超时时间,超时则返回错误
 	m              *maps.Safe   //有部分解析需要用到代码,返回数据获取不到,固请求的时候缓存下
 	msgID          uint32       //消息id,使用SendFrame自动累加
+	traffic        trafficStats
+}
+
+type trafficStats struct {
+	sendPackets       uint64
+	recvPackets       uint64
+	sendBytes         uint64
+	recvBytes         uint64
+	firstSendUnixNano int64
+	lastSendBytes     uint64
+	lastRecvBytes     uint64
+}
+
+// TrafficStats 是客户端连接级别的收发统计。
+// 统计从当前 Client 创建后开始，适用于标准行情和扩展行情连接。
+type TrafficStats struct {
+	SendPacketNum       uint64
+	RecvPacketNum       uint64
+	SendBytes           uint64
+	RecvBytes           uint64
+	FirstPacketSendTime *time.Time
+	TotalSeconds        float64
+	SendBytesPerSecond  float64
+	RecvBytesPerSecond  float64
+	LastAPISendBytes    uint64
+	LastAPIRecvBytes    uint64
 }
 
 // handlerDealMessage 处理服务器响应的数据
 func (this *Client) handlerDealMessage(c *client.Client, msg ios.Acker) {
+	atomic.AddUint64(&this.traffic.recvPackets, 1)
+	atomic.AddUint64(&this.traffic.recvBytes, uint64(len(msg.Payload())))
+	atomic.StoreUint64(&this.traffic.lastRecvBytes, uint64(len(msg.Payload())))
 
 	defer func() {
 		if e := recover(); e != nil {
@@ -254,10 +285,60 @@ func (this *Client) SendFrame(f *protocol.Frame, cache ...any) (any, error) {
 	if len(cache) > 0 {
 		this.m.Set(conv.String(f.MsgID), cache[0])
 	}
-	if _, err := this.Client.Write(f.Bytes()); err != nil {
+	data := f.Bytes()
+	this.recordSend(len(data))
+	if _, err := this.Client.Write(data); err != nil {
 		return nil, err
 	}
 	return this.Wait.Wait(conv.String(f.MsgID))
+}
+
+// SendRawFrame 发送一个已经构造好的 TDX 请求帧，并返回协议解码后的响应数据。
+// 它保留了 pytdx send_raw_pkg 的底层使用场景，同时复用当前 Client 的分包、压缩和超时处理。
+// 若需要具体业务结构，返回值可断言为 protocol 包中的对应响应类型。
+func (this *Client) SendRawFrame(f *protocol.Frame) (any, error) {
+	return this.SendFrame(f)
+}
+
+func (this *Client) recordSend(n int) {
+	if n <= 0 {
+		return
+	}
+	now := time.Now().UnixNano()
+	atomic.CompareAndSwapInt64(&this.traffic.firstSendUnixNano, 0, now)
+	atomic.AddUint64(&this.traffic.sendPackets, 1)
+	atomic.AddUint64(&this.traffic.sendBytes, uint64(n))
+	atomic.StoreUint64(&this.traffic.lastSendBytes, uint64(n))
+}
+
+// GetTrafficStats 获取当前连接的流量统计。
+func (this *Client) GetTrafficStats() TrafficStats {
+	sendPackets := atomic.LoadUint64(&this.traffic.sendPackets)
+	recvPackets := atomic.LoadUint64(&this.traffic.recvPackets)
+	sendBytes := atomic.LoadUint64(&this.traffic.sendBytes)
+	recvBytes := atomic.LoadUint64(&this.traffic.recvBytes)
+	first := atomic.LoadInt64(&this.traffic.firstSendUnixNano)
+	stats := TrafficStats{
+		SendPacketNum:    sendPackets,
+		RecvPacketNum:    recvPackets,
+		SendBytes:        sendBytes,
+		RecvBytes:        recvBytes,
+		LastAPISendBytes: atomic.LoadUint64(&this.traffic.lastSendBytes),
+		LastAPIRecvBytes: atomic.LoadUint64(&this.traffic.lastRecvBytes),
+	}
+	if first == 0 {
+		return stats
+	}
+	stats.FirstPacketSendTime = func() *time.Time {
+		t := time.Unix(0, first)
+		return &t
+	}()
+	stats.TotalSeconds = time.Since(*stats.FirstPacketSendTime).Seconds()
+	if stats.TotalSeconds > 0 {
+		stats.SendBytesPerSecond = float64(sendBytes) / stats.TotalSeconds
+		stats.RecvBytesPerSecond = float64(recvBytes) / stats.TotalSeconds
+	}
+	return stats
 }
 
 // GetCount 获取市场内的股票数量
@@ -501,6 +582,40 @@ func (this *Client) GetFinanceInfo(exchange protocol.Exchange, code string) (*pr
 	return result.(*protocol.FinanceInfo), nil
 }
 
+// GetHistoryFinancialList downloads and parses tdxfin/gpcw.txt.
+func (this *Client) GetHistoryFinancialList() ([]historyfinancial.File, error) {
+	data, err := this.GetReportFile(historyfinancial.ListFilename)
+	if err != nil {
+		return nil, err
+	}
+	return historyfinancial.ParseList(data)
+}
+
+// GetHistoryFinancialFile downloads one file from the tdxfin report directory.
+// filename may be a bare name such as gpcw20260822.zip or the full tdxfin path.
+func (this *Client) GetHistoryFinancialFile(filename string) ([]byte, error) {
+	filename = strings.TrimLeft(strings.TrimSpace(filename), "/\\")
+	if filename == "" {
+		return nil, errors.New("历史财务文件名不能为空")
+	}
+	if !strings.HasPrefix(strings.ToLower(filename), "tdxfin/") {
+		filename = "tdxfin/" + filename
+	}
+	return this.GetReportFile(filename)
+}
+
+// GetHistoryFinancial downloads and parses one historical professional-financial file.
+func (this *Client) GetHistoryFinancial(filename string) (*historyfinancial.Dataset, error) {
+	data, err := this.GetHistoryFinancialFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(strings.ToLower(filename), ".zip") {
+		return historyfinancial.ParseZip(data)
+	}
+	return historyfinancial.Parse(data)
+}
+
 // GetBlockFileRaw 下载通达信服务器文件（板块/配置）原始字节，分块拉取后拼接。
 // 适用于二进制板块文件(block*.dat)与文本配置(tdxhy.cfg 等)。
 func (this *Client) GetBlockFileRaw(file string) ([]byte, error) {
@@ -562,6 +677,36 @@ func (this *Client) GetReportFile(file string) ([]byte, error) {
 		buf = append(buf, info.Data...)
 		start += uint32(len(info.Data))
 		if uint32(len(info.Data)) < chunk {
+			break
+		}
+	}
+	return buf, nil
+}
+
+// GetReportFileBySize downloads a report file when its expected size is known.
+// reporthook is called after each non-empty response with downloaded and total bytes.
+func (this *Client) GetReportFileBySize(file string, filesize uint32, reporthook func(downloaded, total uint32)) ([]byte, error) {
+	const chunk = uint32(0x7530)
+	var buf []byte
+	for start := uint32(0); start < filesize; {
+		n := chunk
+		if filesize-start < n {
+			n = filesize - start
+		}
+		r, err := this.SendFrame(protocol.MBlock.FrameInfo(start, n, file))
+		if err != nil {
+			return nil, err
+		}
+		info, ok := r.(*protocol.BlockInfoResp)
+		if !ok || len(info.Data) == 0 {
+			break
+		}
+		buf = append(buf, info.Data...)
+		start += uint32(len(info.Data))
+		if reporthook != nil {
+			reporthook(start, filesize)
+		}
+		if uint32(len(info.Data)) < n {
 			break
 		}
 	}
@@ -1164,6 +1309,47 @@ func (this *Client) GetKlineDayAll(code string) (*protocol.KlineResp, error) {
 
 func (this *Client) GetKlineDayUntil(code string, f func(k *protocol.Kline) bool) (*protocol.KlineResp, error) {
 	return this.GetKlineUntil(protocol.TypeKlineDay, code, f)
+}
+
+// GetKlineDayRange returns daily K lines whose dates fall in the inclusive range.
+// A zero start or end means that side is unbounded.
+func (this *Client) GetKlineDayRange(code string, start, end time.Time) (protocol.Klines, error) {
+	resp, err := this.GetKlineDayAll(code)
+	if err != nil {
+		return nil, err
+	}
+	result := make(protocol.Klines, 0, len(resp.List))
+	for _, k := range resp.List {
+		if !start.IsZero() && k.Time.Before(start) {
+			continue
+		}
+		if !end.IsZero() && k.Time.After(end) {
+			continue
+		}
+		result = append(result, k)
+	}
+	return result, nil
+}
+
+// GetKData is the date-range convenience API corresponding to pytdx get_k_data.
+// Dates must use YYYY-MM-DD. Empty dates are accepted as open bounds.
+func (this *Client) GetKData(code, startDate, endDate string) (protocol.Klines, error) {
+	var start, end time.Time
+	var err error
+	if strings.TrimSpace(startDate) != "" {
+		start, err = time.ParseInLocation("2006-01-02", startDate, time.Local)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start date %q: %w", startDate, err)
+		}
+	}
+	if strings.TrimSpace(endDate) != "" {
+		end, err = time.ParseInLocation("2006-01-02", endDate, time.Local)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end date %q: %w", endDate, err)
+		}
+		end = end.Add(24*time.Hour - time.Nanosecond)
+	}
+	return this.GetKlineDayRange(code, start, end)
 }
 
 // GetKlineWeek 获取周k线数据

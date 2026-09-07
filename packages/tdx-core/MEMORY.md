@@ -18,6 +18,9 @@
 - `protocol/`：协议帧编解码与数据结构（`model_*.go`、`unit.go`、`frame.go`、`types.go`）。
 - `client.go` / `client_exhq.go`：连接与业务 API。
 - `extend/`：离线数据读取(`local.go`)、行情拉取、爬虫、HTTP server、指标计算(`model_kline.go`)。
+- `extend/historyfinancial/`：历史专业财务 `gpcw*.dat/.zip` 解析与清单解析；网络下载由根包 `Client.GetHistoryFinancial*` 提供，避免子包反向依赖根包。
+- `extend/reader/`：pytdx 风格的本地扩展行情日线、旧式分钟文件、标准板块文件和自定义板块目录 Reader；返回 Go 结构体/切片，不依赖 pandas。
+- `extend/trade/`：独立的 TdxTradeServer HTTP 客户端，支持明文/AES-CBC 传输、查询、下单、撤单等操作；与行情 Client 分离。
 - `lib/`：bse(北交所官网爬虫,已弃用)、gbbq、xorms、zip 工具。
 - `example/`：大量独立示例。
 
@@ -34,6 +37,7 @@
 9. **期货(扩展行情7727)**：`DialExHqDefault` 连通, 走 `client_exhq.go`。合约代码格式=`品种+YYMM`(如 `IF2609`、`A2609`)，`IF00` 等连续/主力代码无效。期货批量行情用 `ExQuoteList(market, 3, 0, n)`(category=3, market: 47中金/60主力期货/30上期/28郑商/29大商/66广期)，返回收/昨结/持仓/量。期货日K用 `ExBars(4, market, code, 0, n)`(扩展行情日K category=4, 与标准行情 Day=9 不同; 时间/价格/持仓/量/结算价全部正确)。`ExInstruments` 分页 start 为全局品种序号(非市场编号), 全市场约14.4万品种, 含通达信商品指数(T001~T032, market=42)。
 10. **`DecodeCode` 通用代码解析**：已泛化支持多市场——A股(6位数字自动补前缀, 行为不变)、港股(5位纯数字如 `00700`/`hk00700`)、美股(纯字母如 `AAPL`/`usBRK.B`, 最长前缀匹配避免 `SHOP` 被误拆为 `sh`+`OP`)、期货(需显式前缀如 `cffIF2609`/`dceA2609`, 裸合约如 `IF2609` 因无法确定交易所而报错提示用前缀)。另支持带点后缀格式 `000001.SZ`/`600000.SH`/`00700.HK`/`AAPL.US`/`IF2609.CFF`(后缀=交易所缩写, 大小写均可; 美股点代码 `BRK.B` 因后缀 B 非交易所而按美股代码解析)。前缀支持小写缩写/大写/中文名(如 `上海600000`)。注意: 标准行情7709的 Frame(model_quote/model_kline 等)只接受 A股 6 位定长代码; 港股/美股/期货实际走扩展行情7727(`ExQuote`/`ExBars` 等), 不经 DecodeCode。
 11. **manage.go `RangeIndexes` 修复(2026-09)**：历史 bug——曾误遍历 `GetETFs()`，已改为 `GetIndexes()`。若外部代码曾依赖错误行为（遍历出 ETF 列表），需注意语义变化。
+12. **pytdx 缺口补齐(2026-09-07)**：根 `Client` 新增 `GetHistoryFinancialList`、`GetHistoryFinancialFile`、`GetHistoryFinancial`、`GetReportFileBySize`、`GetKlineDayRange`、`GetKData`、`GetTrafficStats`、`SendRawFrame`；交易 HTTP API 放在 `extend/trade`，本地文件 API 放在 `extend/reader`。历史财务 DAT 的字段名不在文件内，Reader 保留原始 `[]float32` 字段，不虚构列名。
 
 ## 本地数据文件解析（extend/local.go，参考 pytdx TdxDailyBarReader/TdxLCMinBarReader 官方协议）
 

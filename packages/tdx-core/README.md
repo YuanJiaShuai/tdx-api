@@ -37,6 +37,7 @@
 | 个股统计 / 资金流向    | ✅ 已完成 | `GetTdxStat` `GetTdxStat2`                      |
 | 新股申购           | ✅ 已完成 | `GetXgsg`                                       |
 | 扩展行情(期货/港股/外盘) | ✅ 已完成 | `DialExHq` + `ExQuote` `ExBars` `ExTrade` 等     |
+| 历史财务/本地文件/交易客户端 | ✅ 已补充 | `GetHistoryFinancial*`、`extend/reader`、`extend/trade` |
 
 ---
 
@@ -221,6 +222,26 @@ for _, x := range xgsg {
 ```
 
 > 完整演示见 [`example/DumpReportFile`](example/DumpReportFile)：下载 zhb.zip、解压、解析、板块 id 关联一条龙。
+
+### 历史专业财务数据
+
+`tdxfin/gpcw.txt` 和 `gpcwYYYYMMDD.zip` 可以通过 report-file 协议下载，再用
+`extend/historyfinancial` 解析。DAT 文件只保存字段位置和值，不包含字段名称，
+因此 `Dataset.Records[].Values` 保留原始字段顺序。
+
+```go
+list, _ := c.GetHistoryFinancialList()
+data, _ := c.GetHistoryFinancial(list[0].Filename)
+if row := data.Find("600519"); row != nil {
+	fmt.Println(row.ReportDate, row.Values)
+}
+```
+
+### 本地 Reader 与交易 HTTP 客户端
+
+`extend/reader` 提供标准板块、自定义板块、扩展行情日线和旧式分钟文件读取；
+标准 `.day/.lc1/.lc5` 读取仍可使用 `extend.ReadDay/ReadMinute1/ReadMinute5`。
+真实交易接口独立放在 `extend/trade`，通过 `trade.New` 创建，支持明文或 AES-CBC 传输。
 
 ---
 

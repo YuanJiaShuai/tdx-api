@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { parseConfigJson, summarizeStrategyUniverse } from '../lib/format';
 import { JsonPane } from './JsonPane';
+import { StrategyFactorEditor } from './StrategyFactorEditor';
+import type { StrategyFactorDefinition } from './StrategyFactorEditor';
 import type { AutomationRun, StockPool, Strategy } from '../types';
 
 const { Text } = Typography;
@@ -50,7 +52,7 @@ interface StrategyCoverage {
 export function StrategiesWorkspace() {
   const [items, setItems] = useState<Strategy[]>([]);
   const [pools, setPools] = useState<StockPool[]>([]);
-  const [factors, setFactors] = useState<Array<Record<string, unknown>>>([]);
+  const [factors, setFactors] = useState<StrategyFactorDefinition[]>([]);
   const [selected, setSelected] = useState<Strategy | null>(null);
   const [runOutput, setRunOutput] = useState<unknown>('暂无运行');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -67,7 +69,7 @@ export function StrategiesWorkspace() {
     try {
       const [strategies, factorDefs, stockPools] = await Promise.all([
         apiFetch<Strategy[]>('/api/strategies'),
-        apiFetch<Array<Record<string, unknown>>>('/api/factors'),
+        apiFetch<StrategyFactorDefinition[]>('/api/factors'),
         apiFetch<StockPool[]>('/api/stock-pools')
       ]);
       const nextItems = strategies || [];
@@ -433,7 +435,9 @@ export function StrategiesWorkspace() {
               <small>CONFIG</small>
             </div>
             <div className="strategy-form-grid strategy-form-grid-config">
-              <Form.Item name="config_json" label="JSON 配置" rules={[{ required: true, message: '请输入 JSON 配置' }]}><Input.TextArea rows={14} placeholder={'例如：{"factors":["volume_ratio"],"threshold":1.8}'} /></Form.Item>
+              <Form.Item name="config_json" label="策略因子与运行参数" rules={[{ required: true, message: '请配置策略因子' }]}>
+                <StrategyFactorEditor factors={factors} disabled={Boolean(editing?.readonly)} />
+              </Form.Item>
             </div>
           </section>
           <div className="strategy-form-actions">
