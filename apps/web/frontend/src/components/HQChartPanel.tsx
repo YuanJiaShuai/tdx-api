@@ -8,6 +8,7 @@ interface HQChartPanelProps {
   windows?: Array<Record<string, unknown>>;
   dataWidth?: number;
   className?: string;
+  onReady?: (container: HTMLDivElement | null) => void;
 }
 
 export function HQChartPanel({
@@ -17,7 +18,8 @@ export function HQChartPanel({
   pageSize = 80,
   windows,
   dataWidth,
-  className
+  className,
+  onReady
 }: HQChartPanelProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const isMinuteChart = useMemo(() => String(period).toLowerCase() === 'minute', [period]);
@@ -28,6 +30,7 @@ export function HQChartPanel({
     const api = window.TDXHQChart;
     if (!api?.isAvailable?.()) {
       container.innerHTML = '<div class="chart-empty">HQChart 未加载</div>';
+      onReady?.(null);
       return;
     }
     const render = isMinuteChart && api.renderMinute ? api.renderMinute : api.renderKLine;
@@ -41,8 +44,10 @@ export function HQChartPanel({
     });
     if (!ok) {
       container.innerHTML = '<div class="chart-empty">图表加载失败</div>';
+      onReady?.(null);
       return;
     }
+    onReady?.(container);
     const onResize = () => api.resize?.(container);
     window.addEventListener('resize', onResize);
     onResize();
@@ -50,9 +55,10 @@ export function HQChartPanel({
     return () => {
       window.clearTimeout(resizeTimer);
       window.removeEventListener('resize', onResize);
+      onReady?.(null);
       api.destroy?.(container);
     };
-  }, [count, dataWidth, isMinuteChart, pageSize, period, symbol, windows]);
+  }, [count, dataWidth, isMinuteChart, onReady, pageSize, period, symbol, windows]);
 
   return <div ref={ref} className={className ? `${className} hq-chart-surface` : 'hq-chart-surface'} />;
 }

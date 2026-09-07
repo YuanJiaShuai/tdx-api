@@ -19,6 +19,9 @@ func handleSelectionTracking(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	// The results page should be able to load cached tracking snapshots without
+	// fetching hundreds of K-line histories. POST remains the explicit refresh path.
+	cachedOnly := r.Method == http.MethodGet && (r.URL.Query().Get("cached") == "1" || r.URL.Query().Get("cached") == "true")
 	onlyLatest := r.URL.Query().Get("latest") != "false" && r.URL.Query().Get("latest") != "0"
 	items, err := appStore.ListSelectionResults(r.URL.Query().Get("task_id"), r.URL.Query().Get("formula_id"), r.URL.Query().Get("symbol"), onlyLatest, limit)
 	if err != nil {
@@ -31,6 +34,14 @@ func handleSelectionTracking(w http.ResponseWriter, r *http.Request) {
 	horizons := parseTrackingHorizons(r.URL.Query().Get("horizons"))
 	trackingItems := make([]SelectionTrackingItem, 0, len(items))
 	for _, item := range items {
+		if cachedOnly {
+			tracking := SelectionTracking{}
+			if raw := strings.TrimSpace(item.TrackingJSON); raw != "" {
+				_ = json.Unmarshal([]byte(raw), &tracking)
+			}
+			trackingItems = append(trackingItems, SelectionTrackingItem{Result: item, Tracking: tracking})
+			continue
+		}
 		bars, loadErr := loadTrackingKline(r.Context(), item.Symbol, 800)
 		tracking := SelectionTracking{}
 		if loadErr != nil {

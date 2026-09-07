@@ -293,6 +293,8 @@ func (s *AppStore) migrate() error {
 			result_json TEXT NOT NULL DEFAULT '{}',
 			matched_count INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_automation_runs_started_at ON automation_runs(started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_automation_runs_task_started_at ON automation_runs(task_id, started_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS selection_results (
 			id TEXT PRIMARY KEY,
 			run_id TEXT NOT NULL,
@@ -307,6 +309,10 @@ func (s *AppStore) migrate() error {
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_created_at ON selection_results(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_run_created_at ON selection_results(run_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_task_created_at ON selection_results(task_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula_created_at ON selection_results(formula_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol_created_at ON selection_results(symbol, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
 		`CREATE TABLE IF NOT EXISTS decision_notes (

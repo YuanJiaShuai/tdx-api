@@ -1,148 +1,143 @@
-import { Button, Card, Input, InputNumber, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Empty, Input, Modal, Segmented, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { CalendarOutlined, ClockCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import dayjs, { Dayjs } from 'dayjs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
-import { HQChartPanel } from './HQChartPanel';
-import { JsonPane } from './JsonPane';
-import type { DailyReviewResponse, SelectionHorizon, SelectionResult, SelectionTrackingResponse } from '../types';
+import type { AutomationRun, SelectionHorizon, SelectionResult, SelectionTracking, SelectionTrackingResponse } from '../types';
 
 const { Text } = Typography;
+const selectionTaskTypes = new Set(['stock_selection', 'strategy_selection']);
+
+interface SelectionRunRecord { run: AutomationRun; results: SelectionResult[]; }
+interface RunDayGroup { date: string; runs: SelectionRunRecord[]; }
+
+function eventDate(value?: string): Dayjs | null {
+  const date = value ? dayjs(value) : null;
+  return date?.isValid() ? date : null;
+}
+
+function runStart(run: AutomationRun) { return eventDate(run.started_at) || eventDate(run.finished_at); }
+function runDateKey(run: AutomationRun) { return runStart(run)?.format('YYYY-MM-DD') || 'unknown'; }
+function formatRunTime(run: AutomationRun) { return runStart(run)?.format('HH:mm:ss') || '--:--'; }
+function formatRunDate(date: string) { return date === 'unknown' ? '未知日期' : dayjs(date).format('YYYY年MM月DD日'); }
+function runStatus(status?: string) {
+  if (status === 'success') return { label: '已完成', color: 'success' } as const;
+  if (status === 'failed') return { label: '失败', color: 'error' } as const;
+  if (status === 'running') return { label: '执行中', color: 'processing' } as const;
+  return { label: status || '未知', color: 'default' } as const;
+}
+function runTypeLabel(type?: string) { return type === 'strategy_selection' ? '策略选股' : '公式选股'; }
+function parseTracking(result: SelectionResult): SelectionTracking {
+  if (!result.tracking_json) return {};
+  try { const parsed = JSON.parse(result.tracking_json) as SelectionTracking; return parsed && typeof parsed === 'object' ? parsed : {}; } catch { return {}; }
+}
+function formatPct(value?: number) { return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--'; }
+function trackingLabel(value?: SelectionHorizon) { if (!value || value.status !== 'complete') return '待观察'; return value.success ? '达标' : '未达标'; }
+function trackingColor(value?: SelectionHorizon) { if (!value || value.status !== 'complete') return 'default'; return value.success ? 'success' : 'error'; }
+
+function buildRunRecords(runs: AutomationRun[], results: SelectionResult[]) {
+  const resultMap = new Map<string, SelectionResult[]>();
+  results.forEach((result) => resultMap.set(result.run_id, [...(resultMap.get(result.run_id) || []), result]));
+  const runMap = new Map<string, AutomationRun>();
+  runs.filter((run) => selectionTaskTypes.has(run.task_type)).forEach((run) => runMap.set(run.id, run));
+  resultMap.forEach((items, runID) => {
+    if (runMap.has(runID)) return;
+    const first = items[0];
+    runMap.set(runID, { id: runID, task_id: first.task_id, task_name: first.task_name, task_type: 'stock_selection', status: 'success', started_at: first.created_at, finished_at: first.created_at, matched_count: items.length });
+  });
+  return [...runMap.values()].map((run) => ({ run, results: [...(resultMap.get(run.id) || [])].sort((a, b) => a.symbol.localeCompare(b.symbol)) })).sort((left, right) => (right.run.started_at || right.run.finished_at || '').localeCompare(left.run.started_at || left.run.finished_at || ''));
+}
 
 export function SelectionResultsWorkspace() {
-  const [results, setResults] = useState<SelectionResult[]>([]);
-  const [review, setReview] = useState<DailyReviewResponse>({});
-  const [selected, setSelected] = useState<SelectionResult | null>(null);
-  const [formulaID, setFormulaID] = useState('');
-  const [symbol, setSymbol] = useState('');
-  const [latest, setLatest] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [records, setRecords] = useState<SelectionRunRecord[]>([]);
   const [tracking, setTracking] = useState<SelectionTrackingResponse>({ items: [] });
-  const [targetReturn, setTargetReturn] = useState(3);
-  const [drawdownLimit, setDrawdownLimit] = useState(5);
+  const [selectedRun, setSelectedRun] = useState<SelectionRunRecord | null>(null);
+  const [selectedResult, setSelectedResult] = useState<SelectionResult | null>(null);
+  const [keyword, setKeyword] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [view, setView] = useState<'timeline' | 'calendar'>('timeline');
+  const [loading, setLoading] = useState(false);
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [resultModalOpen, setResultModalOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: '200' });
-      if (formulaID) params.set('formula_id', formulaID);
-      if (symbol) params.set('symbol', symbol);
-      if (latest) params.set('latest', latest);
-      const trackingParams = new URLSearchParams(params);
-      trackingParams.set('target_return', String(targetReturn));
-      trackingParams.set('drawdown_limit', String(drawdownLimit));
-      trackingParams.set('latest', latest || '0');
-      const [items, daily, tracked] = await Promise.all([
-        apiFetch<SelectionResult[]>(`/api/selection-results?${params.toString()}`),
-        apiFetch<DailyReviewResponse>('/api/daily-review?limit=200'),
-        apiFetch<SelectionTrackingResponse>(`/api/selection-results/tracking?${trackingParams.toString()}`)
+      const [runs, results, tracked] = await Promise.all([
+        apiFetch<AutomationRun[]>('/api/automations/runs?limit=200'),
+        apiFetch<SelectionResult[]>('/api/selection-results?limit=500'),
+        apiFetch<SelectionTrackingResponse>('/api/selection-results/tracking?latest=1&limit=200&cached=1')
       ]);
-      setResults(items || []);
-      setReview(daily || {});
+      const next = buildRunRecords(runs || [], results || []);
+      setRecords(next);
       setTracking(tracked || { items: [] });
-      setSelected((current) => (current ? items.find((item) => item.id === current.id) || items[0] || null : items[0] || null));
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '选股结果加载失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [drawdownLimit, formulaID, latest, symbol, targetReturn]);
-
-  useEffect(() => {
-    load();
+      setSelectedRun((current) => (current ? next.find((item) => item.run.id === current.run.id) || next[0] || null : next[0] || null));
+    } catch (error) { message.error(error instanceof Error ? error.message : '选股执行记录加载失败'); } finally { setLoading(false); }
   }, []);
 
-  const active = selected || results[0] || null;
-  const reviewItem = useMemo(() => review.items?.find((item) => item.result.id === active?.id), [active, review.items]);
+  const refreshTracking = useCallback(async () => {
+    setTrackingLoading(true);
+    try { await apiFetch('/api/selection-results/tracking?latest=0&limit=500', { method: 'POST' }); message.success('历史跟踪已刷新'); await load(); }
+    catch (error) { message.error(error instanceof Error ? error.message : '历史跟踪刷新失败'); }
+    finally { setTrackingLoading(false); }
+  }, [load]);
+
+  useEffect(() => { load(); }, [load]);
   const trackingMap = useMemo(() => new Map((tracking.items || []).map((item) => [item.result.id, item.tracking])), [tracking.items]);
-  const formatPct = (value?: number) => value === undefined ? '--' : `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-  const horizon = (item: SelectionResult | null, key: string): SelectionHorizon | undefined => item ? trackingMap.get(item.id)?.horizons?.[key] : undefined;
-  const horizonLabel = (value?: SelectionHorizon) => !value || value.status !== 'complete' ? '待观察' : value.success ? '达标' : '未达标';
-  const horizonColor = (value?: SelectionHorizon) => !value || value.status !== 'complete' ? 'default' : value.success ? 'success' : 'error';
-  const summary = tracking.summary?.horizons || {};
+  const filteredRecords = useMemo(() => {
+    const query = keyword.trim().toLowerCase();
+    return records.filter(({ run, results }) => {
+      if (typeFilter !== 'all' && run.task_type !== typeFilter) return false;
+      if (!query) return true;
+      return [run.task_name, run.id, ...results.map((item) => `${item.symbol} ${item.formula_name}`)].some((value) => value.toLowerCase().includes(query));
+    });
+  }, [keyword, records, typeFilter]);
+  const groups = useMemo<RunDayGroup[]>(() => {
+    const grouped = new Map<string, SelectionRunRecord[]>();
+    filteredRecords.forEach((record) => { const date = runDateKey(record.run); grouped.set(date, [...(grouped.get(date) || []), record]); });
+    return [...grouped.entries()].map(([date, runs]) => ({ date, runs }));
+  }, [filteredRecords]);
+  const summary = useMemo(() => ({ total: filteredRecords.length, success: filteredRecords.filter(({ run }) => run.status === 'success').length, matched: filteredRecords.reduce((sum, { run, results }) => sum + (run.matched_count ?? results.length), 0), days: groups.length }), [filteredRecords, groups.length]);
+
+  function openRun(record: SelectionRunRecord) { setSelectedRun(record); setSelectedResult(record.results[0] || null); setResultModalOpen(true); }
+  function getTracking(result: SelectionResult) { return trackingMap.get(result.id) || parseTracking(result); }
+  const modalRun = selectedRun?.run;
+  const modalResults = selectedRun?.results || [];
+  const modalColumns = [
+    { title: '代码', dataIndex: 'symbol', width: 110, render: (value: string) => <strong>{value}</strong> },
+    { title: '公式', dataIndex: 'formula_name', width: 180 },
+    { title: '最新值', dataIndex: 'latest', width: 110, render: (value: number) => value ? value.toFixed(2) : '--' },
+    ...[1, 5, 10].map((days) => ({
+      title: `D${days}`,
+      width: 110,
+      render: (_value: unknown, record: SelectionResult) => {
+        const value = getTracking(record).horizons?.[`d${days}`];
+        return <Tag color={trackingColor(value)}>{trackingLabel(value)}{value?.status === 'complete' ? ` ${formatPct(value.close_return)}` : ''}</Tag>;
+      }
+    }))
+  ];
 
   return (
-    <div className="selection-layout">
-      <Card className="work-card selection-list-card" title="选股结果中心" extra={<Button onClick={load}>刷新跟踪</Button>}>
-        <Space wrap className="toolbar-row">
-          <Input value={formulaID} onChange={(event) => setFormulaID(event.target.value)} placeholder="formula_id" />
-          <Input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="按股票代码筛选" />
-          <Select
-            value={latest || undefined}
-            onChange={setLatest}
-            options={[
-              { value: '', label: '全部结果' },
-              { value: '1', label: '最近一次运行' }
-            ]}
-            style={{ width: 150 }}
-          />
-          <InputNumber min={0.1} max={100} step={0.5} value={targetReturn} onChange={(value) => setTargetReturn(value || 3)} addonBefore="目标收益" addonAfter="%" />
-          <InputNumber min={0.1} max={100} step={0.5} value={drawdownLimit} onChange={(value) => setDrawdownLimit(value || 5)} addonBefore="最大回撤" addonAfter="%" />
-          <Button type="primary" onClick={load}>查询</Button>
-        </Space>
-        <div className="selection-tracking-strip">
-          <div><Text type="secondary">历史验证样本</Text><strong>{tracking.summary?.total ?? results.length}</strong></div>
-          {[1, 5, 10].map((days) => {
-            const item = summary[`d${days}`];
-            return <div key={days}><Text type="secondary">D{days} 达标率</Text><strong>{item?.completed ? `${item.success_rate?.toFixed(2)}%` : '--'}</strong><span>{item?.completed ? `平均 ${formatPct(item.average_close_return)}` : '样本不足'}</span></div>;
-          })}
-        </div>
-        <Table
-          size="small"
-          loading={loading}
-          rowKey="id"
-          dataSource={results}
-          pagination={{ pageSize: 12, size: 'small' }}
-          onRow={(record) => ({ onClick: () => setSelected(record) })}
-          rowClassName={(record) => (record.id === active?.id ? 'row-active' : '')}
-          columns={[
-            { title: '代码', dataIndex: 'symbol' },
-            { title: '公式', dataIndex: 'formula_name' },
-            { title: '任务', dataIndex: 'task_name' },
-            { title: '最新值', dataIndex: 'latest', render: (value: number) => value ? value.toFixed(2) : '--' },
-            { title: 'D1', render: (_: unknown, record: SelectionResult) => { const value = horizon(record, 'd1'); return <Tag color={horizonColor(value)}>{horizonLabel(value)}{value?.status === 'complete' ? ` ${formatPct(value.close_return)}` : ''}</Tag>; } },
-            { title: 'D5', render: (_: unknown, record: SelectionResult) => { const value = horizon(record, 'd5'); return <Tag color={horizonColor(value)}>{horizonLabel(value)}{value?.status === 'complete' ? ` ${formatPct(value.close_return)}` : ''}</Tag>; } },
-            { title: 'D10', render: (_: unknown, record: SelectionResult) => { const value = horizon(record, 'd10'); return <Tag color={horizonColor(value)}>{horizonLabel(value)}{value?.status === 'complete' ? ` ${formatPct(value.close_return)}` : ''}</Tag>; } },
-            { title: '时间', dataIndex: 'created_at' }
-          ]}
-        />
+    <div className="selection-results-workspace">
+      <Card className="work-card selection-results-overview" title={<div className="selection-results-title"><div><span>选股执行记录</span><Text type="secondary">每次执行一条记录，点击查看本次全部标的</Text></div><small>SELECTION RUNS</small></div>} extra={<Space><Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新记录</Button><Button onClick={refreshTracking} loading={trackingLoading}>刷新跟踪</Button></Space>}>
+        <div className="selection-results-summary"><div><span>执行次数</span><strong>{summary.total}</strong><small>{summary.days} 个交易日</small></div><div><span>已完成</span><strong>{summary.success}</strong><small>选股运行</small></div><div><span>累计命中</span><strong>{summary.matched}</strong><small>只标的</small></div><div className="selection-results-summary-note"><ClockCircleOutlined /><div><strong>运行记录优先</strong><small>命中为 0 的执行也会保留</small></div></div></div>
       </Card>
 
-      <Card className="work-card selection-detail-card" title={active ? `${active.symbol} 命中详情` : '命中详情'}>
-        {active ? (
-          <>
-            <Space wrap className="toolbar-row">
-              <Button
-                type="primary"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(active.symbol);
-                  message.success(`已复制 ${active.symbol}`);
-                }}
-              >
-                复制代码
-              </Button>
-            </Space>
-            <div className="detail-grid">
-              <HQChartPanel symbol={active.symbol} period="day" count={260} pageSize={80} />
-              <JsonPane value={JSON.parse(active.detail_json || '{}')} />
-            </div>
-            <Text type="secondary">
-              {active.formula_name} · {active.task_name} · {active.created_at}
-            </Text>
-            <div className="selection-tracking-detail">
-              <Text strong>历史前向表现</Text>
-              <Text type="secondary">基于信号后真实交易日K线，非未来成功概率</Text>
-              <div className="tracking-horizon-grid">
-                {[1, 5, 10].map((days) => {
-                  const value = horizon(active, `d${days}`);
-                  return <div key={days}><Text type="secondary">D{days}</Text><Tag color={horizonColor(value)}>{horizonLabel(value)}</Tag><span>收盘 {formatPct(value?.close_return)}</span><span>最高 {formatPct(value?.max_gain)}</span><span>回撤 {formatPct(value?.max_drawdown)}</span></div>;
-                })}
-              </div>
-            </div>
-            {reviewItem ? <JsonPane value={reviewItem} /> : null}
-          </>
-        ) : (
-          <Text type="secondary">暂无命中结果</Text>
-        )}
-      </Card>
+      <div className="selection-results-toolbar"><Space wrap><Input allowClear prefix={<SearchOutlined />} value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索任务、公式或股票代码" /><Select value={typeFilter} onChange={setTypeFilter} options={[{ value: 'all', label: '全部选股类型' }, { value: 'stock_selection', label: '公式选股' }, { value: 'strategy_selection', label: '策略选股' }]} /></Space><Segmented value={view} onChange={(value) => setView(value as 'timeline' | 'calendar')} options={[{ value: 'timeline', label: '时间线', icon: <ClockCircleOutlined /> }, { value: 'calendar', label: '日历', icon: <CalendarOutlined /> }]} /></div>
+
+      {view === 'timeline' ? (
+        <Card className="work-card selection-runs-card" title={<div className="selection-results-title"><div><span>执行时间线</span><Text type="secondary">按日期查看每次选股运行</Text></div><small>TIMELINE</small></div>}>
+          {groups.length ? <div className="selection-timeline">{groups.map((group) => <div className="selection-day" key={group.date}><div className="selection-day-marker"><strong>{group.date === 'unknown' ? '--' : dayjs(group.date).format('DD')}</strong><span>{group.date === 'unknown' ? '未知日期' : dayjs(group.date).format('MM月')}</span></div><div className="selection-day-runs">{group.runs.map((record) => { const status = runStatus(record.run.status); return <button type="button" className={`selection-run-row ${selectedRun?.run.id === record.run.id ? 'is-selected' : ''}`} key={record.run.id} onClick={() => openRun(record)}><span className="selection-run-time">{formatRunTime(record.run)}</span><span className="selection-run-main"><strong>{record.run.task_name || '未命名选股任务'}</strong><small>{runTypeLabel(record.run.task_type)} · {record.results.length ? `${record.results.length} 只命中` : '无命中标的'}</small></span><span className="selection-run-meta"><Tag color={status.color}>{status.label}</Tag><em>{record.run.id.slice(0, 8)}</em></span></button>; })}</div></div>)}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前筛选没有选股执行记录" />}
+        </Card>
+      ) : (
+        <Card className="work-card selection-runs-card selection-calendar-card" title={<div className="selection-results-title"><div><span>选股日历</span><Text type="secondary">按日期查看执行记录</Text></div><small>CALENDAR</small></div>}>
+          {groups.length ? <div className="selection-calendar-grid">{groups.map((group) => <section className="selection-calendar-day" key={group.date}><header><div><strong>{group.date === 'unknown' ? '--' : dayjs(group.date).format('MM/DD')}</strong><span>{formatRunDate(group.date)}</span></div><em>{group.runs.length} 次执行</em></header><div>{group.runs.map((record) => { const status = runStatus(record.run.status); return <button type="button" className={`selection-calendar-run ${status.color}`} key={record.run.id} onClick={() => openRun(record)}><span>{formatRunTime(record.run)}</span><strong>{record.run.task_name || '未命名选股任务'}</strong><small>{record.results.length} 只命中 · {status.label}</small></button>; })}</div></section>)}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前筛选没有选股执行记录" />}
+        </Card>
+      )}
+
+      <Modal open={resultModalOpen} onCancel={() => setResultModalOpen(false)} footer={null} width={940} centered destroyOnHidden className="app-themed-modal selection-run-modal" title={<div className="quote-dialog-title selection-run-dialog-title"><div><strong>{modalRun?.task_name || '选股执行结果'}</strong><span>{modalRun ? `${runTypeLabel(modalRun.task_type)} · ${formatRunDate(runDateKey(modalRun))} ${formatRunTime(modalRun)}` : '本次执行的全部命中标的'}</span></div><small>RUN RESULTS</small></div>}>
+        {modalRun ? <div className="selection-run-modal-content"><div className="selection-run-facts"><div><span>执行状态</span><strong><Tag color={runStatus(modalRun.status).color}>{runStatus(modalRun.status).label}</Tag></strong></div><div><span>命中数量</span><strong>{modalRun.matched_count ?? modalResults.length} 只</strong></div><div><span>开始时间</span><strong>{modalRun.started_at || '--'}</strong></div><div><span>结束时间</span><strong>{modalRun.finished_at || '--'}</strong></div></div><Table<SelectionResult> size="small" rowKey="id" dataSource={modalResults} pagination={{ pageSize: 12, size: 'small' }} onRow={(record) => ({ onClick: () => setSelectedResult(record) })} rowClassName={(record) => (record.id === selectedResult?.id ? 'row-active' : '')} locale={{ emptyText: '本次执行没有命中标的' }} columns={modalColumns} />{selectedResult ? <div className="selection-run-result-detail"><Text type="secondary">当前标的</Text><strong>{selectedResult.symbol}</strong><span>{selectedResult.formula_name} · 信号时间 {selectedResult.created_at}</span></div> : null}</div> : null}
+      </Modal>
     </div>
   );
 }

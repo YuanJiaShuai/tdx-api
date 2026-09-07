@@ -1,9 +1,11 @@
-import { Button, Card, Empty, Input, Select, Space, Tag, Typography, message } from 'antd';
-import { CheckCircleOutlined, LineChartOutlined, ReloadOutlined, SearchOutlined, StarOutlined } from '@ant-design/icons';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, Card, Checkbox, Empty, Input, Select, Space, Tag, Typography, message } from 'antd';
+import { CheckCircleOutlined, ClearOutlined, EditOutlined, ExperimentOutlined, LineChartOutlined, ReloadOutlined, SearchOutlined, SettingOutlined, StarOutlined } from '@ant-design/icons';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { formatFormulaArgs, parseFormulaArgs } from '../lib/formula';
 import { formatAmount, formatPercent, formatPrice, formatSigned, normalizeSymbol, priceFromMilli } from '../lib/format';
-import type { Quote } from '../types';
+import type { Formula, FormulaArg, FormulaRunResponse, Quote } from '../types';
+import { FormulaManager } from './FormulaManager';
 import { HQChartPanel } from './HQChartPanel';
 
 const { Text } = Typography;
@@ -11,6 +13,18 @@ const { Text } = Typography;
 type Period = 'day' | 'week' | 'month' | 'minute5' | 'minute15' | 'minute30' | 'hour';
 type IndicatorKey = 'ma' | 'ema' | 'boll' | 'macd' | 'kdj' | 'rsi' | 'obv';
 type Signal = 'bullish' | 'bearish' | 'neutral' | 'oscillating';
+type ApplyMode = 'overlay' | 'change' | 'new-window';
+
+interface AppliedFormulaOperation {
+  formulaID: string;
+  formulaName: string;
+  script: string;
+  args: FormulaArg[];
+  mode: ApplyMode;
+  windowIndex: number;
+  independentY: boolean;
+  excludeY: boolean;
+}
 
 interface SearchResult {
   code: string;
@@ -197,7 +211,63 @@ function chartWindows(indicators: Record<IndicatorKey, boolean>) {
   return [{ Index: mainWindow }, { Index: 'VOL' }, ...subWindows];
 }
 
+function getChartWindowCount(chart: Record<string, unknown>, fallback: number) {
+  const nested = chart.JSChartContainer as { Frame?: { SubFrame?: unknown[] } } | undefined;
+  const direct = chart.Frame as { SubFrame?: unknown[] } | undefined;
+  return nested?.Frame?.SubFrame?.length || direct?.SubFrame?.length || fallback;
+}
+
+function formulaErrorText(error: unknown) {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    if (record.Description || record.message) return String(record.Description || record.message);
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return String(error);
+    }
+  }
+  return '未知错误';
+}
+
+function performFormulaOperation(chart: Record<string, unknown>, operation: AppliedFormulaOperation) {
+  const indexInfo = {
+    Name: operation.formulaName || '自定义公式',
+    Script: operation.script,
+    Args: operation.args,
+    YAxis: { ExcludeValue: operation.excludeY }
+  };
+
+  if (operation.mode === 'change') {
+    const changeScriptIndex = chart.ChangeScriptIndex as undefined | ((index: number, info: unknown) => void);
+    if (!changeScriptIndex) throw new Error('当前 HQChart 版本不支持 ChangeScriptIndex');
+    changeScriptIndex.call(chart, operation.windowIndex, indexInfo);
+    return;
+  }
+
+  if (operation.mode === 'new-window') {
+    const addScriptIndexWindow = chart.AddScriptIndexWindow as undefined | ((info: unknown, options: unknown) => void);
+    if (!addScriptIndexWindow) throw new Error('当前 HQChart 版本不支持 AddScriptIndexWindow');
+    addScriptIndexWindow.call(chart, indexInfo, { Draw: true });
+    return;
+  }
+
+  const addOverlayIndex = chart.AddOverlayIndex as undefined | ((options: unknown) => void);
+  if (!addOverlayIndex) throw new Error('当前 HQChart 版本不支持 AddOverlayIndex');
+  addOverlayIndex.call(chart, {
+    Script: indexInfo.Script,
+    WindowIndex: operation.windowIndex,
+    Name: indexInfo.Name,
+    Args: indexInfo.Args,
+    IsShareY: !operation.independentY,
+    YAxis: operation.independentY ? undefined : indexInfo.YAxis
+  });
+}
+
 export function KlineAnalysisWorkspace() {
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const appliedFormulaOperationsRef = useRef<AppliedFormulaOperation[]>([]);
   const [symbol, setSymbol] = useState('000001');
   const [symbolName, setSymbolName] = useState('上证指数');
   const [searchValue, setSearchValue] = useState('');
@@ -211,6 +281,39 @@ export function KlineAnalysisWorkspace() {
   const [hikyuuIndicator, setHikyuuIndicator] = useState<Record<string, unknown> | null>(null);
   const [hikyuuIndicatorLoading, setHikyuuIndicatorLoading] = useState(false);
   const [hikyuuIndicatorName, setHikyuuIndicatorName] = useState('macd');
+  const [formulas, setFormulas] = useState<Formula[]>([]);
+  const [selectedFormulaID, setSelectedFormulaID] = useState('');
+  const [loadingFormulas, setLoadingFormulas] = useState(false);
+  const [formulaTesting, setFormulaTesting] = useState(false);
+  const [formulaApplying, setFormulaApplying] = useState(false);
+  const [formulaStatus, setFormulaStatus] = useState('等待图表就绪');
+  const [testOutput, setTestOutput] = useState('');
+  const [formulaDrawerOpen, setFormulaDrawerOpen] = useState(false);
+  const [editingFormula, setEditingFormula] = useState<Formula>();
+  const [applyMode, setApplyMode] = useState<ApplyMode>('overlay');
+  const [windowIndex, setWindowIndex] = useState(0);
+  const [chartWindowCount, setChartWindowCount] = useState(2);
+  const [independentY, setIndependentY] = useState(false);
+  const [excludeY, setExcludeY] = useState(false);
+  const [appliedFormulaCount, setAppliedFormulaCount] = useState(0);
+
+  const selectedFormula = useMemo(
+    () => formulas.find((item) => item.id === selectedFormulaID),
+    [formulas, selectedFormulaID]
+  );
+
+  const loadFormulas = useCallback(async () => {
+    setLoadingFormulas(true);
+    try {
+      const items = await apiFetch<Formula[]>('/api/formulas');
+      setFormulas(items);
+      setSelectedFormulaID((current) => items.some((item) => item.id === current) ? current : items[0]?.id || '');
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : '公式列表加载失败');
+    } finally {
+      setLoadingFormulas(false);
+    }
+  }, []);
 
   const loadData = useCallback(async (nextSymbol = symbol, nextPeriod = period) => {
     const normalized = normalizeSymbol(nextSymbol);
@@ -240,6 +343,10 @@ export function KlineAnalysisWorkspace() {
   useEffect(() => {
     void loadData('000001', 'day');
   }, []);
+
+  useEffect(() => {
+    void loadFormulas();
+  }, [loadFormulas]);
 
   useEffect(() => {
     const value = searchValue.trim();
@@ -288,6 +395,143 @@ export function KlineAnalysisWorkspace() {
   const signals = useMemo(() => indicatorSignal(indicators, history), [history, indicators]);
   const windows = useMemo(() => chartWindows(indicators), [indicators]);
   const priceTone = change > 0 ? 'market-up' : change < 0 ? 'market-down' : 'market-muted';
+  const formulaWindowOptions = useMemo(
+    () => Array.from({ length: Math.max(2, chartWindowCount) }, (_, index) => ({
+      value: index,
+      label: index === 0 ? '主图' : `副图${index}`
+    })),
+    [chartWindowCount]
+  );
+
+  useEffect(() => {
+    setWindowIndex((current) => Math.min(current, Math.max(0, chartWindowCount - 1)));
+  }, [chartWindowCount]);
+
+  const handleChartReady = useCallback((container: HTMLDivElement | null) => {
+    chartContainerRef.current = container;
+    if (!container) return;
+    const chart = window.TDXHQChart?.getChart?.(container) as Record<string, unknown> | null;
+    if (!chart) {
+      setFormulaStatus('图表实例未就绪');
+      return;
+    }
+
+    let latestScriptError = '';
+    chart.ScriptErrorCallback = (error: unknown) => {
+      const detail = formulaErrorText(error);
+      latestScriptError = detail;
+      setFormulaStatus(`公式执行失败：${detail}`);
+      message.error(`公式执行失败：${detail}`);
+    };
+
+    try {
+      appliedFormulaOperationsRef.current.forEach((operation) => {
+        const availableWindows = getChartWindowCount(chart, 2);
+        const resolvedOperation = operation.mode === 'new-window' ? operation : {
+          ...operation,
+          windowIndex: Math.min(operation.windowIndex, Math.max(0, availableWindows - 1))
+        };
+        performFormulaOperation(chart, resolvedOperation);
+      });
+      setChartWindowCount(getChartWindowCount(chart, 2));
+      if (!latestScriptError) {
+        setFormulaStatus(appliedFormulaOperationsRef.current.length
+          ? `已恢复 ${appliedFormulaOperationsRef.current.length} 个公式操作`
+          : '图表已就绪');
+      }
+    } catch (error) {
+      setFormulaStatus(`公式恢复失败：${formulaErrorText(error)}`);
+    }
+  }, []);
+
+  async function testFormula(formula = selectedFormula, showSuccess = true) {
+    if (!formula) {
+      message.warning('请先选择一个公式');
+      return undefined;
+    }
+    setFormulaTesting(true);
+    try {
+      const data = await apiFetch<FormulaRunResponse>(`/api/formulas/${formula.id}/test`, {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol,
+          period,
+          calc_count: 500,
+          out_count: 20
+        })
+      });
+      setTestOutput(JSON.stringify(data, null, 2));
+      if (showSuccess) message.success(`测试完成 · ${data.engine || 'engine'} ${data.tick_ms || 0}ms`);
+      return data;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '公式测试失败';
+      setTestOutput(text);
+      message.error(text);
+      return undefined;
+    } finally {
+      setFormulaTesting(false);
+    }
+  }
+
+  async function applyFormula() {
+    if (!selectedFormula) {
+      message.warning('请先选择一个公式');
+      return;
+    }
+    if (!selectedFormula.script.trim()) {
+      message.warning('公式脚本为空，无法应用');
+      return;
+    }
+    const operation: AppliedFormulaOperation = {
+      formulaID: selectedFormula.id,
+      formulaName: selectedFormula.name,
+      script: selectedFormula.script,
+      args: parseFormulaArgs(selectedFormula),
+      mode: applyMode,
+      windowIndex,
+      independentY,
+      excludeY
+    };
+
+    setFormulaApplying(true);
+    try {
+      const testResult = await testFormula(selectedFormula, false);
+      if (!testResult) {
+        setFormulaStatus('公式测试失败，未应用到图表');
+        return;
+      }
+      const container = chartContainerRef.current;
+      const chart = container ? window.TDXHQChart?.getChart?.(container) as Record<string, unknown> | null : null;
+      if (!chart) {
+        setChartVersion((value) => value + 1);
+        message.warning('图表初始化中，请稍后再应用公式');
+        return;
+      }
+      performFormulaOperation(chart, operation);
+      appliedFormulaOperationsRef.current = [...appliedFormulaOperationsRef.current, operation];
+      setAppliedFormulaCount(appliedFormulaOperationsRef.current.length);
+      setChartWindowCount(getChartWindowCount(chart, windows.length));
+      const modeLabel = applyMode === 'change' ? '切换窗口' : applyMode === 'new-window' ? '新建副图' : '叠加指标';
+      setFormulaStatus(`已${modeLabel}：${selectedFormula.name}`);
+      message.success(`已${modeLabel}：${selectedFormula.name}`);
+    } catch (error) {
+      const text = formulaErrorText(error);
+      setFormulaStatus(`公式应用失败：${text}`);
+      message.error(text);
+    } finally {
+      setFormulaApplying(false);
+    }
+  }
+
+  function clearOverlay() {
+    appliedFormulaOperationsRef.current = [];
+    setAppliedFormulaCount(0);
+    setTestOutput('');
+    setFormulaStatus('未叠加公式');
+    setChartWindowCount(windows.length);
+    setWindowIndex(0);
+    setChartVersion((value) => value + 1);
+  }
 
   const selectResult = (result: SearchResult) => {
     setSymbolName(result.name);
@@ -427,6 +671,7 @@ export function KlineAnalysisWorkspace() {
                 pageSize={80}
                 windows={windows}
                 className="kline-analysis-chart"
+                onReady={handleChartReady}
               />
             ) : (
               <div className="kline-chart-empty">
@@ -442,7 +687,101 @@ export function KlineAnalysisWorkspace() {
             {hikyuuIndicator ? <Text type="secondary">研究引擎：{String(hikyuuIndicator.meta && typeof hikyuuIndicator.meta === 'object' ? (hikyuuIndicator.meta as Record<string, unknown>).calculation_engine : '--')} · 修订 {String(hikyuuIndicator.meta && typeof hikyuuIndicator.meta === 'object' ? (hikyuuIndicator.meta as Record<string, unknown>).data_revision : '--')}</Text> : null}
           </div>
         </Card>
+
+        <Card
+          className="work-card kline-formula-card"
+          title={
+            <Space size={8}>
+              <span>公式叠加</span>
+              {appliedFormulaCount ? <Tag color="gold">{appliedFormulaCount}</Tag> : null}
+            </Space>
+          }
+          extra={
+            <Button
+              type="text"
+              size="small"
+              icon={<SettingOutlined />}
+              onClick={() => {
+                setEditingFormula(undefined);
+                setFormulaDrawerOpen(true);
+              }}
+            >
+              管理
+            </Button>
+          }
+        >
+          <Space direction="vertical" size={12} className="kline-formula-panel">
+            <Select
+              value={selectedFormulaID || undefined}
+              loading={loadingFormulas}
+              placeholder="选择公式"
+              options={formulas.map((formula) => ({ value: formula.id, label: formula.name }))}
+              onChange={setSelectedFormulaID}
+            />
+            <Button
+              block
+              icon={<EditOutlined />}
+              disabled={!selectedFormula}
+              onClick={() => {
+                setEditingFormula(selectedFormula);
+                setFormulaDrawerOpen(true);
+              }}
+            >
+              编辑所选
+            </Button>
+            <div className="kline-formula-selects">
+              <Select
+                value={applyMode}
+                onChange={setApplyMode}
+                options={[
+                  { value: 'overlay', label: '叠加指标' },
+                  { value: 'change', label: '切换当前窗口' },
+                  { value: 'new-window', label: '新建副图' }
+                ]}
+              />
+              <Select
+                value={windowIndex}
+                disabled={applyMode === 'new-window'}
+                onChange={setWindowIndex}
+                options={formulaWindowOptions}
+              />
+            </div>
+            <Checkbox checked={independentY} onChange={(event) => setIndependentY(event.target.checked)}>
+              使用独立坐标
+            </Checkbox>
+            <Checkbox checked={excludeY} onChange={(event) => setExcludeY(event.target.checked)}>
+              不参与 Y 轴计算
+            </Checkbox>
+            <div className="kline-formula-meta">
+              <span>参数</span>
+              <code>{formatFormulaArgs(selectedFormula)}</code>
+            </div>
+            <div className="kline-formula-actions">
+              <Button icon={<ExperimentOutlined />} loading={formulaTesting} onClick={() => void testFormula()}>
+                测试
+              </Button>
+              <Button type="primary" icon={<LineChartOutlined />} loading={formulaApplying} onClick={() => void applyFormula()}>
+                应用
+              </Button>
+              <Button icon={<ClearOutlined />} disabled={!appliedFormulaCount} onClick={clearOverlay}>
+                清除
+              </Button>
+            </div>
+            <div className="kline-formula-status" aria-live="polite">{formulaStatus}</div>
+            <pre className="kline-formula-output">{testOutput || '测试结果'}</pre>
+          </Space>
+        </Card>
       </div>
+
+      <FormulaManager
+        open={formulaDrawerOpen}
+        formulas={formulas}
+        loading={loadingFormulas}
+        editingFormula={editingFormula}
+        onClose={() => setFormulaDrawerOpen(false)}
+        onEdit={setEditingFormula}
+        onReload={loadFormulas}
+      />
     </div>
   );
 }

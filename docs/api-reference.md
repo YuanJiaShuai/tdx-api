@@ -1365,7 +1365,7 @@ curl -X POST http://localhost:8080/api/batch-quote \
 | `GET /api/automations` | 自动化任务列表 | `/api/automations` |
 | `POST /api/automations/{id}/run` | 手动运行自动化任务 | `{}` |
 | `GET /api/selection-results` | 查看选股命中结果 | `/api/selection-results?limit=100` |
-| `GET /api/selection-results/tracking` | 计算并查看信号后 D1/D5/D10 的真实前向表现与聚合命中率 | `/api/selection-results/tracking?latest=1&target_return=3&drawdown_limit=5` |
+| `GET /api/selection-results/tracking` | 计算并查看信号后 D1/D5/D10 的真实前向表现与聚合命中率；加 `cached=1` 只读取已缓存快照 | `/api/selection-results/tracking?latest=1&cached=1` |
 | `POST /api/selection-results/tracking` | 手动刷新选股结果跟踪快照 | `/api/selection-results/tracking?limit=500` |
 | `GET /api/webhooks` | Webhook 通知配置列表 | `/api/webhooks` |
 | `GET /api/hqchart/kline` | Web 页面使用的专业行情 K 线对象 | `/api/hqchart/kline?symbol=000001&period=day&limit=500` |

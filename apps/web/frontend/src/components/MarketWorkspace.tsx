@@ -2,14 +2,13 @@ import { Tabs } from 'antd';
 import { useState } from 'react';
 import { LongTigerWorkspace } from './LongTigerWorkspace';
 import { MarketInfoWorkspace } from './MarketInfoWorkspace';
-import { ProChartWorkspace } from './ProChartWorkspace';
 import { IndustryRankWorkspace } from './IndustryRankWorkspace';
 import { IndustryResearchWorkspace } from './IndustryResearchWorkspace';
 import { StockMoneyFlowWorkspace } from './StockMoneyFlowWorkspace';
 import { RzrqWorkspace } from './RzrqWorkspace';
 
 export function MarketWorkspace() {
-  const [activeTab, setActiveTab] = useState('chart');
+  const [activeTab, setActiveTab] = useState('industry-rank');
 
   return (
     <div className="market-workspace">
@@ -18,11 +17,6 @@ export function MarketWorkspace() {
         activeKey={activeTab}
         onChange={setActiveTab}
         items={[
-          {
-            key: 'chart',
-            label: '行情图表',
-            children: <ProChartWorkspace />
-          },
           {
             key: 'industry-rank',
             label: '行业排名',
