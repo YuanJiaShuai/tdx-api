@@ -33,3 +33,4 @@
 - `/api/quote` serializes the Go field as `Kline`, with OHLC, volume, and amount nested inside it. Do not read only legacy `K`, `TotalHand`, or top-level `Amount` fields.
 - Quote rate is encoded as a signed 16-bit hundredth-percent value. Decode through `int16`; treating it as unsigned turns small negative values into `655.xx%`.
 - Tracking calculations must ignore placeholder or malformed daily bars: date and OHLC must be positive, and high/low must contain open and close.
+- `000001` is ambiguous: `AddPrefix` maps the bare code to `sz000001` (平安银行) because `isSZStock` (leading `0`) is checked before `isSHIndex` (leading `000`). Reach 上证指数 only via the explicit `sh000001` prefix. Index K-lines must go through the index API (`KindIndex`) — the stock path (`KindStock`) misparses the 4 extra up/down-count bytes per bar.

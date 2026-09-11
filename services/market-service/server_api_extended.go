@@ -734,7 +734,18 @@ func handleGetKlineAllTDX(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := parsePositiveInt(r.URL.Query().Get("limit"))
 
-	list, err := fetchStockKlineAllTDX(code, klineType)
+	symbol, err := NormalizeSymbol(code)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+
+	var list []*protocol.Kline
+	if symbol.Market == MarketIndex {
+		list, err = fetchIndexAll(symbol.TDXCode, klineType)
+	} else {
+		list, err = fetchStockKlineAllTDX(symbol.TDXCode, klineType)
+	}
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("获取K线失败: %v", err))
 		return

@@ -278,7 +278,7 @@ function performFormulaOperation(chart: Record<string, unknown>, operation: Appl
 export function KlineAnalysisWorkspace() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const appliedFormulaOperationsRef = useRef<AppliedFormulaOperation[]>([]);
-  const [symbol, setSymbol] = useState('000001');
+  const [symbol, setSymbol] = useState('sh000001');
   const [symbolName, setSymbolName] = useState('上证指数');
   const [searchValue, setSearchValue] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -351,7 +351,7 @@ export function KlineAnalysisWorkspace() {
   }, [period, symbol]);
 
   useEffect(() => {
-    void loadData('000001', 'day');
+    void loadData('sh000001', 'day');
   }, []);
 
   useEffect(() => {
