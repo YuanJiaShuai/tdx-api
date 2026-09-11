@@ -2,7 +2,7 @@ import { AutoComplete, Button, Card, Form, Input, InputNumber, Modal, Select, Sp
 import { CheckCircleOutlined, CloseOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
-import { normalizeSymbol, priceFromMilli } from '../lib/format';
+import { normalizeSymbol, priceFromMilli, quoteKline } from '../lib/format';
 import type { AICredential, MacroEventOverview, Quote, TradingSystemState, TradingTrade } from '../types';
 
 const { Text } = Typography;
@@ -408,7 +408,7 @@ export function TradingSystemWorkspace() {
       if (requestID !== analysisRequestRef.current) return;
 
       const quote = Array.isArray(quotes) ? quotes[0] : undefined;
-      const currentPrice = numericPrice(quote?.K?.Close);
+      const currentPrice = priceFromMilli(quoteKline(quote)?.Close);
       const rows = Array.isArray(kline?.List) ? kline.List : [];
       const directionValue = form.getFieldValue('direction') === 'sell' ? 'sell' : 'buy';
       const technical = technicalAnalysis(rows, currentPrice, directionValue);

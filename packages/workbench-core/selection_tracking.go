@@ -42,6 +42,8 @@ type SelectionTracking struct {
 	Version       string                      `json:"version"`
 	SignalDate    int                         `json:"signal_date"`
 	BasePrice     float64                     `json:"base_price"`
+	BaseDate      int                         `json:"base_date,omitempty"`
+	BasePriceFrom string                      `json:"base_price_from,omitempty"`
 	TargetReturn  float64                     `json:"target_return"`
 	DrawdownLimit float64                     `json:"drawdown_limit"`
 	UpdatedAt     string                      `json:"updated_at"`
@@ -125,17 +127,19 @@ func SummarizeSelectionTracking(items []SelectionTrackingItem, horizons []int) S
 	return summary
 }
 
-// EvaluateSelectionTracking computes forward returns from bars strictly after
-// the signal date. Values are percentages (3 means +3%), matching the review
-// API's existing convention.
+// EvaluateSelectionTracking computes forward returns from valid daily bars.
+// A signal created before the A-share open uses that day's open as its entry
+// and counts the signal day as D1; later signals start on the next session.
+// Values are percentages (3 means +3%), matching the review API convention.
 func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizons []int, targetReturn, drawdownLimit float64, now time.Time) SelectionTracking {
 	targetReturn, drawdownLimit = DefaultTrackingPolicy(targetReturn, drawdownLimit)
 	if len(horizons) == 0 {
 		horizons = []int{1, 5, 10}
 	}
+	signalTime, hasSignalTime := selectionResultSignalTime(item)
 	tracking := SelectionTracking{
-		Version:       "1",
-		SignalDate:    selectionResultSignalDate(item),
+		Version:       "2",
+		SignalDate:    trackingDateInt(signalTime),
 		BasePrice:     0,
 		TargetReturn:  targetReturn,
 		DrawdownLimit: drawdownLimit,
@@ -149,24 +153,52 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 		return tracking
 	}
 
+	preOpenSignal := hasSignalTime && signalTime.Hour()*60+signalTime.Minute() < 9*60+30
 	ordered := append([]TrackingBar(nil), bars...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Date < ordered[j].Date })
 	forward := make([]TrackingBar, 0, len(ordered))
 	for _, bar := range ordered {
-		if bar.Date <= tracking.SignalDate && bar.Close > 0 {
-			tracking.BasePrice = bar.Close
+		if !validTrackingBar(bar) {
+			continue
 		}
-		if bar.Date > tracking.SignalDate && bar.Date > 0 {
+		if preOpenSignal && bar.Date == tracking.SignalDate {
+			tracking.BasePrice = bar.Open
+			tracking.BaseDate = bar.Date
+			tracking.BasePriceFrom = "signal_day_open"
+		}
+		if !preOpenSignal && bar.Date <= tracking.SignalDate {
+			tracking.BasePrice = bar.Close
+			tracking.BaseDate = bar.Date
+			tracking.BasePriceFrom = "signal_day_close"
+		}
+		if (preOpenSignal && bar.Date >= tracking.SignalDate) || (!preOpenSignal && bar.Date > tracking.SignalDate) {
 			forward = append(forward, bar)
 		}
 	}
+	if preOpenSignal && tracking.BasePrice <= 0 {
+		for _, horizon := range horizons {
+			result := SelectionHorizon{HorizonDays: horizon, Status: "pending", TargetReturn: targetReturn, DrawdownLimit: drawdownLimit}
+			result.Reason = "暂无信号当日有效K线"
+			tracking.Horizons[horizonKey(horizon)] = result
+		}
+		return tracking
+	}
 	if tracking.BasePrice <= 0 {
-		tracking.BasePrice = item.Latest
+		if positiveFiniteTrackingValue(item.Latest) {
+			tracking.BasePrice = item.Latest
+			tracking.BaseDate = tracking.SignalDate
+			tracking.BasePriceFrom = "selection_latest"
+		}
 	}
 	if tracking.BasePrice <= 0 && len(forward) > 0 {
-		tracking.BasePrice = forward[0].YClose
-		if tracking.BasePrice <= 0 {
+		if positiveFiniteTrackingValue(forward[0].YClose) {
+			tracking.BasePrice = forward[0].YClose
+			tracking.BaseDate = forward[0].Date
+			tracking.BasePriceFrom = "first_forward_yclose"
+		} else {
 			tracking.BasePrice = forward[0].Open
+			tracking.BaseDate = forward[0].Date
+			tracking.BasePriceFrom = "first_forward_open"
 		}
 	}
 	if tracking.BasePrice <= 0 {
@@ -225,19 +257,41 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 	return tracking
 }
 
-func selectionResultSignalDate(item SelectionResult) int {
+func selectionResultSignalTime(item SelectionResult) (time.Time, bool) {
 	if t, err := time.Parse(time.RFC3339, item.CreatedAt); err == nil {
-		return trackingDateInt(t)
+		return t.In(time.FixedZone("CST", 8*60*60)), true
 	}
 	if len(item.CreatedAt) >= 10 {
 		if t, err := time.Parse("2006-01-02", item.CreatedAt[:10]); err == nil {
-			return trackingDateInt(t)
+			return t, false
 		}
 	}
-	return 0
+	return time.Time{}, false
 }
 
-func trackingDateInt(t time.Time) int { return t.Year()*10000 + int(t.Month())*100 + t.Day() }
+func trackingDateInt(t time.Time) int {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Year()*10000 + int(t.Month())*100 + t.Day()
+}
+
+func validTrackingBar(bar TrackingBar) bool {
+	if bar.Date <= 0 {
+		return false
+	}
+	for _, value := range []float64{bar.Open, bar.High, bar.Low, bar.Close} {
+		if !positiveFiniteTrackingValue(value) {
+			return false
+		}
+	}
+	return bar.High >= bar.Open && bar.High >= bar.Close && bar.High >= bar.Low &&
+		bar.Low <= bar.Open && bar.Low <= bar.Close
+}
+
+func positiveFiniteTrackingValue(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
 
 func horizonKey(horizon int) string { return fmt.Sprintf("d%d", horizon) }
 

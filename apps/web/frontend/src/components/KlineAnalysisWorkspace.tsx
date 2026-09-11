@@ -3,7 +3,17 @@ import { CheckCircleOutlined, ClearOutlined, EditOutlined, ExperimentOutlined, L
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { formatFormulaArgs, parseFormulaArgs } from '../lib/formula';
-import { formatAmount, formatPercent, formatPrice, formatSigned, normalizeSymbol, priceFromMilli } from '../lib/format';
+import {
+  formatAmount,
+  formatPercent,
+  formatPrice,
+  formatSigned,
+  normalizeSymbol,
+  priceFromMilli,
+  quoteAmountYuan,
+  quoteKline,
+  quoteVolumeShares
+} from '../lib/format';
 import type { Formula, FormulaArg, FormulaRunResponse, Quote } from '../types';
 import { FormulaManager } from './FormulaManager';
 import { HQChartPanel } from './HQChartPanel';
@@ -388,8 +398,9 @@ export function KlineAnalysisWorkspace() {
   }
 
   const latestBar = history[history.length - 1];
-  const latestClose = priceFromMilli(quote?.K?.Close) || latestBar?.close || 0;
-  const previousClose = priceFromMilli(quote?.K?.Last) || latestBar?.yclose || 0;
+  const quoteBar = quoteKline(quote);
+  const latestClose = priceFromMilli(quoteBar?.Close) || latestBar?.close || 0;
+  const previousClose = priceFromMilli(quoteBar?.Last) || latestBar?.yclose || 0;
   const change = latestClose - previousClose;
   const changePercent = previousClose > 0 ? (change / previousClose) * 100 : 0;
   const signals = useMemo(() => indicatorSignal(indicators, history), [history, indicators]);
@@ -641,11 +652,11 @@ export function KlineAnalysisWorkspace() {
           </div>
 
           <div className="kline-metric-grid">
-            <div><span>开盘</span><strong>{latestBar ? formatPrice(latestBar.open) : formatPrice(quote?.K?.Open ? priceFromMilli(quote.K.Open) : 0)}</strong></div>
-            <div><span>最高</span><strong>{latestBar ? formatPrice(latestBar.high) : formatPrice(quote?.K?.High ? priceFromMilli(quote.K.High) : 0)}</strong></div>
-            <div><span>最低</span><strong>{latestBar ? formatPrice(latestBar.low) : formatPrice(quote?.K?.Low ? priceFromMilli(quote.K.Low) : 0)}</strong></div>
-            <div><span>成交量</span><strong>{latestBar ? formatAmount(latestBar.volume) : quote?.TotalHand ? formatAmount(quote.TotalHand * 100) : '--'}</strong></div>
-            <div><span>成交额</span><strong>{latestBar ? formatAmount(latestBar.amount) : quote?.Amount ? formatAmount(quote.Amount) : '--'}</strong></div>
+            <div><span>开盘</span><strong>{latestBar ? formatPrice(latestBar.open) : formatPrice(quoteBar?.Open ? priceFromMilli(quoteBar.Open) : 0)}</strong></div>
+            <div><span>最高</span><strong>{latestBar ? formatPrice(latestBar.high) : formatPrice(quoteBar?.High ? priceFromMilli(quoteBar.High) : 0)}</strong></div>
+            <div><span>最低</span><strong>{latestBar ? formatPrice(latestBar.low) : formatPrice(quoteBar?.Low ? priceFromMilli(quoteBar.Low) : 0)}</strong></div>
+            <div><span>成交量</span><strong>{latestBar ? formatAmount(latestBar.volume) : formatAmount(quoteVolumeShares(quote))}</strong></div>
+            <div><span>成交额</span><strong>{latestBar ? formatAmount(latestBar.amount) : formatAmount(quoteAmountYuan(quote))}</strong></div>
             <div><span>涨速</span><strong>{quote?.Rate != null ? formatSigned(quote.Rate, '%') : '--'}</strong></div>
           </div>
 

@@ -510,7 +510,7 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 		return AutomationTask{
 			Name:        "选股结果跟踪评估",
 			Type:        "selection_tracking",
-			Cron:        "0 30 18 * * 1-5",
+			Cron:        "0 15 17 * * 1-5",
 			Enabled:     false,
 			PayloadJSON: `{"limit":500,"horizons":[1,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
 			WebhookIDs:  "[]",

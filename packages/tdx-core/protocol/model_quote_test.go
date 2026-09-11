@@ -13,3 +13,22 @@ func Test_quote_Frame(t *testing.T) {
 	}
 	t.Log(f.Bytes().HEX())
 }
+
+func TestDecodeQuoteRate(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  uint16
+		want float64
+	}{
+		{name: "positive", raw: 18, want: 0.18},
+		{name: "negative", raw: 65528, want: -0.08},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := decodeQuoteRate(tt.raw); got != tt.want {
+				t.Fatalf("decodeQuoteRate(%d) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}

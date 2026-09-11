@@ -38,7 +38,7 @@ type Quote struct {
 	ReversedBytes7 int     // 保留，未知
 	ReversedBytes8 int     // 保留，未知
 	ReversedBytes9 uint16  // 保留，未知
-	Rate           float64 // 涨速，好像都是0
+	Rate           float64 // 涨速，单位百分比
 	Active2        uint16  // 活跃度
 }
 
@@ -56,6 +56,10 @@ func (this *Quote) String() string {
 }
 
 type quote struct{}
+
+func decodeQuoteRate(raw uint16) float64 {
+	return float64(int16(raw)) / 100
+}
 
 func (this quote) Frame(codes ...string) (*Frame, error) {
 	f := &Frame{
@@ -158,7 +162,7 @@ func (this quote) Decode(bs []byte) QuotesResp {
 		bs, sec.ReversedBytes8 = CutInt(bs)
 		sec.ReversedBytes9 = Uint16(bs[:2])
 
-		sec.Rate = float64(sec.ReversedBytes9) / 100
+		sec.Rate = decodeQuoteRate(sec.ReversedBytes9)
 		sec.Active2 = Uint16(bs[2:4])
 
 		bs = bs[4:]

@@ -28,6 +28,8 @@ type AutomationRunner struct {
 	cron    *cron.Cron
 	mu      sync.Mutex
 	entries map[string]cron.EntryID
+	runMu   sync.Mutex
+	running map[string]bool
 }
 
 type StockSelectionPayload struct {
@@ -83,7 +85,27 @@ func NewAutomationRunner(store *AppStore, worker *FormulaWorkerClient) *Automati
 		worker:  worker,
 		cron:    cron.New(cron.WithSeconds()),
 		entries: map[string]cron.EntryID{},
+		running: map[string]bool{},
 	}
+}
+
+// acquireRun prevents the same task from running concurrently when a manual
+// trigger overlaps a cron tick, which would otherwise double-compute and
+// double-write selection results.
+func (r *AutomationRunner) acquireRun(taskID string) bool {
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+	if r.running[taskID] {
+		return false
+	}
+	r.running[taskID] = true
+	return true
+}
+
+func (r *AutomationRunner) releaseRun(taskID string) {
+	r.runMu.Lock()
+	delete(r.running, taskID)
+	r.runMu.Unlock()
 }
 
 func (r *AutomationRunner) Start() error {
@@ -151,6 +173,11 @@ func (r *AutomationRunner) RunTask(ctx context.Context, taskID string) (Automati
 }
 
 func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (AutomationRun, error) {
+	if !r.acquireRun(task.ID) {
+		return AutomationRun{}, fmt.Errorf("任务已在运行中，跳过重复触发: %s", task.ID)
+	}
+	defer r.releaseRun(task.ID)
+
 	run, err := r.store.CreateAutomationRun(task)
 	if err != nil {
 		return run, err
@@ -236,8 +263,8 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 			return nil, 0, err
 		}
 	}
-	if payload.Limit <= 0 || payload.Limit > 500 {
-		payload.Limit = 500
+	if payload.Limit <= 0 || payload.Limit > selectionTrackingMaxLimit() {
+		payload.Limit = selectionTrackingMaxLimit()
 	}
 	items, err := r.store.ListSelectionResults("", "", "", false, payload.Limit)
 	if err != nil {
@@ -271,6 +298,13 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 		"policy":  map[string]float64{"target_return": targetReturn, "drawdown_limit": drawdownLimit},
 		"errors":  errorsByResult,
 	}, len(tracked), nil
+}
+
+func selectionTrackingMaxLimit() int {
+	if n := envInt("SELECTION_TRACKING_MAX_RESULTS", 500); n >= 100 && n <= 5000 {
+		return n
+	}
+	return 500
 }
 
 func (r *AutomationRunner) resolveTaskWebhooks(task AutomationTask) []Webhook {

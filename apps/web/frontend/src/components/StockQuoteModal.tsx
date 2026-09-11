@@ -2,7 +2,16 @@ import { Button, Modal, Space, message } from 'antd';
 import { CloseOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
-import { formatAmount, formatPrice, formatSigned, normalizeSymbol, priceFromMilli } from '../lib/format';
+import {
+  formatAmount,
+  formatPrice,
+  formatSigned,
+  normalizeSymbol,
+  priceFromMilli,
+  quoteAmountYuan,
+  quoteKline,
+  quoteVolumeShares
+} from '../lib/format';
 import type { Quote } from '../types';
 import { HQChartPanel } from './HQChartPanel';
 
@@ -49,8 +58,9 @@ export function StockQuoteModal({ target, onClose }: StockQuoteModalProps) {
     if (target?.code) void loadQuote();
   }, [loadQuote, target?.code]);
 
-  const price = quote?.K ? priceFromMilli(quote.K.Close) : 0;
-  const previousClose = quote?.K ? priceFromMilli(quote.K.Last) : 0;
+  const kline = quoteKline(quote);
+  const price = priceFromMilli(kline?.Close);
+  const previousClose = priceFromMilli(kline?.Last);
   const change = price - previousClose;
   const changePercent = previousClose > 0 ? (change / previousClose) * 100 : 0;
   const symbol = normalizeSymbol(target?.code || quote?.Code || '');
@@ -101,11 +111,11 @@ export function StockQuoteModal({ target, onClose }: StockQuoteModalProps) {
           </section>
           <section className="quote-dialog-metrics">
             {[
-              ['开盘', quote?.K?.Open ? formatPrice(priceFromMilli(quote.K.Open)) : '--'],
-              ['最高', quote?.K?.High ? formatPrice(priceFromMilli(quote.K.High)) : '--'],
-              ['最低', quote?.K?.Low ? formatPrice(priceFromMilli(quote.K.Low)) : '--'],
-              ['成交量', quote?.TotalHand ? formatAmount(quote.TotalHand * 100) : '--'],
-              ['成交额', quote?.Amount ? formatAmount(quote.Amount) : '--'],
+              ['开盘', kline?.Open ? formatPrice(priceFromMilli(kline.Open)) : '--'],
+              ['最高', kline?.High ? formatPrice(priceFromMilli(kline.High)) : '--'],
+              ['最低', kline?.Low ? formatPrice(priceFromMilli(kline.Low)) : '--'],
+              ['成交量', formatAmount(quoteVolumeShares(quote))],
+              ['成交额', formatAmount(quoteAmountYuan(quote))],
               ['涨速', quote?.Rate ? formatSigned(quote.Rate, '%') : '--']
             ].map(([label, value]) => (
               <div key={label}>

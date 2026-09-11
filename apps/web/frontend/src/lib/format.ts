@@ -1,4 +1,4 @@
-import type { StockPool } from '../types';
+import type { Quote, QuoteK, StockPool } from '../types';
 
 export function normalizeSymbol(value: unknown): string {
   return String(value || '')
@@ -10,6 +10,22 @@ export function normalizeSymbol(value: unknown): string {
 export function priceFromMilli(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) ? number / 1000 : 0;
+}
+
+export function quoteKline(quote?: Quote | null): QuoteK | undefined {
+  return quote?.Kline || quote?.K;
+}
+
+export function quoteVolumeShares(quote?: Quote | null): number {
+  const volumeInLots = Number(quoteKline(quote)?.Volume ?? quote?.TotalHand);
+  return Number.isFinite(volumeInLots) && volumeInLots > 0 ? volumeInLots * 100 : 0;
+}
+
+export function quoteAmountYuan(quote?: Quote | null): number {
+  const klineAmount = Number(quoteKline(quote)?.Amount);
+  if (Number.isFinite(klineAmount) && klineAmount > 0) return priceFromMilli(klineAmount);
+  const legacyAmount = Number(quote?.Amount);
+  return Number.isFinite(legacyAmount) && legacyAmount > 0 ? legacyAmount : 0;
 }
 
 export function formatPrice(value: unknown): string {

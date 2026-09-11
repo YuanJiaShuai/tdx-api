@@ -113,6 +113,18 @@ func envBool(name string, defaultValue bool) bool {
 	}
 }
 
+func envInt(name string, defaultValue int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return n
+}
+
 type Response struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`

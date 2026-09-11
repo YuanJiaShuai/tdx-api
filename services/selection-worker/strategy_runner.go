@@ -203,7 +203,10 @@ func (r *AutomationRunner) strategyUniverse(cfg StrategyConfig) ([]string, error
 }
 
 func strategyMaxCodes(cfg StrategyConfig) int {
-	maxCodes := 300
+	maxCodes := envInt("STRATEGY_MAX_CODES", 300)
+	if maxCodes <= 0 {
+		maxCodes = 300
+	}
 	if cfg.BatchSize > 0 && cfg.BatchSize > maxCodes {
 		maxCodes = cfg.BatchSize
 	}
@@ -282,8 +285,10 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 		item.Reasons = append(item.Reasons, fr.Reason)
 		if !fr.Hit {
 			item.Hit = false
-			return item, false
 		}
+	}
+	if !item.Hit {
+		return item, false
 	}
 	score := 0.0
 	for _, rule := range result.Config.Scores {

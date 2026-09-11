@@ -74,6 +74,8 @@ export interface QuoteK {
   Open?: number;
   High?: number;
   Low?: number;
+  Volume?: number;
+  Amount?: number;
 }
 
 export interface PriceLevel {
@@ -84,6 +86,8 @@ export interface PriceLevel {
 export interface Quote {
   Code?: string;
   Name?: string;
+  Kline?: QuoteK;
+  // Kept for compatibility with older quote responses.
   K?: QuoteK;
   TotalHand?: number;
   Amount?: number;
@@ -473,6 +477,8 @@ export interface SelectionTracking {
   version?: string;
   signal_date?: number;
   base_price?: number;
+  base_date?: number;
+  base_price_from?: string;
   target_return?: number;
   drawdown_limit?: number;
   updated_at?: string;

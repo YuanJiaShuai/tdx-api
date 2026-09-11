@@ -32,7 +32,11 @@ function parseTracking(result: SelectionResult): SelectionTracking {
   try { const parsed = JSON.parse(result.tracking_json) as SelectionTracking; return parsed && typeof parsed === 'object' ? parsed : {}; } catch { return {}; }
 }
 function formatPct(value?: number) { return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--'; }
-function trackingLabel(value?: SelectionHorizon) { if (!value || value.status !== 'complete') return '待观察'; return value.success ? '达标' : '未达标'; }
+function trackingLabel(value?: SelectionHorizon) {
+  if (!value) return '待观察';
+  if (value.status === 'complete') return value.success ? '达标' : '未达标';
+  return value.reason?.replace(/^已获得(\d+)\/(\d+)个交易日$/, '已获得 $1/$2 个交易日') || (value.status === 'unavailable' ? '暂无数据' : '待观察');
+}
 function trackingColor(value?: SelectionHorizon) { if (!value || value.status !== 'complete') return 'default'; return value.success ? 'success' : 'error'; }
 
 function buildRunRecords(runs: AutomationRun[], results: SelectionResult[]) {
@@ -109,7 +113,7 @@ export function SelectionResultsWorkspace() {
     { title: '最新值', dataIndex: 'latest', width: 110, render: (value: number) => value ? value.toFixed(2) : '--' },
     ...[1, 5, 10].map((days) => ({
       title: `D${days}`,
-      width: 110,
+      width: 160,
       render: (_value: unknown, record: SelectionResult) => {
         const value = getTracking(record).horizons?.[`d${days}`];
         return <Tag color={trackingColor(value)}>{trackingLabel(value)}{value?.status === 'complete' ? ` ${formatPct(value.close_return)}` : ''}</Tag>;

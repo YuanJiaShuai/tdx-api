@@ -10,7 +10,10 @@ import {
   formatPrice,
   formatSigned,
   normalizeSymbol,
-  priceFromMilli
+  priceFromMilli,
+  quoteAmountYuan,
+  quoteKline,
+  quoteVolumeShares
 } from '../lib/format';
 import type { Quote, WatchlistRow } from '../types';
 
@@ -38,9 +41,10 @@ function bidAskRatio(quote: Quote): string {
 }
 
 function mergeQuote(row: WatchlistRow, quote?: Quote): WatchlistRow {
-  if (!quote?.K) return row;
-  const previousClose = priceFromMilli(quote.K.Last);
-  const currentPrice = priceFromMilli(quote.K.Close);
+  const kline = quoteKline(quote);
+  if (!quote || !kline) return row;
+  const previousClose = priceFromMilli(kline.Last);
+  const currentPrice = priceFromMilli(kline.Close);
   if (currentPrice <= 0) return row;
   const change = previousClose > 0 ? currentPrice - previousClose : 0;
   const changePercent = previousClose > 0 ? (change / previousClose) * 100 : 0;
@@ -49,8 +53,8 @@ function mergeQuote(row: WatchlistRow, quote?: Quote): WatchlistRow {
     price: formatPrice(currentPrice),
     change: formatSigned(change),
     changePercent: formatSigned(changePercent, '%'),
-    volume: quote.TotalHand && quote.TotalHand > 0 ? formatAmount(quote.TotalHand * 100) : '--',
-    amount: formatAmount(quote.Amount),
+    volume: formatAmount(quoteVolumeShares(quote)),
+    amount: formatAmount(quoteAmountYuan(quote)),
     speed: Number.isFinite(Number(quote.Rate)) && Number(quote.Rate) !== 0 ? formatSigned(quote.Rate, '%') : '--',
     entrust: bidAskRatio(quote)
   };
@@ -65,8 +69,9 @@ export function WatchlistTable() {
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quotePeriod, setQuotePeriod] = useState('day');
 
-  const quotePrice = selectedQuote?.K ? priceFromMilli(selectedQuote.K.Close) : 0;
-  const quotePreviousClose = selectedQuote?.K ? priceFromMilli(selectedQuote.K.Last) : 0;
+  const selectedKline = quoteKline(selectedQuote);
+  const quotePrice = priceFromMilli(selectedKline?.Close);
+  const quotePreviousClose = priceFromMilli(selectedKline?.Last);
   const quoteChange = quotePrice - quotePreviousClose;
   const quoteChangePercent = quotePreviousClose > 0 ? (quoteChange / quotePreviousClose) * 100 : 0;
 
@@ -280,11 +285,11 @@ export function WatchlistTable() {
             {selectedRow ? <div className="quote-dialog-ai-action"><AIResearchReport symbol={normalizeSymbol(selectedRow.code)} name={selectedRow.name} /></div> : null}
             <section className="quote-dialog-metrics">
               {[
-                ['开盘', selectedQuote?.K?.Open ? formatPrice(priceFromMilli(selectedQuote.K.Open)) : '--'],
-                ['最高', selectedQuote?.K?.High ? formatPrice(priceFromMilli(selectedQuote.K.High)) : '--'],
-                ['最低', selectedQuote?.K?.Low ? formatPrice(priceFromMilli(selectedQuote.K.Low)) : '--'],
-                ['成交量', selectedQuote?.TotalHand ? formatAmount(selectedQuote.TotalHand * 100) : '--'],
-                ['成交额', selectedQuote?.Amount ? formatAmount(selectedQuote.Amount) : '--'],
+                ['开盘', selectedKline?.Open ? formatPrice(priceFromMilli(selectedKline.Open)) : '--'],
+                ['最高', selectedKline?.High ? formatPrice(priceFromMilli(selectedKline.High)) : '--'],
+                ['最低', selectedKline?.Low ? formatPrice(priceFromMilli(selectedKline.Low)) : '--'],
+                ['成交量', formatAmount(quoteVolumeShares(selectedQuote))],
+                ['成交额', formatAmount(quoteAmountYuan(selectedQuote))],
                 ['涨速', selectedQuote?.Rate ? formatSigned(selectedQuote.Rate, '%') : '--']
               ].map(([label, value]) => (
                 <div key={label}>

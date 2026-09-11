@@ -604,7 +604,7 @@ func fixedCloseSyncAutomationTask() AutomationTask {
 		Name:        "收盘作业：更新当天行情",
 		Type:        "system_sync",
 		Cron:        "0 0 16 * * 1-5",
-		Enabled:     false,
+		Enabled:     true,
 		PayloadJSON: `{"scope":"kline","tables":["day"],"limit":4,"continue_on_error":true}`,
 		WebhookIDs:  "[]",
 		Readonly:    true,
@@ -617,8 +617,8 @@ func fixedSelectionTrackingAutomationTask() AutomationTask {
 		ID:          FixedSelectionTrackingTaskID,
 		Name:        "收盘作业：验证选股表现",
 		Type:        "selection_tracking",
-		Cron:        "0 30 18 * * 1-5",
-		Enabled:     false,
+		Cron:        "0 15 17 * * 1-5",
+		Enabled:     true,
 		PayloadJSON: `{"limit":500,"horizons":[1,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
 		WebhookIDs:  "[]",
 		Readonly:    true,
@@ -646,6 +646,13 @@ func (s *AppStore) ensureFixedAutomationTasks() error {
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
 			"", "", "", "", now, now); err != nil {
+			return err
+		}
+		// Fixed task behavior belongs to the application. Keep the user's enabled
+		// choice while migrating immutable definitions such as cron and payload.
+		if _, err := s.db.Exec(`UPDATE automation_tasks
+			SET name=?,type=?,cron=?,payload_json=?,webhook_ids=?,updated_at=?
+			WHERE id=?`, task.Name, task.Type, task.Cron, task.PayloadJSON, task.WebhookIDs, now, task.ID); err != nil {
 			return err
 		}
 	}
@@ -1641,8 +1648,11 @@ func (s *AppStore) ListAutomationRuns(taskID string, limit int) ([]AutomationRun
 }
 
 func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLatest bool, limit int) ([]SelectionResult, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 {
 		limit = 100
+	}
+	if limit > 5000 {
+		limit = 5000
 	}
 	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at FROM selection_results`
 	args := []interface{}{}
