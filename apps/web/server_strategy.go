@@ -138,15 +138,15 @@ func handleStrategyRangePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		StrategyConfig
-		MaxCodes int `json:"max_codes"`
+		MaxCodes *int `json:"max_codes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		errorResponse(w, "请求参数错误: "+err.Error())
 		return
 	}
-	maxCodes := req.MaxCodes
-	if maxCodes <= 0 {
-		maxCodes = 300
+	maxCodes := 300
+	if req.MaxCodes != nil && *req.MaxCodes >= 0 {
+		maxCodes = *req.MaxCodes
 	}
 	result, err := automationRunner.strategyUniverseResult(req.StrategyConfig, maxCodes)
 	if err != nil {
@@ -175,10 +175,6 @@ func handleStrategyApplyUniverse(w http.ResponseWriter, r *http.Request, id stri
 		errorResponse(w, notFoundMessage(err, "策略不存在"))
 		return
 	}
-	if strategy.Readonly {
-		errorResponse(w, "系统策略模板不能应用范围，请先复制副本")
-		return
-	}
 	var cfg StrategyConfig
 	if err := json.Unmarshal([]byte(strategy.ConfigJSON), &cfg); err != nil {
 		errorResponse(w, "策略配置解析失败: "+err.Error())
@@ -190,13 +186,39 @@ func handleStrategyApplyUniverse(w http.ResponseWriter, r *http.Request, id stri
 		errorResponse(w, "选股范围校验失败: "+err.Error())
 		return
 	}
-	raw, err := json.Marshal(cfg)
+	// Preserve every field other than universe. This also prevents this focused
+	// endpoint from becoming a back door for editing a system template's rules.
+	var rawConfig map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strategy.ConfigJSON), &rawConfig); err != nil {
+		errorResponse(w, "策略配置解析失败: "+err.Error())
+		return
+	}
+	if rawConfig == nil {
+		errorResponse(w, "策略配置必须是JSON对象")
+		return
+	}
+	universeRaw, err := json.Marshal(req.Universe)
+	if err != nil {
+		errorResponse(w, "策略配置生成失败: "+err.Error())
+		return
+	}
+	rawConfig["universe"] = universeRaw
+	if strategy.Readonly {
+		customizedRaw, _ := json.Marshal(true)
+		rawConfig["universe_customized"] = customizedRaw
+	}
+	raw, err := json.Marshal(rawConfig)
 	if err != nil {
 		errorResponse(w, "策略配置生成失败: "+err.Error())
 		return
 	}
 	strategy.ConfigJSON = string(raw)
-	item, err := appStore.UpsertStrategy(strategy)
+	var item Strategy
+	if strategy.Readonly {
+		item, err = appStore.SetStrategyUniverseConfig(strategy.ID, strategy.ConfigJSON)
+	} else {
+		item, err = appStore.UpsertStrategy(strategy)
+	}
 	if err != nil {
 		errorResponse(w, err.Error())
 		return
@@ -313,6 +335,17 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			ID:          "market_momentum",
+			Name:        "大盘趋势门槛",
+			Kind:        "filter",
+			Description: "要求上证指数截至信号日的N日涨幅落在指定区间，用于限制策略只在匹配的市场环境运行。",
+			Params: []StrategyFactorParamDef{
+				{Name: "days", Label: "回看天数", Type: "number", Default: 20},
+				{Name: "min", Label: "最小涨幅%", Type: "number", Default: 0},
+				{Name: "max", Label: "最大涨幅%", Type: "number", Default: 100},
+			},
+		},
+		{
 			ID:          "ma_trend",
 			Name:        "均线多头",
 			Kind:        "score",
@@ -321,6 +354,28 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 				{Name: "short", Label: "短均线", Type: "number", Default: 5},
 				{Name: "mid", Label: "中均线", Type: "number", Default: 10},
 				{Name: "long", Label: "长均线", Type: "number", Default: 20},
+			},
+		},
+		{
+			ID:          "ma_slope",
+			Name:        "均线斜率",
+			Kind:        "score",
+			Description: "比较当前均线与若干交易日前的同周期均线，过滤走平、下行或过度陡峭的趋势。",
+			Params: []StrategyFactorParamDef{
+				{Name: "period", Label: "均线周期", Type: "number", Default: 20},
+				{Name: "lookback", Label: "比较天数", Type: "number", Default: 5},
+				{Name: "min", Label: "最小升幅%", Type: "number", Default: 0},
+				{Name: "max", Label: "最大升幅%", Type: "number", Default: 20},
+			},
+		},
+		{
+			ID:          "close_strength",
+			Name:        "收盘质量",
+			Kind:        "filter",
+			Description: "要求收盘位于当日振幅的较高区域，并限制上影线，过滤冲高回落。",
+			Params: []StrategyFactorParamDef{
+				{Name: "min_position", Label: "最低收盘位置", Type: "number", Default: 0.65},
+				{Name: "max_upper_shadow", Label: "最大上影%", Type: "number", Default: 3},
 			},
 		},
 		{
@@ -375,6 +430,17 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 			Params: []StrategyFactorParamDef{
 				{Name: "period", Label: "RSI周期", Type: "number", Default: 6},
 				{Name: "threshold", Label: "超卖阈值", Type: "number", Default: 30},
+			},
+		},
+		{
+			ID: "rsi_rebound", Name: "RSI超卖反转", Kind: "score",
+			Description: "近期RSI进入超卖区后回升至指定区间且继续走强时命中。",
+			Params: []StrategyFactorParamDef{
+				{Name: "period", Label: "RSI周期", Type: "number", Default: 6},
+				{Name: "lookback", Label: "超卖回看天数", Type: "number", Default: 5},
+				{Name: "oversold", Label: "超卖阈值", Type: "number", Default: 30},
+				{Name: "min_current", Label: "当前最低RSI", Type: "number", Default: 35},
+				{Name: "max_current", Label: "当前最高RSI", Type: "number", Default: 55},
 			},
 		},
 		{

@@ -34,6 +34,7 @@ func factorTestRows(closes []float64, highs []float64) []FormulaKline {
 			high = highs[i]
 		}
 		rows[i] = FormulaKline{
+			Date:   20260101 + i,
 			YClose: prev,
 			Close:  closePrice,
 			High:   high,
@@ -44,6 +45,26 @@ func factorTestRows(closes []float64, highs []float64) []FormulaKline {
 		prev = closePrice
 	}
 	return rows
+}
+
+func TestFactorMarketMomentumUsesSameDayBenchmarkHistory(t *testing.T) {
+	stockRows := factorTestRows(make([]float64, 21), nil)
+	benchmarkCloses := make([]float64, 21)
+	for index := range benchmarkCloses {
+		benchmarkCloses[index] = 100
+	}
+	benchmarkCloses[20] = 107
+	benchmarkRows := factorTestRows(benchmarkCloses, nil)
+	runner, result := factorRunner()
+	result.KlineCache[strategyBenchmarkSymbol] = benchmarkRows
+	rule := StrategyFactorRule{ID: "market", Factor: "market_momentum", Params: map[string]interface{}{"days": 20.0, "min": 6.0, "max": 100.0}}
+	if got := runner.evaluateFactor(result, "000001", stockRows, rule, true); !got.Hit {
+		t.Fatalf("7%% benchmark momentum should pass: %+v", got)
+	}
+	benchmarkRows[20].Close = 105
+	if got := runner.evaluateFactor(result, "000001", stockRows, rule, true); got.Hit {
+		t.Fatalf("5%% benchmark momentum should fail: %+v", got)
+	}
 }
 
 func factorRunner() (*AutomationRunner, *StrategyRunResult) {
@@ -164,5 +185,78 @@ func TestFactorIntensityTimesWeight(t *testing.T) {
 	fr = evalFactor(t, "break_high", 15, params, factorTestRows(closes, highs), false)
 	if !fr.Hit || math.Abs(fr.Score-7.5) > 1e-9 {
 		t.Fatalf("突破1.5%%: hit=%v score=%v reason=%s", fr.Hit, fr.Score, fr.Reason)
+	}
+}
+
+func TestRangeFactorsActAsHardFilters(t *testing.T) {
+	closes := make([]float64, 61)
+	highs := make([]float64, 61)
+	for index := range closes {
+		closes[index] = 10
+		highs[index] = 10
+	}
+	closes[60] = 12
+	if got := evalFactor(t, "gain_days", 20, map[string]interface{}{"days": 20.0, "min": 5.0, "max": 15.0}, factorTestRows(closes, highs), true); got.Hit {
+		t.Fatalf("20%% gain must fail a 5-15%% hard filter: %+v", got)
+	}
+
+	for index := 0; index < 60; index++ {
+		highs[index] = 20
+	}
+	closes[60] = 16
+	if got := evalFactor(t, "drawdown_from_high", 20, map[string]interface{}{"days": 60.0, "min": 5.0, "max": 15.0}, factorTestRows(closes, highs), true); got.Hit {
+		t.Fatalf("20%% drawdown must fail a 5-15%% hard filter: %+v", got)
+	}
+}
+
+func TestAdvancedStrategyFactorsAreRegistered(t *testing.T) {
+	factors := []string{
+		"average_turnover", "boll_width_expanding", "breakout_strength", "consecutive_gain_days",
+		"consolidation_days", "decline_deceleration", "distance_from_high", "distance_from_ma",
+		"distance_from_support", "kdj_approaching", "kdj_k_slope", "ma_convergence",
+		"ma_convergence_days", "ma_distance", "macd_approaching", "macd_convergence_speed",
+		"macd_histogram", "macd_positive", "narrow_range", "price_above_ma_cluster",
+		"price_break_high", "range_volatility", "rsi_value", "support_not_broken", "turnover_surge",
+		"volume_below_average", "volume_burst_after_shrink", "volume_change_rate",
+		"volume_consecutive_rise", "volume_ratio", "volume_steady_rise",
+	}
+	rows := factorTestRows(make([]float64, 100), nil)
+	for index := range rows {
+		rows[index].Open = 10
+		rows[index].High = 10.2
+		rows[index].Low = 9.8
+		rows[index].Close = 10
+		rows[index].YClose = 10
+		rows[index].Vol = 1000
+	}
+	for _, factor := range factors {
+		recognized, _, _, _, _ := evaluateAdvancedStrategyFactor(rows, StrategyFactorRule{Factor: factor, Params: map[string]interface{}{}}, false)
+		if !recognized {
+			t.Errorf("advanced factor %q is not registered", factor)
+		}
+	}
+}
+
+func TestAdvancedBreakoutAndVolumeFactors(t *testing.T) {
+	closes := make([]float64, 21)
+	highs := make([]float64, 21)
+	for index := range closes {
+		closes[index], highs[index] = 10, 10
+	}
+	closes[20], highs[20] = 10.2, 10.3
+	rows := factorTestRows(closes, highs)
+	if got := evalFactor(t, "price_break_high", 0, map[string]interface{}{"days": 20.0}, rows, true); !got.Hit {
+		t.Fatalf("price breakout should pass: %+v", got)
+	}
+	for index := 0; index < 15; index++ {
+		rows[index].Vol = 100
+	}
+	for index := 15; index < 20; index++ {
+		rows[index].Vol = 80
+	}
+	rows[20].Vol = 300
+	params := map[string]interface{}{"lookback": 5.0, "shrink_threshold": 2.0, "burst_ratio": 2.0, "min_turnover": 3.0}
+	if got := evalFactor(t, "volume_burst_after_shrink", 0, params, rows, true); !got.Hit {
+		t.Fatalf("volume burst after contraction should pass: %+v", got)
 	}
 }

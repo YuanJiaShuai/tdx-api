@@ -140,12 +140,16 @@ func (r *AutomationRunner) Reload() error {
 		return err
 	}
 	for _, task := range tasks {
-		if !task.Enabled {
+		if !task.Enabled || task.Type == "system_strategy_batch" {
 			continue
 		}
 		entryID, err := r.cron.AddFunc(task.Cron, func(taskID string) func() {
 			return func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+				timeout := 20 * time.Minute
+				if taskID == FixedCloseSyncTaskID {
+					timeout = 2 * time.Hour
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
 				defer cancel()
 				if _, err := r.RunTask(ctx, taskID); err != nil {
 					log.Printf("自动化任务执行失败: %s %v", taskID, err)
@@ -191,6 +195,8 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	var matchedSymbols []string
 
 	switch task.Type {
+	case "system_strategy_batch":
+		return AutomationRun{}, errors.New("系统策略日报必须通过异步入口运行")
 	case "stock_selection":
 		result, matchedSymbols, err = r.runStockSelection(ctx, task, run)
 		matchedCount = len(matchedSymbols)
@@ -248,6 +254,12 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	})
 	if len(hookLogs) > 0 {
 		log.Printf("Webhook通知: %s", strings.Join(hookLogs, "; "))
+	}
+	// The daily batch must see the completed close-sync state before it starts.
+	// Run it independently so the close-sync run remains an accurate record of
+	// data synchronization time rather than including strategy evaluation.
+	if task.ID == FixedCloseSyncTaskID && status == "success" && err == nil && !automationResultSkipped(result) {
+		go r.triggerSystemStrategyDailyBatch()
 	}
 
 	if latest, latestErr := r.store.GetAutomationRun(run.ID); latestErr == nil {
@@ -374,13 +386,14 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 	batches := chunkSymbols(symbols, batchSize)
 	for _, batch := range batches {
 		resp, err := r.worker.Run(ctx, FormulaRunRequest{
-			Symbols:   batch,
-			Script:    formula.Script,
-			Args:      json.RawMessage(formula.ArgsJSON),
-			Period:    period,
-			Right:     right,
-			OutCount:  outCount,
-			CalcCount: calcCount,
+			Symbols:       batch,
+			Script:        formula.Script,
+			Args:          json.RawMessage(formula.ArgsJSON),
+			Period:        period,
+			Right:         right,
+			OutCount:      outCount,
+			CalcCount:     calcCount,
+			ForceFallback: true,
 		})
 		if err == nil {
 			mergeFormulaData(allData, resp.Data)
@@ -391,13 +404,14 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 		}
 		for _, symbol := range batch {
 			singleResp, singleErr := r.worker.Run(ctx, FormulaRunRequest{
-				Symbols:   []string{symbol},
-				Script:    formula.Script,
-				Args:      json.RawMessage(formula.ArgsJSON),
-				Period:    period,
-				Right:     right,
-				OutCount:  outCount,
-				CalcCount: calcCount,
+				Symbols:       []string{symbol},
+				Script:        formula.Script,
+				Args:          json.RawMessage(formula.ArgsJSON),
+				Period:        period,
+				Right:         right,
+				OutCount:      outCount,
+				CalcCount:     calcCount,
+				ForceFallback: true,
 			})
 			if singleErr != nil {
 				errorsBySymbol[symbol] = singleErr.Error()
@@ -479,6 +493,47 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 		}
 		err := manager.Workday.Update()
 		return map[string]interface{}{"scope": "workday"}, 0, err
+	case "hikyuu_after_close", "hikyuu-after-close":
+		if !useMarketService() {
+			return nil, 0, errors.New("Hikyuu盘后同步必须通过行情服务执行")
+		}
+		isWorkday, err := marketClient.IsWorkday(ctx, time.Now().In(time.Local).Format("2006-01-02"))
+		if err != nil {
+			return nil, 0, err
+		}
+		if !isWorkday {
+			return map[string]interface{}{"scope": "hikyuu_after_close", "source": "hikyuu", "skipped": true, "reason": "非交易日"}, 0, nil
+		}
+		task, err := marketClient.StartHikyuuAfterCloseSync(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			switch strings.ToLower(strings.TrimSpace(task.Status)) {
+			case "success":
+				return map[string]interface{}{"scope": "hikyuu_after_close", "source": "hikyuu", "task": task}, 1, nil
+			case "failed", "cancelled", "canceled":
+				message := strings.TrimSpace(task.Error)
+				if message == "" {
+					message = strings.TrimSpace(task.Message)
+				}
+				if message == "" {
+					message = "Hikyuu盘后同步失败"
+				}
+				return map[string]interface{}{"scope": "hikyuu_after_close", "source": "hikyuu", "task": task}, 0, errors.New(message)
+			}
+			select {
+			case <-ctx.Done():
+				return map[string]interface{}{"scope": "hikyuu_after_close", "source": "hikyuu", "task": task}, 0, ctx.Err()
+			case <-ticker.C:
+				task, err = marketClient.HikyuuTask(ctx, task.ID)
+				if err != nil {
+					return nil, 0, err
+				}
+			}
+		}
 	case "gbbq", "xrxd":
 		if useMarketService() {
 			taskResp, err := marketClient.SyncGbbqTask(ctx)
@@ -822,6 +877,15 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 	default:
 		return nil, 0, fmt.Errorf("未知系统同步scope: %s", payload.Scope)
 	}
+}
+
+func automationResultSkipped(result interface{}) bool {
+	item, ok := result.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	skipped, _ := item["skipped"].(bool)
+	return skipped
 }
 
 func (r *AutomationRunner) runCustomTask(ctx context.Context, task AutomationTask) (interface{}, int, error) {

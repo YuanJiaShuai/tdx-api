@@ -65,3 +65,17 @@ func TestStrategyUniverseExpressionKeepsLegacyStringConfig(t *testing.T) {
 		t.Fatalf("legacy universe JSON = %s, want %q", raw, `"market"`)
 	}
 }
+
+func TestStrategyMaxCodesUsesExplicitScanLimit(t *testing.T) {
+	all := 0
+	if got := strategyMaxCodes(StrategyConfig{ScanLimit: &all}); got != 0 {
+		t.Fatalf("explicit full scan limit = %d, want 0", got)
+	}
+	limited := 800
+	if got := strategyMaxCodes(StrategyConfig{ScanLimit: &limited}); got != 800 {
+		t.Fatalf("explicit scan limit = %d, want 800", got)
+	}
+	if got := strategyMaxCodes(StrategyConfig{}); got != 300 {
+		t.Fatalf("default scan limit = %d, want 300", got)
+	}
+}

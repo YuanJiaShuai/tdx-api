@@ -433,7 +433,7 @@
             },
             CorssCursorInfo: {
                 Right: 2,
-                DateFormatType: 3,
+                DateFormatType: 0,
                 IsShowCorss: true
             },
             EnableYDrag: { Right: true, Left: false },

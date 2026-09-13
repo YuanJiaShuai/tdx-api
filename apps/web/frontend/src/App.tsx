@@ -5,6 +5,7 @@ import { AIConfigsWorkspace } from './components/AIConfigsWorkspace';
 import { AutomationsWorkspace } from './components/AutomationsWorkspace';
 import { DataCenterWorkspace } from './components/DataCenterWorkspace';
 import { DailyReviewWorkspace } from './components/DailyReviewWorkspace';
+import { HistoricalBacktestWorkspace } from './components/HistoricalBacktestWorkspace';
 import { SelectionResultsWorkspace } from './components/SelectionResultsWorkspace';
 import { StrategiesWorkspace } from './components/StrategiesWorkspace';
 import { TradingSystemWorkspace } from './components/TradingSystemWorkspace';
@@ -37,7 +38,8 @@ const selectionWorkspaces = [
   { key: 'strategies', label: '策略中心' },
   { key: 'selectionResults', label: '选股结果' },
   { key: 'aiSelection', label: 'AI 选股' },
-  { key: 'dailyReview', label: '每日复盘' }
+  { key: 'dailyReview', label: '每日复盘' },
+  { key: 'historicalBacktest', label: '历史回测' }
 ];
 
 const workspaceLabels = Object.fromEntries(
@@ -51,6 +53,7 @@ const workspaceCodes: Record<string, string> = {
   dataCenter: 'DATA_CENTER',
   selectionResults: 'SIGNAL_RESULTS',
   dailyReview: 'DAILY_REVIEW',
+  historicalBacktest: 'HISTORICAL_REPLAY',
   tradingSystem: 'TRADING_PLAN',
   universe: 'UNIVERSE',
   strategies: 'STRATEGY_LAB',
@@ -85,6 +88,8 @@ function WorkspaceContent({ workspace }: { workspace: string }) {
       return <SelectionResultsWorkspace />;
     case 'dailyReview':
       return <DailyReviewWorkspace />;
+    case 'historicalBacktest':
+      return <HistoricalBacktestWorkspace />;
     case 'tradingSystem':
       return <TradingSystemWorkspace />;
     case 'universe':

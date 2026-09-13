@@ -150,9 +150,28 @@ def load_records(symbol: str, period: str, start: str, end: str, limit: int, rec
     }
 
 
+def load_records_batch(symbols: list[str], period: str, start: str, end: str, limit: int, recover: str) -> dict:
+    data: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    for symbol in symbols:
+        try:
+            data[symbol] = load_records(symbol, period, start, end, limit, recover)
+        except Exception as exc:
+            errors[symbol] = str(exc)
+    return {
+        "period": period,
+        "recover": recover,
+        "data": data,
+        "errors": errors,
+        "meta": {"source": "hikyuu"},
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--symbol", required=True)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--symbol")
+    group.add_argument("--symbols-json")
     parser.add_argument("--period", default="day")
     parser.add_argument("--start", default="")
     parser.add_argument("--end", default="")
@@ -161,14 +180,27 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        result = load_records(
-            args.symbol,
-            args.period.lower(),
-            args.start,
-            args.end,
-            max(0, args.limit),
-            args.recover.lower(),
-        )
+        if args.symbols_json:
+            symbols = json.loads(args.symbols_json)
+            if not isinstance(symbols, list) or not all(isinstance(item, str) for item in symbols):
+                raise ValueError("symbols-json must be a string array")
+            result = load_records_batch(
+                symbols,
+                args.period.lower(),
+                args.start,
+                args.end,
+                max(0, args.limit),
+                args.recover.lower(),
+            )
+        else:
+            result = load_records(
+                args.symbol,
+                args.period.lower(),
+                args.start,
+                args.end,
+                max(0, args.limit),
+                args.recover.lower(),
+            )
     except Exception as exc:
         print(str(exc), file=sys.stderr, flush=True)
         return 1

@@ -7,14 +7,22 @@
         return typeof window.JSChart !== 'undefined' && window.JSChart && typeof window.JSChart.Init === 'function';
     }
 
-    function normalizeCode(symbol) {
+    function normalizeSymbol(symbol) {
         const value = String(symbol || '').trim().toLowerCase();
         if (!value) return '000001';
+        const prefixed = value.match(/^(sh|sz|bj)(\d{6})$/);
+        if (prefixed) return `${prefixed[2]}.${prefixed[1]}`;
+        const suffixed = value.match(/^(\d{6})[._-]?(sh|sz|bj)$/);
+        if (suffixed) return `${suffixed[1]}.${suffixed[2]}`;
         return value.split('.')[0];
     }
 
+    function normalizeCode(symbol) {
+        return normalizeSymbol(symbol).split('.')[0];
+    }
+
     function toHQSymbol(symbol) {
-        const raw = String(symbol || '').trim().toLowerCase();
+        const raw = normalizeSymbol(symbol);
         if (/^\d{6}\.(sh|sz|bj)$/.test(raw)) return raw;
         const code = normalizeCode(symbol);
         if (code.startsWith('6') || code.startsWith('9')) return `${code}.sh`;
@@ -88,8 +96,8 @@
     }
 
     async function fetchHistory(symbol, period, count) {
-        const querySymbol = String(symbol || '').trim() || normalizeCode(symbol);
-        const url = `/api/kline-all/tdx?code=${encodeURIComponent(normalizeCode(querySymbol))}&type=${encodeURIComponent(period || 'day')}&limit=${encodeURIComponent(count || 800)}`;
+        const querySymbol = normalizeSymbol(symbol);
+        const url = `/api/kline-all/tdx?code=${encodeURIComponent(querySymbol)}&type=${encodeURIComponent(period || 'day')}&limit=${encodeURIComponent(count || 800)}`;
         const response = await fetch(url);
         const result = await response.json();
         if (result.code !== 0) {
@@ -131,7 +139,7 @@
     }
 
     async function fetchQuote(symbol) {
-        const code = normalizeCode(symbol);
+        const code = normalizeSymbol(symbol);
         const response = await fetch(`/api/quote?code=${encodeURIComponent(code)}`);
         const result = await response.json();
         if (result.code !== 0) {
@@ -441,7 +449,7 @@
         if (!container || !hasHQChart()) return false;
 
         const key = chartKey(container);
-        const symbol = normalizeCode(options.symbol);
+        const symbol = normalizeSymbol(options.symbol);
         const period = options.period || 'day';
         const count = options.count || 800;
         const windows = options.windows || [
@@ -490,7 +498,7 @@
             },
             CorssCursorInfo: {
                 Right: 2,
-                DateFormatType: 3,
+                DateFormatType: 0,
                 IsShowCorss: true
             },
             EnableYDrag: { Right: true, Left: false },
@@ -513,7 +521,7 @@
         if (!container || !hasHQChart()) return false;
 
         const key = chartKey(container);
-        const symbol = normalizeCode(options.symbol);
+        const symbol = normalizeSymbol(options.symbol);
         states.set(key, { symbol, period: 'minute', count: 240 });
         destroyChart(container);
         states.set(key, { symbol, period: 'minute', count: 240 });

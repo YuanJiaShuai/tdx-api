@@ -36,7 +36,7 @@ function emptyExpression(): UniverseExpression {
   return {
     include: [{ pool: 'market-all-a' }],
     intersect: [],
-    exclude: [{ pool: 'exclude' }]
+    exclude: [{ pool: 'exclude' }, { pool: 'market-star' }, { pool: 'market-bj' }]
   };
 }
 
@@ -171,7 +171,7 @@ export function UniverseWorkspace() {
     }
     try {
       const data = await apiFetch<Strategy[]>('/api/strategies');
-      setStrategies((data || []).filter((item) => !item.readonly));
+      setStrategies(data || []);
       setApplyTarget('');
       setApplyDialogOpen(true);
     } catch (error) {
@@ -281,13 +281,13 @@ export function UniverseWorkspace() {
 
       <Modal open={applyDialogOpen} onCancel={() => setApplyDialogOpen(false)} footer={null} width={560} centered destroyOnHidden title={<div className="quote-dialog-title"><div><strong>应用到策略</strong><span>把当前范围写入目标策略</span></div><small>UNIVERSE → STRATEGY</small></div>}>
         <div className="universe-apply-body">
-          <Text type="secondary">仅替换目标策略 config_json 中的 universe 字段,过滤、评分与输出参数保持不变。系统模板不能直接修改,请先复制副本。</Text>
+          <Text type="secondary">仅替换目标策略的候选覆盖；过滤、评分与输出参数保持不变。系统策略也可调整候选覆盖，因子和评分条件仍保持锁定。</Text>
           <Select
             showSearch
             value={applyTarget || undefined}
             placeholder="选择目标策略"
             optionFilterProp="label"
-            options={strategies.map((item) => ({ value: item.id, label: `${item.name}` }))}
+            options={strategies.map((item) => ({ value: item.id, label: `${item.name}${item.readonly ? ' · 系统策略' : ''}` }))}
             onChange={setApplyTarget}
           />
           {applyTarget ? <div className="universe-apply-current"><span>该策略当前范围</span><strong>{applyTargetSummary || '--'}</strong></div> : null}

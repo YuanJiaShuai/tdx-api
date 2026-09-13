@@ -91,3 +91,40 @@ func TestFetchHikyuuKlineRejectsUnsupportedPeriod(t *testing.T) {
 		t.Fatal("expected unsupported period error")
 	}
 }
+
+func TestHikyuuDataServiceClientFetchKlineBatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/hikyuu/kline/batch" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code": 0, "message": "success",
+			"data": map[string]interface{}{
+				"period": "day", "recover": "qfq",
+				"data": map[string]interface{}{
+					"000001": map[string]interface{}{
+						"symbol": "000001", "period": "day", "recover": "qfq", "count": 1,
+						"list": []map[string]interface{}{{
+							"time": "2026-09-11T15:00:00+08:00", "open": 10.0, "high": 10.5,
+							"low": 9.8, "close": 10.2, "volume": 1234, "amount": 567.8,
+						}},
+					},
+				},
+				"errors": map[string]string{"000002": "no kline data"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := &HikyuuDataServiceClient{baseURL: server.URL, httpClient: server.Client()}
+	data, failures, err := client.FetchKlineBatch(context.Background(), []string{"000001", "000002"}, "day", "qfq", 260)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data["000001"].List) != 1 || data["000001"].List[0].Close != protocol.Yuan(10.2) {
+		t.Fatalf("unexpected batch data: %+v", data)
+	}
+	if failures["000002"] != "no kline data" {
+		t.Fatalf("unexpected failures: %+v", failures)
+	}
+}

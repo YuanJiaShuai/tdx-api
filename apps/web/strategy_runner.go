@@ -21,6 +21,7 @@ type StrategyConfig struct {
 	Right           int                        `json:"right"`
 	CalcCount       int                        `json:"calc_count"`
 	BatchSize       int                        `json:"batch_size"`
+	ScanLimit       *int                       `json:"scan_limit,omitempty"`
 	ContinueOnError bool                       `json:"continue_on_error"`
 }
 
@@ -70,6 +71,8 @@ type StrategyFactorResult struct {
 	Value  any     `json:"value,omitempty"`
 	Reason string  `json:"reason"`
 }
+
+const strategyBenchmarkSymbol = "sh000001"
 
 func (r *AutomationRunner) runStrategySelection(ctx context.Context, task AutomationTask, run AutomationRun) (interface{}, []string, error) {
 	var payload struct {
@@ -142,6 +145,15 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 	if universe.Truncated {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("选股范围覆盖 %d 只，当前运行保护仅扫描前 %d 只", universe.Total, len(universe.Symbols)))
 	}
+	if err := r.prepareStrategyMarketContext(ctx, &result); err != nil {
+		return StrategyRunResult{}, err
+	}
+	if !r.strategyMarketContextPasses(&result) {
+		result.Items = []StrategySelectionItem{}
+		result.Matched = 0
+		result.Errors = nil
+		return result, nil
+	}
 	if err := r.prepareStrategyFormulas(ctx, &result, symbols); err != nil {
 		return StrategyRunResult{}, err
 	}
@@ -183,12 +195,57 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 	return result, nil
 }
 
+func strategyUsesMarketContext(config StrategyConfig) bool {
+	for _, rule := range append(append([]StrategyFactorRule{}, config.Filters...), config.Scores...) {
+		if rule.Factor == "market_momentum" {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *AutomationRunner) prepareStrategyMarketContext(ctx context.Context, result *StrategyRunResult) error {
+	if result == nil || !strategyUsesMarketContext(result.Config) {
+		return nil
+	}
+	if rows := result.KlineCache[strategyBenchmarkSymbol]; len(rows) > 0 {
+		return nil
+	}
+	resp, err := marketServiceIndexKline(ctx, strategyBenchmarkSymbol, formulaPeriodToKlineType(result.Config.Period), result.Config.CalcCount)
+	if err != nil {
+		return fmt.Errorf("上证指数K线加载失败: %w", err)
+	}
+	if resp == nil || len(resp.List) == 0 {
+		return errors.New("上证指数K线为空")
+	}
+	result.KlineCache[strategyBenchmarkSymbol] = protocolKlinesToFormulaRows(resp.List, result.Config.CalcCount)
+	return nil
+}
+
+func (r *AutomationRunner) strategyMarketContextPasses(result *StrategyRunResult) bool {
+	if result == nil || !strategyUsesMarketContext(result.Config) {
+		return true
+	}
+	rows := result.KlineCache[strategyBenchmarkSymbol]
+	for _, rule := range result.Config.Filters {
+		if rule.Factor == "market_momentum" && !r.evaluateFactor(result, strategyBenchmarkSymbol, rows, rule, true).Hit {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *AutomationRunner) strategyUniverse(cfg StrategyConfig) ([]string, error) {
 	result, err := r.strategyUniverseResult(cfg, strategyMaxCodes(cfg))
 	return result.Symbols, err
 }
 
 func strategyMaxCodes(cfg StrategyConfig) int {
+	// scan_limit is opt-in: 0 explicitly means scan the complete universe.
+	// Omitting it preserves the default request-protection cap.
+	if cfg.ScanLimit != nil && *cfg.ScanLimit >= 0 {
+		return *cfg.ScanLimit
+	}
 	maxCodes := 300
 	if cfg.BatchSize > 0 && cfg.BatchSize > maxCodes {
 		maxCodes = cfg.BatchSize
@@ -215,13 +272,14 @@ func (r *AutomationRunner) prepareStrategyFormulas(ctx context.Context, result *
 		allData := map[string]interface{}{}
 		for _, batch := range chunkSymbols(symbols, result.Config.BatchSize) {
 			resp, err := r.worker.Run(ctx, FormulaRunRequest{
-				Symbols:   batch,
-				Script:    formula.Script,
-				Args:      json.RawMessage(formula.ArgsJSON),
-				Period:    chooseString(result.Config.Period, formula.Period),
-				Right:     chooseInt(result.Config.Right, formula.Right),
-				OutCount:  1,
-				CalcCount: result.Config.CalcCount,
+				Symbols:       batch,
+				Script:        formula.Script,
+				Args:          json.RawMessage(formula.ArgsJSON),
+				Period:        chooseString(result.Config.Period, formula.Period),
+				Right:         chooseInt(result.Config.Right, formula.Right),
+				OutCount:      1,
+				CalcCount:     result.Config.CalcCount,
+				ForceFallback: true,
 			})
 			if err == nil {
 				mergeFormulaData(allData, resp.Data)
@@ -232,13 +290,14 @@ func (r *AutomationRunner) prepareStrategyFormulas(ctx context.Context, result *
 			}
 			for _, symbol := range batch {
 				singleResp, singleErr := r.worker.Run(ctx, FormulaRunRequest{
-					Symbols:   []string{symbol},
-					Script:    formula.Script,
-					Args:      json.RawMessage(formula.ArgsJSON),
-					Period:    chooseString(result.Config.Period, formula.Period),
-					Right:     chooseInt(result.Config.Right, formula.Right),
-					OutCount:  1,
-					CalcCount: result.Config.CalcCount,
+					Symbols:       []string{symbol},
+					Script:        formula.Script,
+					Args:          json.RawMessage(formula.ArgsJSON),
+					Period:        chooseString(result.Config.Period, formula.Period),
+					Right:         chooseInt(result.Config.Right, formula.Right),
+					OutCount:      1,
+					CalcCount:     result.Config.CalcCount,
+					ForceFallback: true,
 				})
 				if singleErr != nil {
 					result.Errors[symbol] = fmt.Sprintf("公式%s执行失败: %v", formula.Name, singleErr)
@@ -336,6 +395,30 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 	}
 	// 每个 case 命中后把 fr.Score 设为归一化强度(0~1]，末尾再乘权重。
 	switch rule.Factor {
+	case "market_momentum":
+		days := intParam(rule.Params, "days", 20)
+		minPct := floatParam(rule.Params, "min", -math.MaxFloat64)
+		maxPct := floatParam(rule.Params, "max", math.MaxFloat64)
+		benchmarkRows := result.KlineCache[strategyBenchmarkSymbol]
+		if len(rows) > 0 && len(benchmarkRows) > 0 {
+			end := sort.Search(len(benchmarkRows), func(i int) bool { return benchmarkRows[i].Date > latest(rows).Date })
+			benchmarkRows = benchmarkRows[:end]
+		}
+		if days <= 0 || len(benchmarkRows) < days+1 || len(rows) == 0 || latest(benchmarkRows).Date != latest(rows).Date {
+			fr.Reason = fmt.Sprintf("市场状态数据不足，需要上证指数与个股同日且至少%d根K线", days+1)
+			break
+		}
+		base := benchmarkRows[len(benchmarkRows)-1-days].Close
+		current := latest(benchmarkRows).Close
+		if base <= 0 {
+			fr.Reason = "市场状态基准价格无效"
+			break
+		}
+		momentum := (current - base) * 100 / base
+		fr.Hit = momentum >= minPct && momentum <= maxPct
+		fr.Score = 1
+		fr.Value = momentum
+		fr.Reason = fmt.Sprintf("上证指数%d日涨幅 %.2f%% 在 %.2f-%.2f%%", days, momentum, minPct, maxPct)
 	case "pool_exclude":
 		poolID := stringParam(rule.Params, "pool_id", DecisionExcludePoolID)
 		inPool := r.strategyPoolContains(result, poolID, symbol)
@@ -448,8 +531,14 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 			break
 		}
 		gain := (closePrice - base) * 100 / base
-		fr.Hit = true
 		fr.Value = map[string]float64{"base": base, "close": closePrice, "gain": gain}
+		if filter {
+			fr.Hit = gain >= minPct && gain <= maxPct
+			fr.Score = 1
+			fr.Reason = fmt.Sprintf("%d日涨幅 %.2f%% 在 %.2f-%.2f%%", days, gain, minPct, maxPct)
+			break
+		}
+		fr.Hit = true
 		switch {
 		case gain < minPct:
 			fr.Score = clamp01(gain / math.Max(minPct, 0.01))
@@ -472,8 +561,14 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 			break
 		}
 		depth := (high - closePrice) * 100 / high
-		fr.Hit = true
 		fr.Value = map[string]float64{"high": high, "close": closePrice, "depth": depth}
+		if filter {
+			fr.Hit = depth >= minPct && depth <= maxPct
+			fr.Score = 1
+			fr.Reason = fmt.Sprintf("距%d日高点回撤 %.2f%% 在 %.2f-%.2f%%", days, depth, minPct, maxPct)
+			break
+		}
+		fr.Hit = true
 		switch {
 		case depth < minPct:
 			fr.Score = clamp01(depth / math.Max(minPct, 0.01))
@@ -485,19 +580,42 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 			fr.Score = 1
 			fr.Reason = fmt.Sprintf("距%d日高点回撤 %.2f%% 落在 %.2f-%.2f%%", days, depth, minPct, maxPct)
 		}
+	case "ma_slope":
+		hit, raw, reason := evaluateMASlope(rows, rule)
+		fr.Hit, fr.Reason, fr.Value = hit, reason, raw
+		if hit {
+			minSlope := floatParam(rule.Params, "min", 0)
+			maxSlope := floatParam(rule.Params, "max", 20)
+			fr.Score = clamp01((raw - minSlope) / math.Max(maxSlope-minSlope, 0.01))
+		}
+	case "close_strength":
+		hit, raw, reason := evaluateCloseStrength(rows, rule)
+		fr.Hit, fr.Reason, fr.Value = hit, reason, raw
+		if hit {
+			fr.Score = clamp01(raw)
+		}
+	case "rsi_rebound":
+		hit, raw, reason := evaluateRSIRebound(rows, rule)
+		fr.Hit, fr.Reason, fr.Value = hit, reason, raw
+		if hit {
+			maxCurrent := floatParam(rule.Params, "max_current", 55)
+			fr.Score = clamp01(1 - raw/math.Max(maxCurrent, 0.01))
+		}
 	case "macd_golden_cross":
 		hit, raw, reason := evaluateMACDSignal(rows, rule, true)
 		fr.Hit, fr.Reason = hit, reason
 		fr.Value = raw
 		if hit {
-			fr.Score = clamp01(raw / 0.05)
+			closePrice := latest(rows).Close
+			fr.Score = clamp01(raw / math.Max(closePrice, 0.01) * 100 / 0.3)
 		}
 	case "macd_dead_cross":
 		hit, raw, reason := evaluateMACDSignal(rows, rule, false)
 		fr.Hit, fr.Reason = hit, reason
 		fr.Value = raw
 		if hit {
-			fr.Score = clamp01(raw / 0.05)
+			closePrice := latest(rows).Close
+			fr.Score = clamp01(raw / math.Max(closePrice, 0.01) * 100 / 0.3)
 		}
 	case "kdj_golden_cross":
 		hit, raw, reason := evaluateKDJGoldenCross(rows, rule)
@@ -554,8 +672,13 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		fr.Value = formula.Name
 		fr.Reason = fmt.Sprintf("公式%s命中: %t", formula.Name, fr.Hit)
 	default:
-		fr.Hit = false
-		fr.Reason = "未知因子: " + rule.Factor
+		recognized, hit, strength, value, reason := evaluateAdvancedStrategyFactor(rows, rule, filter)
+		if recognized {
+			fr.Hit, fr.Score, fr.Value, fr.Reason = hit, strength, value, reason
+		} else {
+			fr.Hit = false
+			fr.Reason = "未知因子: " + rule.Factor
+		}
 	}
 	if fr.Hit {
 		fr.Score *= weight

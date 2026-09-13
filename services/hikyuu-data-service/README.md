@@ -16,6 +16,7 @@ API：
 - `GET /api/hikyuu/metadata`
 - `GET /api/hikyuu/quality`
 - `GET /api/hikyuu/kline?code=600519.SH&type=day&limit=120&recover=qfq`
+- `POST /api/hikyuu/kline/batch`：批量读取最多 128 只证券，逐证券返回数据或错误
 - `POST /api/hikyuu/indicators`
 - `POST /api/hikyuu/backtest`
 - `POST /api/hikyuu/tasks/full-sync`
@@ -48,14 +49,17 @@ API：
 - 周期：日线、1 分钟、5 分钟
 - 扩展数据：权息、历史财务、板块、10 年期国债收益率
 
-服务内置定时器，默认在 `Asia/Shanghai` 每个工作日 `16:30` 执行盘后增量同步。
+服务支持内置定时器；Compose 部署中由 selection-worker 的固定收盘任务在交易日
+`16:30` 发起同步并等待完成，因此设置 `HIKYUU_SCHEDULER_ENABLED=false`，避免重复写入。
 
 同一时间只允许运行一个下载任务，避免 hikyuu HDF5 写入互相冲突。
+查询、指标和参考回测使用短生命周期子进程读取 HDF5；普通读取会在服务内串行执行，
+同步期间则返回 503，由上游 market-service 使用通达信兜底，避免读进程长期占用 HDF5 锁。
 
 K 线查询支持 `day`、`minute1`、`minute5`、`week`、`month`，复权参数支持
 `none`、`qfq`/`forward`、`hfq`/`backward` 以及等比复权。查询接口只读取本地
 hikyuu 数据，不会触发下载；没有数据时返回失败，由上游 market-service 回退到
-原有行情源。
+通达信。策略和回测始终通过 market-service 读取，不直接访问 Hikyuu 或旧 SQLite。
 
 指标接口支持 `ma`、`ema`、`macd`、`boll`、`atr`，返回 `data_revision` 和
 `calculation_engine` 便于复现研究结果。回测接口提供可校验的 Hikyuu MA 交叉

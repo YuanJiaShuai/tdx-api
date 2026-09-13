@@ -21,15 +21,16 @@ type FormulaWorkerClient struct {
 }
 
 type FormulaRunRequest struct {
-	Symbol    string                    `json:"symbol,omitempty"`
-	Symbols   []string                  `json:"symbols,omitempty"`
-	Script    string                    `json:"script"`
-	Args      json.RawMessage           `json:"args,omitempty"`
-	Period    string                    `json:"period"`
-	Right     int                       `json:"right"`
-	OutCount  int                       `json:"out_count"`
-	CalcCount int                       `json:"calc_count"`
-	Data      map[string][]FormulaKline `json:"data,omitempty"`
+	Symbol        string                    `json:"symbol,omitempty"`
+	Symbols       []string                  `json:"symbols,omitempty"`
+	Script        string                    `json:"script"`
+	Args          json.RawMessage           `json:"args,omitempty"`
+	Period        string                    `json:"period"`
+	Right         int                       `json:"right"`
+	OutCount      int                       `json:"out_count"`
+	CalcCount     int                       `json:"calc_count"`
+	ForceFallback bool                      `json:"force_fallback,omitempty"`
+	Data          map[string][]FormulaKline `json:"data,omitempty"`
 }
 
 type FormulaRunResponse struct {
@@ -113,27 +114,50 @@ func (c *FormulaWorkerClient) Run(ctx context.Context, reqData FormulaRunRequest
 	if err != nil {
 		return respData, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/formula/run", bytes.NewReader(raw))
-	if err != nil {
-		return respData, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return respData, err
-	}
-	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
-		return respData, err
-	}
-	if resp.StatusCode >= 300 || respData.Code != 0 {
-		if respData.Message == "" {
-			respData.Message = resp.Status
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(time.Duration(attempt) * 500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return respData, ctx.Err()
+			case <-timer.C:
+			}
 		}
-		return respData, errors.New(respData.Message)
+		respData = FormulaRunResponse{}
+		httpReq, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/formula/run", bytes.NewReader(raw))
+		if requestErr != nil {
+			return respData, requestErr
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, requestErr := c.httpClient.Do(httpReq)
+		if requestErr != nil {
+			if ctx.Err() != nil {
+				return respData, ctx.Err()
+			}
+			lastErr = requestErr
+			continue
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&respData)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			lastErr = decodeErr
+			continue
+		}
+		if resp.StatusCode >= 300 || respData.Code != 0 {
+			if respData.Message == "" {
+				respData.Message = resp.Status
+			}
+			lastErr = errors.New(respData.Message)
+			if resp.StatusCode < 500 {
+				return respData, lastErr
+			}
+			continue
+		}
+		return respData, nil
 	}
-	return respData, nil
+	return respData, fmt.Errorf("formula worker请求失败，已重试2次: %w", lastErr)
 }
 
 func buildFormulaData(ctx context.Context, symbols []string, symbol, period string, calcCount int) (map[string][]FormulaKline, error) {

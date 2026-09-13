@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -34,6 +36,29 @@ type hikyuuKlineResponse struct {
 	Count   int                    `json:"count"`
 	List    []hikyuuKlineItem      `json:"list"`
 	Meta    map[string]interface{} `json:"meta"`
+}
+
+type hikyuuKlineBatchResponse struct {
+	Period  string                         `json:"period"`
+	Recover string                         `json:"recover"`
+	Data    map[string]hikyuuKlineResponse `json:"data"`
+	Errors  map[string]string              `json:"errors"`
+	Meta    map[string]interface{}         `json:"meta"`
+}
+
+type HikyuuTask struct {
+	ID        string                 `json:"id"`
+	Type      string                 `json:"type"`
+	Status    string                 `json:"status"`
+	StartedAt string                 `json:"started_at"`
+	EndedAt   string                 `json:"ended_at"`
+	ExitCode  *int                   `json:"exit_code"`
+	Error     string                 `json:"error"`
+	Progress  *int                   `json:"progress,omitempty"`
+	Stage     string                 `json:"stage,omitempty"`
+	Message   string                 `json:"message,omitempty"`
+	Request   map[string]interface{} `json:"request,omitempty"`
+	LogTail   []string               `json:"log_tail,omitempty"`
 }
 
 type hikyuuKlineItem struct {
@@ -116,6 +141,10 @@ func (c *HikyuuDataServiceClient) FetchKline(ctx context.Context, code, klineTyp
 	if err != nil {
 		return nil, err
 	}
+	return hikyuuKlineToProtocol(resp, klineType)
+}
+
+func hikyuuKlineToProtocol(resp *hikyuuKlineResponse, klineType string) (*protocol.KlineResp, error) {
 	list := make([]*protocol.Kline, 0, len(resp.List))
 	for _, item := range resp.List {
 		t, err := time.Parse(time.RFC3339, item.Time)
@@ -141,6 +170,110 @@ func (c *HikyuuDataServiceClient) FetchKline(ctx context.Context, code, klineTyp
 		Count: uint16(count),
 		List:  list,
 	}, nil
+}
+
+func (c *HikyuuDataServiceClient) FetchKlineBatch(ctx context.Context, symbols []string, klineType, recover string, limit int) (map[string]*protocol.KlineResp, map[string]string, error) {
+	if !c.Enabled() {
+		return nil, nil, errors.New("HIKYUU_DATA_SERVICE_URL 未配置")
+	}
+	raw, err := json.Marshal(map[string]interface{}{
+		"symbols": symbols,
+		"period":  klineType,
+		"recover": recover,
+		"limit":   limit,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/hikyuu/kline/batch", bytes.NewReader(raw))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var envelope hikyuuEnvelope
+	if err := c.do(req, &envelope); err != nil {
+		return nil, nil, err
+	}
+	if envelope.Code != 0 {
+		return nil, nil, errors.New(envelope.Message)
+	}
+	var batch hikyuuKlineBatchResponse
+	if err := json.Unmarshal(envelope.Data, &batch); err != nil {
+		return nil, nil, err
+	}
+	if batch.Errors == nil {
+		batch.Errors = map[string]string{}
+	}
+	result := make(map[string]*protocol.KlineResp, len(batch.Data))
+	for symbol, item := range batch.Data {
+		converted, convertErr := hikyuuKlineToProtocol(&item, klineType)
+		if convertErr != nil {
+			batch.Errors[symbol] = convertErr.Error()
+			continue
+		}
+		result[symbol] = converted
+	}
+	return result, batch.Errors, nil
+}
+
+func (c *HikyuuDataServiceClient) StartAfterCloseSync(ctx context.Context) (*HikyuuTask, error) {
+	payload := map[string]interface{}{
+		"day": true, "min": false, "min5": false, "trans": false, "time": false,
+		"stock": true, "fund": true, "weight": true, "finance": false, "block": false,
+		"use_tdx_number": 10,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/hikyuu/tasks/after-close-sync", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.readTask(req)
+}
+
+func (c *HikyuuDataServiceClient) GetTask(ctx context.Context, id string) (*HikyuuTask, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/hikyuu/tasks/"+url.PathEscape(id), nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.readTask(req)
+}
+
+func (c *HikyuuDataServiceClient) readTask(req *http.Request) (*HikyuuTask, error) {
+	if !c.Enabled() {
+		return nil, errors.New("HIKYUU_DATA_SERVICE_URL 未配置")
+	}
+	var envelope hikyuuEnvelope
+	if err := c.do(req, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Code != 0 {
+		return nil, errors.New(envelope.Message)
+	}
+	var task HikyuuTask
+	if err := json.Unmarshal(envelope.Data, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (c *HikyuuDataServiceClient) do(req *http.Request, out interface{}) error {
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("hikyuu-data-service %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return json.Unmarshal(body, out)
 }
 
 func hikyuuVolumeToTDX(klineType string, volume float64) int64 {

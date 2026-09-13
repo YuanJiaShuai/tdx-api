@@ -178,6 +178,17 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			ID:          "market_momentum",
+			Name:        "大盘趋势门槛",
+			Kind:        "filter",
+			Description: "要求上证指数截至信号日的N日涨幅落在指定区间，用于限制策略只在匹配的市场环境运行。",
+			Params: []StrategyFactorParamDef{
+				{Name: "days", Label: "回看天数", Type: "number", Default: 20},
+				{Name: "min", Label: "最小涨幅%", Type: "number", Default: 0},
+				{Name: "max", Label: "最大涨幅%", Type: "number", Default: 100},
+			},
+		},
+		{
 			ID:          "ma_trend",
 			Name:        "均线多头",
 			Kind:        "score",

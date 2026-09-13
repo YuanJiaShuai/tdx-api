@@ -1,0 +1,76 @@
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+func TestHistoricalRowsThroughDateDoesNotExposeFutureBars(t *testing.T) {
+	rows := []FormulaKline{
+		{Date: 20260105, Close: 10},
+		{Date: 20260106, Close: 11},
+		{Date: 20260107, Close: 12},
+	}
+	visible, ok := historicalRowsThroughDate(rows, 20260106)
+	if !ok {
+		t.Fatal("expected signal date to be available")
+	}
+	if len(visible) != 2 || visible[len(visible)-1].Date != 20260106 {
+		t.Fatalf("visible rows = %+v, want rows through 20260106", visible)
+	}
+	if _, ok := historicalRowsThroughDate(rows, 20260108); ok {
+		t.Fatal("non-trading date must not reuse a stale bar")
+	}
+}
+
+func TestRankHistoricalMatchesAppliesDailyTopN(t *testing.T) {
+	items := []StrategySelectionItem{
+		{Symbol: "000003", Score: 70},
+		{Symbol: "000002", Score: 80},
+		{Symbol: "000001", Score: 80},
+	}
+	ranked := rankHistoricalMatches(items, 2)
+	if len(ranked) != 2 {
+		t.Fatalf("len(ranked) = %d, want 2", len(ranked))
+	}
+	if ranked[0].Symbol != "000001" || ranked[1].Symbol != "000002" {
+		t.Fatalf("ranked symbols = %s,%s, want stable score/symbol order", ranked[0].Symbol, ranked[1].Symbol)
+	}
+}
+
+func TestNormalizeHistoricalBacktestRequestDefaults(t *testing.T) {
+	req, _, _, err := normalizeHistoricalBacktestRequest(historicalBacktestRequest{StartDate: "2026-01-01", EndDate: "2026-02-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Horizons) != 3 || req.Horizons[0] != 3 || req.Horizons[1] != 5 || req.Horizons[2] != 10 {
+		t.Fatalf("horizons = %v, want [3 5 10]", req.Horizons)
+	}
+	if req.TargetReturn != 3 || req.DrawdownLimit != 5 {
+		t.Fatalf("policy = %.1f/%.1f, want 3/5", req.TargetReturn, req.DrawdownLimit)
+	}
+}
+
+func TestHistoricalHistoryCountIncludesGapFromReplayToLatestData(t *testing.T) {
+	location := time.FixedZone("CST", 8*60*60)
+	start := time.Date(2024, 1, 2, 0, 0, 0, 0, location)
+	end := time.Date(2024, 1, 2, 0, 0, 0, 0, location)
+	reference := time.Date(2026, 6, 5, 0, 0, 0, 0, location)
+
+	count := historicalHistoryCount(start, end, reference, 10)
+	if count <= 260 {
+		t.Fatalf("history count = %d, want enough rows to bridge an old narrow replay", count)
+	}
+}
+
+func TestHistoricalHistoryCountUsesMinimumAndMaximumBounds(t *testing.T) {
+	location := time.FixedZone("CST", 8*60*60)
+	reference := time.Date(2026, 6, 5, 0, 0, 0, 0, location)
+	if count := historicalHistoryCount(reference, reference, reference, 10); count != 260 {
+		t.Fatalf("minimum history count = %d, want 260", count)
+	}
+	oldStart := time.Date(2000, 1, 1, 0, 0, 0, 0, location)
+	if count := historicalHistoryCount(oldStart, oldStart, reference, 10); count != 2000 {
+		t.Fatalf("maximum history count = %d, want 2000", count)
+	}
+}

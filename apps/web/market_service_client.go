@@ -176,3 +176,17 @@ func marketServiceKlineHistory(ctx context.Context, code, klineType string, limi
 	}
 	return &resp, nil
 }
+
+func marketServiceIndexKline(ctx context.Context, code, klineType string, limit int) (*protocol.KlineResp, error) {
+	query := url.Values{}
+	query.Set("code", code)
+	query.Set("type", klineType)
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	var resp protocol.KlineResp
+	if err := marketServiceGet(ctx, "/api/index", query, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

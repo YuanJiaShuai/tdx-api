@@ -61,6 +61,7 @@ const (
 	DecisionExcludePoolID            = "exclude"
 	FixedCloseSyncTaskID             = "fixed-close-sync"
 	FixedSelectionTrackingTaskID     = "fixed-selection-tracking"
+	SystemStrategyDailyBatchTaskID   = "system-strategy-daily-batch"
 	LegacyMarketInfoSyncTaskID       = "market-info-sync"
 	LegacyMarketInfoSyncPayload      = `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`
 	MarketLongTigerSyncTaskID        = "market-long-tiger-sync"
@@ -91,6 +92,7 @@ type AutomationTask struct {
 
 type AutomationRun struct {
 	ID           string `json:"id"`
+	ParentRunID  string `json:"parent_run_id"`
 	TaskID       string `json:"task_id"`
 	TaskName     string `json:"task_name"`
 	TaskType     string `json:"task_type"`
@@ -283,6 +285,7 @@ func (s *AppStore) migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS automation_runs (
 			id TEXT PRIMARY KEY,
+			parent_run_id TEXT NOT NULL DEFAULT '',
 			task_id TEXT NOT NULL,
 			task_name TEXT NOT NULL,
 			task_type TEXT NOT NULL,
@@ -315,6 +318,46 @@ func (s *AppStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol_created_at ON selection_results(symbol, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
+		`CREATE TABLE IF NOT EXISTS historical_backtest_runs (
+			id TEXT PRIMARY KEY,
+			status TEXT NOT NULL DEFAULT 'pending',
+			start_date TEXT NOT NULL,
+			end_date TEXT NOT NULL,
+			strategy_ids_json TEXT NOT NULL DEFAULT '[]',
+			strategy_snapshot_json TEXT NOT NULL DEFAULT '[]',
+			horizons_json TEXT NOT NULL DEFAULT '[3,5,10]',
+			target_return REAL NOT NULL DEFAULT 3,
+			drawdown_limit REAL NOT NULL DEFAULT 5,
+			total_dates INTEGER NOT NULL DEFAULT 0,
+			processed_dates INTEGER NOT NULL DEFAULT 0,
+			current_date TEXT NOT NULL DEFAULT '',
+			candidate_symbols INTEGER NOT NULL DEFAULT 0,
+			signal_count INTEGER NOT NULL DEFAULT 0,
+			result_json TEXT NOT NULL DEFAULT '{}',
+			error TEXT NOT NULL DEFAULT '',
+			cancel_requested INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			started_at TEXT NOT NULL DEFAULT '',
+			finished_at TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_runs_created_at ON historical_backtest_runs(created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS historical_backtest_signals (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			strategy_id TEXT NOT NULL,
+			strategy_name TEXT NOT NULL,
+			signal_date TEXT NOT NULL,
+			symbol TEXT NOT NULL,
+			latest REAL NOT NULL DEFAULT 0,
+			score REAL NOT NULL DEFAULT 0,
+			detail_json TEXT NOT NULL DEFAULT '{}',
+			tracking_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_date ON historical_backtest_signals(run_id, signal_date DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_strategy ON historical_backtest_signals(run_id, strategy_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_symbol ON historical_backtest_signals(run_id, symbol)`,
 		`CREATE TABLE IF NOT EXISTS decision_notes (
 			symbol TEXT PRIMARY KEY,
 			status TEXT NOT NULL DEFAULT '',
@@ -416,12 +459,29 @@ func (s *AppStore) migrate() error {
 		},
 		"macro_alert_settings": {"notify_webhooks": "INTEGER NOT NULL DEFAULT 0", "webhook_ids": "TEXT NOT NULL DEFAULT '[]'"},
 		"selection_results":    {"tracking_json": "TEXT NOT NULL DEFAULT '{}'"},
+		"automation_runs":      {"parent_run_id": "TEXT NOT NULL DEFAULT ''"},
 	} {
 		for column, definition := range columns {
 			if err := s.ensureColumn(table, column, definition); err != nil {
 				return err
 			}
 		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_automation_runs_parent_started_at ON automation_runs(parent_run_id, started_at)`); err != nil {
+		return err
+	}
+	// Runs created before parent_run_id existed are linked to the enclosing
+	// system-strategy batch so historical daily reviews remain available.
+	if _, err := s.db.Exec(`UPDATE automation_runs AS child
+		SET parent_run_id=COALESCE((
+			SELECT parent.id FROM automation_runs AS parent
+			WHERE parent.task_id=?
+				AND parent.started_at<=child.started_at
+				AND (parent.finished_at='' OR child.started_at<=parent.finished_at)
+			ORDER BY parent.started_at DESC LIMIT 1
+		), '')
+		WHERE child.task_id LIKE 'system-strategy:%' AND child.parent_run_id=''`, SystemStrategyDailyBatchTaskID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -538,39 +598,246 @@ func (s *AppStore) seedDefaults() error {
 }
 
 func defaultStrategyTemplates() []Strategy {
-	return []Strategy{
+	templates := []Strategy{
+		// ========== 保留的10个中线趋势策略 ==========
 		{
 			ID:          "template-a-share-v3",
 			Name:        "A股V3强势启动",
-			Description: "内置模板：硬过滤成交额/排除池，使用趋势、放量、突破和主力拉升公式进行加权评分。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}}],"scores":[{"id":"ma_trend","factor":"ma_trend","weight":20,"params":{"short":5,"mid":10,"long":20}},{"id":"volume_up","factor":"volume_up","weight":15,"params":{"days":5,"ratio":1.3}},{"id":"break_high","factor":"break_high","weight":15,"params":{"days":20}},{"id":"main_force","factor":"formula","weight":30,"params":{"formula_name":"主力拉升"}}],"pass":{"min_score":60,"top_n":50}}`,
+			Description: "中线趋势：先过滤流动性、趋势斜率、追高风险和弱收盘，再由放量、突破、MACD与主力拉升共振排序。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":8}},{"id":"change_guard","factor":"change_range","params":{"min":1,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.65,"max_upper_shadow":2.5}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":25,"params":{"days":5,"ratio":1.3}},{"id":"break_high","factor":"break_high","weight":25,"params":{"days":20}},{"id":"macd_golden","factor":"macd_golden_cross","weight":15,"params":{"fast":12,"slow":26,"signal":9}},{"id":"main_force","factor":"formula","weight":35,"params":{"formula_name":"主力拉升"}}],"pass":{"min_score":45,"top_n":8}}`,
 			Enabled:     true,
 			Readonly:    true,
 		},
 		{
 			ID:          "template-macd-trend",
 			Name:        "MACD趋势启动",
-			Description: "本地指标模板：MACD金叉配合均线多头和放量突破。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":80000000}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":25,"params":{"fast":12,"slow":26,"signal":9}},{"id":"ma_trend","factor":"ma_trend","weight":20,"params":{"short":5,"mid":10,"long":20}},{"id":"volume_breakout","factor":"volume_breakout","weight":20,"params":{"days":20,"ratio":1.5,"min_change":2}}],"pass":{"min_score":45,"top_n":50}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-local-rocket",
-			Name:        "本地火箭发射",
-			Description: "本地自定义模板：涨幅、放量、突破与均线共振。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}}],"scores":[{"id":"local_rocket","factor":"local_rocket","weight":35,"params":{"lookback":20,"volume_days":5,"volume_ratio":1.8,"min_change":3,"short_ma":5,"mid_ma":10}},{"id":"macd_golden","factor":"macd_golden_cross","weight":15,"params":{"fast":12,"slow":26,"signal":9}},{"id":"boll_breakout","factor":"boll_breakout","weight":10,"params":{"period":20,"width":2}}],"pass":{"min_score":40,"top_n":50}}`,
+			Description: "中线趋势：MACD金叉必须发生在中期多头且均线继续上行的结构中，过滤弱收盘和过度追涨。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.2,"max":7}},{"id":"macd_trigger","factor":"macd_golden_cross","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":-1,"max":5.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.6,"max_upper_shadow":2.5}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":35,"params":{"days":5,"ratio":1.2}},{"id":"break_high","factor":"break_high","weight":30,"params":{"days":20}},{"id":"gain_quality","factor":"gain_days","weight":20,"params":{"days":20,"min":3,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.2,"max":7}}],"pass":{"min_score":12,"top_n":8}}`,
 			Enabled:     true,
 			Readonly:    true,
 		},
 		{
 			ID:          "template-pullback",
 			Name:        "强势股回调低吸",
-			Description: "内置模板：用N日涨幅圈强势股，用距高点回撤与振幅过滤定位回调，配合低位KDJ金叉评分。",
-			ConfigJSON:  `{"universe":{"include":[{"pool":"market-all-a"}],"exclude":[{"pool":"exclude"}]},"calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}},{"id":"max_amplitude","factor":"max_amplitude","params":{"days":5,"max":8}}],"scores":[{"id":"gain_days","factor":"gain_days","weight":25,"params":{"days":20,"min":5,"max":50}},{"id":"drawdown","factor":"drawdown_from_high","weight":35,"params":{"days":60,"min":5,"max":15}},{"id":"kdj_low","factor":"kdj_golden_cross","weight":20,"params":{"n":9,"k":3,"d":3}}],"pass":{"min_score":50,"top_n":15}}`,
+			Description: "中线回调：只在中期上行股票完成7%至12%回撤并出现KDJ止跌金叉时入选，排除高波动弱修复。",
+			ConfigJSON:  `{"universe":{"include":[{"pool":"market-all-a"}],"exclude":[{"pool":"exclude"}]},"calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"max_amplitude","factor":"max_amplitude","params":{"days":5,"max":7.5}},{"id":"long_slope","factor":"ma_slope","params":{"period":60,"lookback":10,"min":0,"max":12}},{"id":"prior_strength","factor":"gain_days","params":{"days":20,"min":8,"max":35}},{"id":"pullback_depth","factor":"drawdown_from_high","params":{"days":60,"min":7,"max":12}},{"id":"kdj_trigger","factor":"kdj_golden_cross","params":{"n":9,"k":3,"d":3}},{"id":"change_guard","factor":"change_range","params":{"min":0,"max":1.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.55,"max_upper_shadow":2.5}}],"scores":[{"id":"rsi_rebound","factor":"rsi_rebound","weight":35,"params":{"period":6,"lookback":5,"oversold":35,"min_current":38,"max_current":60}},{"id":"gain_quality","factor":"gain_days","weight":30,"params":{"days":20,"min":8,"max":25}},{"id":"drawdown_quality","factor":"drawdown_from_high","weight":35,"params":{"days":60,"min":7,"max":12}}],"pass":{"min_score":35,"top_n":8}}`,
 			Enabled:     true,
 			Readonly:    true,
 		},
+		{
+			ID:          "template-trend-pullback-confirm",
+			Name:        "趋势回踩双确认",
+			Description: "短中线回调：多头趋势温和回踩后必须出现KDJ确认，MACD、量能与回撤位置用于质量排序。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":10,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0,"max":6}},{"id":"kdj_trigger","factor":"kdj_golden_cross","params":{"n":9,"k":3,"d":3}},{"id":"calm_pullback","factor":"change_range","params":{"min":-3,"max":3}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.55,"max_upper_shadow":2.5}}],"scores":[{"id":"macd_confirm","factor":"macd_golden_cross","weight":40,"params":{"fast":12,"slow":26,"signal":9}},{"id":"volume_confirm","factor":"volume_up","weight":25,"params":{"days":5,"ratio":1.1}},{"id":"drawdown_quality","factor":"drawdown_from_high","weight":35,"params":{"days":20,"min":2,"max":8}}],"pass":{"min_score":15,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-rsi-trend-reversal",
+			Name:        "RSI趋势反转",
+			Description: "反转捕捉：RSI近期进入超卖区后重新回到强弱分界，且长期均线仍向上，避免把持续下跌误判为反转。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"long_slope","factor":"ma_slope","params":{"period":60,"lookback":10,"min":0,"max":10}},{"id":"rsi_rebound_trigger","factor":"rsi_rebound","params":{"period":6,"lookback":5,"oversold":32,"min_current":36,"max_current":55}},{"id":"long_gain_guard","factor":"gain_days","params":{"days":60,"min":0,"max":40}},{"id":"change_guard","factor":"change_range","params":{"min":0,"max":5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.6,"max_upper_shadow":2.5}}],"scores":[{"id":"kdj_golden","factor":"kdj_golden_cross","weight":40,"params":{"n":9,"k":3,"d":3}},{"id":"ma_trend","factor":"ma_trend","weight":30,"params":{"short":5,"mid":20,"long":60}},{"id":"volume_up","factor":"volume_up","weight":30,"params":{"days":5,"ratio":1.1}}],"pass":{"min_score":5,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-volume-breakout-confirm",
+			Name:        "量价突破确认",
+			Description: "大资金策略：放量突破、均线多头和趋势斜率均为硬条件，重点保留流动性好且收盘承接强的标的。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":250000000}},{"id":"price_range","factor":"price_range","params":{"min":5,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":8}},{"id":"breakout_trigger","factor":"volume_breakout","params":{"days":20,"ratio":1.6,"min_change":2}},{"id":"change_guard","factor":"change_range","params":{"min":2,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.72,"max_upper_shadow":2}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":35,"params":{"fast":12,"slow":26,"signal":9}},{"id":"boll_breakout","factor":"boll_breakout","weight":25,"params":{"period":20,"width":2}},{"id":"gain_quality","factor":"gain_days","weight":25,"params":{"days":20,"min":5,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.3,"max":8}}],"pass":{"min_score":15,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-new-high-trend",
+			Name:        "新高趋势延续",
+			Description: "强势延续：20日收盘新高、长期多头、均线抬升和量能确认全部满足后才进入候选。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":250000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":10,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":8}},{"id":"break_high_trigger","factor":"break_high","params":{"days":20}},{"id":"volume_filter","factor":"volume_up","params":{"days":5,"ratio":1.2}},{"id":"change_guard","factor":"change_range","params":{"min":0.5,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.68,"max_upper_shadow":2.5}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":35,"params":{"fast":12,"slow":26,"signal":9}},{"id":"boll_breakout","factor":"boll_breakout","weight":25,"params":{"period":20,"width":2}},{"id":"gain_quality","factor":"gain_days","weight":25,"params":{"days":20,"min":5,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.3,"max":8}}],"pass":{"min_score":15,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-rocket-confirm",
+			Name:        "火箭启动确认",
+			Description: "爆发捕捉：火箭信号、均线多头、趋势斜率与强收盘全部确认，进一步限制流动性和追高幅度。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":300000000}},{"id":"price_range","factor":"price_range","params":{"min":5,"max":100}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.5,"max":8}},{"id":"rocket_trigger","factor":"local_rocket","params":{"lookback":20,"volume_days":5,"volume_ratio":1.8,"min_change":3,"short_ma":5,"mid_ma":10}},{"id":"change_guard","factor":"change_range","params":{"min":3,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.75,"max_upper_shadow":1.8}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":40,"params":{"fast":12,"slow":26,"signal":9}},{"id":"boll_breakout","factor":"boll_breakout","weight":30,"params":{"period":20,"width":2}},{"id":"gain_quality","factor":"gain_days","weight":30,"params":{"days":20,"min":8,"max":25}}],"pass":{"min_score":15,"top_n":5}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-boll-macd-resonance",
+			Name:        "BOLL MACD共振",
+			Description: "多指标共振：BOLL突破与MACD金叉必须同日共振，并要求均线抬升、强收盘和适度量能。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":250000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":8}},{"id":"boll_trigger","factor":"boll_breakout","params":{"period":20,"width":2}},{"id":"macd_trigger","factor":"macd_golden_cross","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":1,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.7,"max_upper_shadow":2}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":50,"params":{"days":5,"ratio":1.25}},{"id":"break_high","factor":"break_high","weight":30,"params":{"days":20}},{"id":"gain_quality","factor":"gain_days","weight":20,"params":{"days":20,"min":5,"max":25}}],"pass":{"min_score":12,"top_n":5}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-strong-trend-continuation",
+			Name:        "强趋势延续精选",
+			Description: "精选龙头：高流动性股票必须同时满足长期多头、均线抬升、放量新高与强收盘，辅助指标只负责排序。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":300000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.5,"max":8}},{"id":"volume_filter","factor":"volume_up","params":{"days":5,"ratio":1.3}},{"id":"break_high_trigger","factor":"break_high","params":{"days":20}},{"id":"change_guard","factor":"change_range","params":{"min":1,"max":6}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.7,"max_upper_shadow":2}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":30,"params":{"fast":12,"slow":26,"signal":9}},{"id":"kdj_golden","factor":"kdj_golden_cross","weight":25,"params":{"n":9,"k":3,"d":3}},{"id":"gain_quality","factor":"gain_days","weight":25,"params":{"days":20,"min":8,"max":25}},{"id":"boll_breakout","factor":"boll_breakout","weight":20,"params":{"period":20,"width":2}}],"pass":{"min_score":15,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+
+		// ========== 新增4个早期预警策略 ==========
+		{
+			ID:          "template-early-macd-approach",
+			Name:        "MACD即将金叉预警",
+			Description: "早期预警：DIF接近DEA且差值快速收敛，在金叉确认前1-2天提前买入，适合捕捉趋势启动初期。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"macd_approaching","factor":"macd_approaching","params":{"fast":12,"slow":26,"signal":9,"max_distance":0.15,"min_convergence":0.02,"require_positive":false}},{"id":"change_guard","factor":"change_range","params":{"min":-1,"max":4}},{"id":"volume_warming","factor":"volume_up","params":{"days":5,"ratio":1.1}}],"scores":[{"id":"convergence_speed","factor":"macd_convergence_speed","weight":40,"params":{"fast":12,"slow":26,"signal":9}},{"id":"ma_distance","factor":"distance_from_ma","weight":30,"params":{"period":20,"min":2,"max":8}},{"id":"volume_change","factor":"volume_change_rate","weight":30,"params":{"days":5}}],"pass":{"min_score":15,"top_n":10}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-early-kdj-lift",
+			Name:        "KDJ底部抬升预警",
+			Description: "早期预警：K值在底部连续向上但还未上穿D值，提前1-2天埋伏，适合抓住反弹初期机会。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":150000000}},{"id":"kdj_approaching","factor":"kdj_approaching","params":{"n":9,"k":3,"d":3,"max_distance":8,"k_range_min":20,"k_range_max":50,"require_consecutive_rise":2}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":10,"mid":20}},{"id":"change_guard","factor":"change_range","params":{"min":-2,"max":3}}],"scores":[{"id":"k_slope","factor":"kdj_k_slope","weight":35,"params":{"n":9,"k":3,"d":3}},{"id":"rsi_confirm","factor":"rsi_rebound","weight":30,"params":{"period":6,"lookback":5,"oversold":30,"min_current":32,"max_current":55}},{"id":"volume_quality","factor":"volume_steady_rise","weight":35,"params":{"days":3}}],"pass":{"min_score":12,"top_n":10}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-early-volume-ignition",
+			Name:        "放量启动日捕捉",
+			Description: "早期预警：缩量整理后突然放量启动当天，收盘强势但涨幅适中，捕捉启动首日的最佳买点。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"volume_burst","factor":"volume_burst_after_shrink","params":{"lookback":5,"shrink_threshold":2,"burst_ratio":2.0,"min_turnover":3}},{"id":"price_position","factor":"distance_from_high","params":{"days":60,"min":-15,"max":-3}},{"id":"ma_support","factor":"ma_trend","params":{"short":10,"mid":20}},{"id":"change_guard","factor":"change_range","params":{"min":2,"max":7}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.7,"max_upper_shadow":2}}],"scores":[{"id":"volume_explosion","factor":"volume_ratio","weight":40,"params":{"days":5}},{"id":"close_position","factor":"close_strength","weight":30,"params":{"min_position":0.6,"max_upper_shadow":3}},{"id":"ma_slope","factor":"ma_slope","weight":30,"params":{"period":20,"lookback":5,"min":0,"max":10}}],"pass":{"min_score":15,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-early-breakout-ambush",
+			Name:        "突破前夜埋伏",
+			Description: "早期预警：价格逼近前期高点但还未突破，成交量连续放大，在突破前1-2天提前埋伏。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"near_high","factor":"distance_from_high","params":{"days":20,"min":-5,"max":-1}},{"id":"consecutive_rise","factor":"consecutive_gain_days","params":{"min_days":2,"max_days":4}},{"id":"volume_consecutive","factor":"volume_consecutive_rise","params":{"days":3}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"macd_positive","factor":"macd_positive","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":0.5,"max":3}},{"id":"drawdown_protection","factor":"max_amplitude","params":{"days":5,"max":5}}],"scores":[{"id":"distance_quality","factor":"distance_from_high","weight":35,"params":{"days":20,"optimal_min":-3,"optimal_max":-2}},{"id":"volume_steadiness","factor":"volume_consecutive_rise","weight":35,"params":{"days":3}},{"id":"macd_strength","factor":"macd_histogram","weight":30,"params":{"fast":12,"slow":26,"signal":9}}],"pass":{"min_score":18,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+
+		// ========== 新增3个震荡市策略 ==========
+		{
+			ID:          "template-range-bounce",
+			Name:        "区间震荡下沿买入",
+			Description: "震荡市策略：价格在明确的箱体区间内震荡，跌到下沿且RSI超卖时买入，反弹到均线附近止盈。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":150000000}},{"id":"range_bound","factor":"range_volatility","params":{"days":60,"max_range":25}},{"id":"at_lower_edge","factor":"distance_from_ma","params":{"period":20,"min":-5,"max":-2}},{"id":"rsi_oversold","factor":"rsi_value","params":{"period":6,"max":35}},{"id":"decline_slowing","factor":"decline_deceleration","params":{"lookback":3}},{"id":"volume_shrink","factor":"volume_below_average","params":{"days":5,"ratio":0.8}},{"id":"support_hold","factor":"support_not_broken","params":{"lookback":10}},{"id":"no_downtrend","factor":"ma_slope","params":{"period":60,"lookback":10,"min":-2,"max":2}}],"scores":[{"id":"oversold_degree","factor":"rsi_value","weight":40,"params":{"period":6,"optimal_min":25,"optimal_max":35}},{"id":"volume_exhaustion","factor":"volume_ratio","weight":30,"params":{"days":5,"lower_better":true}},{"id":"support_distance","factor":"distance_from_support","weight":30,"params":{"lookback":20}}],"pass":{"min_score":12,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-ma-convergence-breakout",
+			Name:        "均线缠绕突破方向",
+			Description: "震荡市策略：多条均线高度粘合充分整理后，突然选择向上方向并放量确认，适合震荡末期。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"ma_convergence","factor":"ma_convergence","params":{"ma_periods":[5,10,20],"max_divergence":3,"min_duration":5,"max_duration":15}},{"id":"breakout_up","factor":"price_above_ma_cluster","params":{"ma_periods":[5,10,20],"min_distance":1}},{"id":"volume_confirm","factor":"volume_up","params":{"days":10,"ratio":1.3}},{"id":"change_guard","factor":"change_range","params":{"min":1,"max":5}},{"id":"boll_expand","factor":"boll_width_expanding","params":{"period":20,"width":2}},{"id":"no_weak_stock","factor":"gain_days","params":{"days":60,"min":-15,"max":100}}],"scores":[{"id":"convergence_duration","factor":"ma_convergence_days","weight":35,"params":{"ma_periods":[5,10,20],"optimal_min":10,"optimal_max":12}},{"id":"breakout_strength","factor":"breakout_strength","weight":35,"params":{"volume_weight":0.6,"price_weight":0.4}},{"id":"ma_alignment","factor":"ma_distance","weight":30,"params":{"ma_periods":[5,10,20]}}],"pass":{"min_score":15,"top_n":6}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-platform-breakout",
+			Name:        "缩量平台突破",
+			Description: "震荡市策略：横盘平台长期缩量整理后放量突破，适合个股走独立行情，不依赖大盘环境。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"platform_pattern","factor":"narrow_range","params":{"days":20,"max_range":12}},{"id":"low_turnover","factor":"average_turnover","params":{"days":10,"max":2}},{"id":"volume_burst","factor":"turnover_surge","params":{"min_turnover":3,"min_ratio":1.8}},{"id":"breakout_high","factor":"price_break_high","params":{"days":20}},{"id":"change_guard","factor":"change_range","params":{"min":2,"max":8}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.75,"max_upper_shadow":2}},{"id":"mid_term_stable","factor":"ma_slope","params":{"period":60,"lookback":10,"min":-5,"max":10}}],"scores":[{"id":"platform_duration","factor":"consolidation_days","weight":35,"params":{"min":15,"max":25,"optimal_min":18,"optimal_max":22}},{"id":"breakout_power","factor":"breakout_strength","weight":40,"params":{"volume_weight":0.7,"price_weight":0.3}},{"id":"close_quality","factor":"close_strength","weight":25,"params":{"min_position":0.6,"max_upper_shadow":3}}],"pass":{"min_score":18,"top_n":6}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+	}
+	for index := range templates {
+		applyHighQualityStrategyProfile(&templates[index])
+		applyDefaultStrategyUniverse(&templates[index])
+	}
+	return templates
+}
+
+var retiredStrategyTemplateIDs = []string{
+	"template-local-rocket",
+	"template-ma-volume-breakout",
+	"template-macd-kdj-resonance",
+	"template-boll-breakout-confirm",
+	"template-kdj-pullback-confirm",
+	"template-macd-follow-through",
+	"template-breakout-pullback-reentry",
+}
+
+// strongMarketStrategyIDs 定义了需要强势市场环境（上证指数20日涨幅≥6%）才启用的策略
+// 这些策略高度依赖趋势环境，在震荡市或弱市中容易失效
+var strongMarketStrategyIDs = map[string]bool{
+	// 中线趋势策略（保留的7个需要强势环境）
+	"template-a-share-v3":                true,
+	"template-macd-trend":                true,
+	"template-volume-breakout-confirm":   true,
+	"template-new-high-trend":            true,
+	"template-rocket-confirm":            true,
+	"template-boll-macd-resonance":       true,
+	"template-strong-trend-continuation": true,
+	// 早期预警策略不需要强势市场环境（它们本身就是捕捉启动初期）
+	// 震荡市策略也不需要强势市场环境（它们专为震荡市设计）
+}
+
+func applyHighQualityStrategyProfile(strategy *Strategy) {
+	var config map[string]interface{}
+	if strategy == nil || json.Unmarshal([]byte(strategy.ConfigJSON), &config) != nil {
+		return
+	}
+	filters, _ := config["filters"].([]interface{})
+	if strongMarketStrategyIDs[strategy.ID] {
+		filters = append(filters, map[string]interface{}{
+			"id": "market_regime", "factor": "market_momentum",
+			"params": map[string]interface{}{"days": 20, "min": 6, "max": 100},
+		})
+		strategy.Description += " 仅在上证指数20日涨幅达到6%时启用。"
+	}
+	if strategy.ID == "template-pullback" {
+		for _, raw := range filters {
+			rule, _ := raw.(map[string]interface{})
+			switch rule["id"] {
+			case "pullback_depth":
+				rule["params"] = map[string]interface{}{"days": 60, "min": 7, "max": 12}
+			case "change_guard":
+				rule["params"] = map[string]interface{}{"min": 0, "max": 1.5}
+			}
+		}
+		for _, raw := range config["scores"].([]interface{}) {
+			rule, _ := raw.(map[string]interface{})
+			if rule["id"] == "drawdown_quality" {
+				rule["params"] = map[string]interface{}{"days": 60, "min": 7, "max": 12}
+			}
+		}
+		strategy.Description += " 二次优化限定信号日温和上涨0%-1.5%、距60日高点回撤7%-12%。"
+	}
+	config["filters"] = filters
+	if raw, err := json.Marshal(config); err == nil {
+		strategy.ConfigJSON = string(raw)
+	}
+}
+
+// System templates deliberately exclude the higher-volatility STAR Market and
+// Beijing Stock Exchange from their default candidates. Their candidate
+// universe can be adjusted independently from the immutable strategy rules.
+func applyDefaultStrategyUniverse(strategy *Strategy) {
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(strategy.ConfigJSON), &config); err != nil {
+		return
+	}
+	config["universe"] = map[string]interface{}{
+		"include": []map[string]string{{"pool": "market-all-a"}},
+		"exclude": []map[string]string{
+			{"pool": "exclude"},
+			{"pool": "market-star"},
+			{"pool": "market-bj"},
+		},
+	}
+	// System strategies evaluate their whole candidate universe by default.
+	// A zero scan_limit is the explicit full-scan value in the strategy runner.
+	config["scan_limit"] = 0
+	delete(config, "pool_id")
+	if raw, err := json.Marshal(config); err == nil {
+		strategy.ConfigJSON = string(raw)
+	}
+	if !strings.Contains(strategy.Description, "不含科创板和北交所") {
+		strategy.Description += " 默认范围不含科创板和北交所。"
+	}
+	if !strings.Contains(strategy.Description, "默认全量扫描") {
+		strategy.Description += " 默认全量扫描。"
 	}
 }
 
@@ -587,25 +854,72 @@ func (s *AppStore) ensureStrategyTemplates() error {
 		if err != nil {
 			return err
 		}
+		// A system template owns its scoring definition, but its candidate
+		// universe is user-configurable. Keep that narrow customization when
+		// refreshing built-in template definitions during startup.
+		current, err := s.GetStrategy(item.ID)
+		if err != nil {
+			return err
+		}
+		configJSON := item.ConfigJSON
+		if current.Readonly && hasCustomizedStrategyUniverse(current.ConfigJSON) {
+			configJSON = withCustomizedStrategyUniverse(item.ConfigJSON, current.ConfigJSON)
+		}
 		_, err = s.db.Exec(`UPDATE strategies
 			SET name=?,description=?,config_json=?,enabled=?,readonly=1,updated_at=?
 			WHERE id=? AND readonly=1`,
-			item.Name, item.Description, item.ConfigJSON, boolInt(item.Enabled), now, item.ID)
+			item.Name, item.Description, configJSON, boolInt(item.Enabled), now, item.ID)
 		if err != nil {
+			return err
+		}
+	}
+	for _, id := range retiredStrategyTemplateIDs {
+		if _, err := s.db.Exec(`DELETE FROM strategies WHERE id=? AND readonly=1`, id); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+func hasCustomizedStrategyUniverse(configJSON string) bool {
+	var config struct {
+		UniverseCustomized bool `json:"universe_customized"`
+	}
+	return json.Unmarshal([]byte(configJSON), &config) == nil && config.UniverseCustomized
+}
+
+// withCustomizedStrategyUniverse carries only the user-controlled field over
+// to the current template definition, so later factor and scoring upgrades are
+// still applied to system strategies.
+func withCustomizedStrategyUniverse(templateConfigJSON, customizedConfigJSON string) string {
+	var templateConfig, customizedConfig map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(templateConfigJSON), &templateConfig); err != nil || templateConfig == nil {
+		return templateConfigJSON
+	}
+	if err := json.Unmarshal([]byte(customizedConfigJSON), &customizedConfig); err != nil || customizedConfig == nil {
+		return templateConfigJSON
+	}
+	universe, ok := customizedConfig["universe"]
+	if !ok {
+		return templateConfigJSON
+	}
+	templateConfig["universe"] = universe
+	templateConfig["universe_customized"] = json.RawMessage(`true`)
+	raw, err := json.Marshal(templateConfig)
+	if err != nil {
+		return templateConfigJSON
+	}
+	return string(raw)
+}
+
 func fixedCloseSyncAutomationTask() AutomationTask {
 	return AutomationTask{
 		ID:          FixedCloseSyncTaskID,
-		Name:        "收盘作业：更新当天行情",
+		Name:        "收盘作业：Hikyuu盘后同步",
 		Type:        "system_sync",
-		Cron:        "0 0 16 * * 1-5",
+		Cron:        "0 30 16 * * 1-5",
 		Enabled:     true,
-		PayloadJSON: `{"scope":"kline","tables":["day"],"limit":4,"continue_on_error":true}`,
+		PayloadJSON: `{"scope":"hikyuu_after_close"}`,
 		WebhookIDs:  "[]",
 		Readonly:    true,
 		System:      true,
@@ -619,7 +933,22 @@ func fixedSelectionTrackingAutomationTask() AutomationTask {
 		Type:        "selection_tracking",
 		Cron:        "0 15 17 * * 1-5",
 		Enabled:     true,
-		PayloadJSON: `{"limit":500,"horizons":[1,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+		PayloadJSON: `{"limit":500,"horizons":[3,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+		WebhookIDs:  "[]",
+		Readonly:    true,
+		System:      true,
+	}
+}
+
+func systemStrategyDailyBatchAutomationTask() AutomationTask {
+	return AutomationTask{
+		ID:   SystemStrategyDailyBatchTaskID,
+		Name: "收盘作业：系统策略日报",
+		Type: "system_strategy_batch",
+		// This task is dependency-triggered after close sync rather than cron-triggered.
+		Cron:        "",
+		Enabled:     true,
+		PayloadJSON: `{"source":"fixed-close-sync","shared_kline_cache":true}`,
 		WebhookIDs:  "[]",
 		Readonly:    true,
 		System:      true,
@@ -627,7 +956,7 @@ func fixedSelectionTrackingAutomationTask() AutomationTask {
 }
 
 func IsFixedAutomationTaskID(id string) bool {
-	return id == FixedCloseSyncTaskID || id == FixedSelectionTrackingTaskID
+	return id == FixedCloseSyncTaskID || id == FixedSelectionTrackingTaskID || id == SystemStrategyDailyBatchTaskID
 }
 
 func decorateAutomationTask(t AutomationTask) AutomationTask {
@@ -640,7 +969,7 @@ func decorateAutomationTask(t AutomationTask) AutomationTask {
 
 func (s *AppStore) ensureFixedAutomationTasks() error {
 	now := NowText()
-	for _, task := range []AutomationTask{fixedCloseSyncAutomationTask(), fixedSelectionTrackingAutomationTask()} {
+	for _, task := range []AutomationTask{fixedCloseSyncAutomationTask(), systemStrategyDailyBatchAutomationTask(), fixedSelectionTrackingAutomationTask()} {
 		if _, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
 			(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -1095,6 +1424,25 @@ func (s *AppStore) UpsertStrategy(item Strategy) (Strategy, error) {
 	return item, err
 }
 
+// SetStrategyUniverseConfig is intentionally narrower than UpsertStrategy: it
+// permits the candidate-universe update path for system templates while their
+// name, factors, scores, thresholds, and other settings remain immutable.
+func (s *AppStore) SetStrategyUniverseConfig(id, configJSON string) (Strategy, error) {
+	if !json.Valid([]byte(configJSON)) {
+		return Strategy{}, errors.New("config_json不是有效JSON")
+	}
+	item, err := s.GetStrategy(id)
+	if err != nil {
+		return Strategy{}, err
+	}
+	item.ConfigJSON = configJSON
+	item.UpdatedAt = NowText()
+	if _, err := s.db.Exec(`UPDATE strategies SET config_json=?,updated_at=? WHERE id=?`, item.ConfigJSON, item.UpdatedAt, id); err != nil {
+		return Strategy{}, err
+	}
+	return item, nil
+}
+
 func (s *AppStore) DeleteStrategy(id string) error {
 	item, err := s.GetStrategy(id)
 	if err != nil {
@@ -1529,20 +1877,25 @@ func (s *AppStore) DeleteAutomationTask(id string) error {
 	return err
 }
 
-func (s *AppStore) CreateAutomationRun(task AutomationTask) (AutomationRun, error) {
+func (s *AppStore) CreateAutomationRun(task AutomationTask, parentRunID ...string) (AutomationRun, error) {
+	parentID := ""
+	if len(parentRunID) > 0 {
+		parentID = strings.TrimSpace(parentRunID[0])
+	}
 	run := AutomationRun{
-		ID:         uuid.NewString(),
-		TaskID:     task.ID,
-		TaskName:   task.Name,
-		TaskType:   task.Type,
-		Status:     "running",
-		StartedAt:  NowText(),
-		ResultJSON: "{}",
+		ID:          uuid.NewString(),
+		ParentRunID: parentID,
+		TaskID:      task.ID,
+		TaskName:    task.Name,
+		TaskType:    task.Type,
+		Status:      "running",
+		StartedAt:   NowText(),
+		ResultJSON:  "{}",
 	}
 	_, err := s.db.Exec(`INSERT INTO automation_runs
-		(id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		run.ID, run.TaskID, run.TaskName, run.TaskType, run.Status, run.StartedAt, run.FinishedAt, run.Log, run.ResultJSON, run.MatchedCount)
+		(id,parent_run_id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.ParentRunID, run.TaskID, run.TaskName, run.TaskType, run.Status, run.StartedAt, run.FinishedAt, run.Log, run.ResultJSON, run.MatchedCount)
 	return run, err
 }
 
@@ -1598,8 +1951,8 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 
 func (s *AppStore) GetAutomationRun(runID string) (AutomationRun, error) {
 	var run AutomationRun
-	err := s.db.QueryRow(`SELECT id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count FROM automation_runs WHERE id=?`, runID).
-		Scan(&run.ID, &run.TaskID, &run.TaskName, &run.TaskType, &run.Status, &run.StartedAt, &run.FinishedAt, &run.Log, &run.ResultJSON, &run.MatchedCount)
+	err := s.db.QueryRow(`SELECT id,parent_run_id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count FROM automation_runs WHERE id=?`, runID).
+		Scan(&run.ID, &run.ParentRunID, &run.TaskID, &run.TaskName, &run.TaskType, &run.Status, &run.StartedAt, &run.FinishedAt, &run.Log, &run.ResultJSON, &run.MatchedCount)
 	return run, err
 }
 
@@ -1618,7 +1971,7 @@ func (s *AppStore) ListAutomationRuns(taskID string, limit int) ([]AutomationRun
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	query := `SELECT id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count FROM automation_runs`
+	query := `SELECT id,parent_run_id,task_id,task_name,task_type,status,started_at,finished_at,log,result_json,matched_count FROM automation_runs`
 	args := []interface{}{}
 	if taskID != "" {
 		query += ` WHERE task_id=?`
@@ -1636,7 +1989,7 @@ func (s *AppStore) ListAutomationRuns(taskID string, limit int) ([]AutomationRun
 	var list []AutomationRun
 	for rows.Next() {
 		var run AutomationRun
-		if err := rows.Scan(&run.ID, &run.TaskID, &run.TaskName, &run.TaskType, &run.Status, &run.StartedAt, &run.FinishedAt, &run.Log, &run.ResultJSON, &run.MatchedCount); err != nil {
+		if err := rows.Scan(&run.ID, &run.ParentRunID, &run.TaskID, &run.TaskName, &run.TaskType, &run.Status, &run.StartedAt, &run.FinishedAt, &run.Log, &run.ResultJSON, &run.MatchedCount); err != nil {
 			return nil, err
 		}
 		list = append(list, run)

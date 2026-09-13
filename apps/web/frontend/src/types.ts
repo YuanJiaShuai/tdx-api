@@ -524,41 +524,172 @@ export interface DecisionNote {
   updated_at?: string;
 }
 
-export interface DailyReviewItem {
-  result: SelectionResult;
-  score: { total?: number; trend?: number; volume?: number; place?: number; risk?: number };
-  track: {
-    available?: boolean;
-    date?: number;
-    open_change?: number;
-    max_gain?: number;
-    drawdown?: number;
-    close_change?: number;
-    summary?: string;
-  };
-  note: DecisionNote;
+export interface DailyReviewBatchSummary {
+  id: string;
+  date: string;
+  status: string;
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+  matched_count: number;
+  strategy_count: number;
+  failed_strategies: number;
+  candidate_symbols: number;
+  kline_loaded: number;
+  kline_failed: number;
+  duration_ms: number;
+}
+
+export interface DailyReviewStrategySummary {
+  run_id?: string;
+  strategy_id: string;
+  strategy_name: string;
+  status: string;
+  matched: number;
+  errors: number;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms: number;
+}
+
+export interface DailyReviewSignal {
+  id: string;
+  run_id: string;
+  strategy_id: string;
+  strategy_name: string;
+  signal_date: string;
+  symbol: string;
+  latest: number;
+  score: number;
+  detail_json: string;
+  tracking_json: string;
+  created_at: string;
+}
+
+export interface DailyReviewStock {
+  symbol: string;
+  latest: number;
+  strategy_count: number;
+  strategy_ids: string[];
+  strategies: string[];
+  max_score: number;
+  average_score: number;
+  tracking_json: string;
   status?: string;
   watch?: boolean;
   excluded?: boolean;
+  note: DecisionNote;
+  signals: DailyReviewSignal[];
 }
 
 export interface DailyReviewResponse {
   date?: string;
-  summary?: {
-    hits?: number;
-    watch_count?: number;
-    exclude_count?: number;
-    avg_score?: number;
-    handled_count?: number;
-    tracked_count?: number;
-    positive_count?: number;
-    win_rate?: number;
-    avg_close_change?: number;
+  selected_batch?: DailyReviewBatchSummary;
+  batches: DailyReviewBatchSummary[];
+  summary: {
+    strategy_count: number;
+    raw_signals: number;
+    stock_count: number;
+    consensus_count: number;
+    watch_count: number;
+    exclude_count: number;
+    candidate_symbols: number;
+    kline_loaded: number;
+    kline_failed: number;
+    duration_ms: number;
   };
-  items?: DailyReviewItem[];
-  watch?: string[];
-  exclude?: string[];
-  notes?: DecisionNote[];
+  strategies: DailyReviewStrategySummary[];
+  stocks: DailyReviewStock[];
+  signals: DailyReviewSignal[];
+  consensus: DailyReviewStock[];
+  watch: string[];
+  exclude: string[];
+  notes: DecisionNote[];
+}
+
+export interface HistoricalBacktestRun {
+  id: string;
+  status: 'running' | 'success' | 'failed' | 'cancelled' | string;
+  start_date: string;
+  end_date: string;
+  strategy_ids: string[];
+  strategy_snapshot_json?: string;
+  horizons: number[];
+  target_return: number;
+  drawdown_limit: number;
+  total_dates: number;
+  processed_dates: number;
+  current_date?: string;
+  candidate_symbols: number;
+  signal_count: number;
+  result_json: string;
+  error?: string;
+  cancel_requested?: boolean;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  updated_at?: string;
+}
+
+export interface HistoricalHorizonSummary {
+  completed: number;
+  pending: number;
+  success_count: number;
+  success_rate: number;
+  average_return: number;
+  average_max_gain: number;
+  average_max_drawdown: number;
+}
+
+export interface HistoricalStrategySummary {
+  strategy_id: string;
+  strategy_name: string;
+  signal_count: number;
+  horizons: Record<string, HistoricalHorizonSummary>;
+}
+
+export interface HistoricalConsensusSummary {
+  signal_date: string;
+  symbol: string;
+  strategy_count: number;
+  strategies: string[];
+  tracking_json: string;
+}
+
+export interface HistoricalBacktestResult {
+  strategy_summaries?: HistoricalStrategySummary[];
+  consensus?: HistoricalConsensusSummary[];
+  signal_count?: number;
+  strategy_count?: number;
+  trading_days?: number;
+  candidate_symbols?: number;
+  kline_loaded?: number;
+  kline_failed?: number;
+  history_count?: number;
+  policy?: { horizons?: number[]; target_return?: number; drawdown_limit?: number; entry?: string };
+  warnings?: string[];
+}
+
+export interface HistoricalBacktestSignal {
+  id: string;
+  run_id: string;
+  strategy_id: string;
+  strategy_name: string;
+  signal_date: string;
+  symbol: string;
+  latest: number;
+  score: number;
+  detail_json: string;
+  tracking_json: string;
+  created_at: string;
+}
+
+export interface HistoricalBacktestSignalPage {
+  items: HistoricalBacktestSignal[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface Webhook {

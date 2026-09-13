@@ -181,13 +181,8 @@ func handleGetKlineHistory(w http.ResponseWriter, r *http.Request) {
 	case "day":
 		fallthrough
 	default:
-		// 日K线使用前复权
-		resp, err = getQfqKlineDay(code)
-		if err == nil && len(resp.List) > int(limit) {
-			// 只返回最近limit条
-			resp.List = resp.List[len(resp.List)-int(limit):]
-			resp.Count = limit
-		}
+		// 本地Hikyuu不可用时，回源通达信原始日线应急返回。
+		resp, err = loadTDXKline(r.Context(), code, "day", int(limit))
 	}
 
 	if err != nil {

@@ -70,7 +70,7 @@ services:
       - HIKYUU_STOCKS_DIR=/root/stocks
       - HIKYUU_CONFIG_DIR=/root/.hikyuu
       - HIKYUU_LOG_DIR=/app/logs
-      - HIKYUU_SCHEDULER_ENABLED=true
+      - HIKYUU_SCHEDULER_ENABLED=false
       - HIKYUU_AFTER_CLOSE_CRON=30 16 * * 1-5
       - HIKYUU_INDICATOR_CACHE_SECONDS=60
     dns:
@@ -169,6 +169,7 @@ services:
       - AI_SERVICE_URL=http://ai-service:8083
       - AI_SERVICE_TOKEN=${AI_SERVICE_TOKEN:-}
       - FORMULA_WORKER_URL=http://formula-worker:8712
+      - SELECTION_WORKER_URL=http://selection-worker:8082
       - AUTOMATION_SCHEDULER_ENABLED=false
     dns:
       - 223.5.5.5

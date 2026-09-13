@@ -29,6 +29,7 @@ LOG_DIR = Path(os.getenv("HIKYUU_LOG_DIR", "/app/logs"))
 PYTHON_BIN = os.getenv("HIKYUU_PYTHON", "python3")
 IMPORT_SCRIPT = os.getenv("HIKYUU_IMPORT_SCRIPT", "/app/importdata_runner.py")
 QUERY_SCRIPT = os.getenv("HIKYUU_QUERY_SCRIPT", "/app/query_runner.py")
+RESEARCH_SCRIPT = os.getenv("HIKYUU_RESEARCH_SCRIPT", "/app/research_runner.py")
 QUERY_TIMEOUT_SECONDS = int(os.getenv("HIKYUU_QUERY_TIMEOUT_SECONDS", "120"))
 SCHEDULER_ENABLED = os.getenv("HIKYUU_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 AFTER_CLOSE_CRON = os.getenv("HIKYUU_AFTER_CLOSE_CRON", "30 16 * * 1-5")
@@ -58,6 +59,15 @@ class SyncRequest(BaseModel):
     use_tdx_number: int = Field(default=10, ge=1, le=32)
 
 
+class KlineBatchRequest(BaseModel):
+    symbols: List[str]
+    period: str = "day"
+    start: str = ""
+    end: str = ""
+    limit: int = Field(default=260, ge=1, le=2000)
+    recover: str = "qfq"
+
+
 class TaskRecord(BaseModel):
     id: str
     type: str
@@ -74,6 +84,7 @@ app = FastAPI(title=APP_NAME)
 tasks: Dict[str, Dict[str, Any]] = {}
 task_order: List[str] = []
 task_lock = threading.Lock()
+data_access_lock = threading.Lock()
 active_task_id: Optional[str] = None
 scheduler: Optional[BackgroundScheduler] = None
 
@@ -140,7 +151,7 @@ def dataset_metadata() -> Dict[str, Any]:
     return {"data_revision": data_revision(), "stocks": {"path": str(STOCKS_DIR), "symbols": symbols, "files": files}, "hikyuu_version": hikyuu_version(), "checked_at": now_text()}
 
 
-def dataset_quality(code: str = "", period: str = "day") -> Dict[str, Any]:
+def dataset_quality(code: str = "", period: str = "day", sample: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     metadata = dataset_metadata()
     files = metadata["stocks"]["files"]
     h5_files = [item for item in files if str(item["name"]).endswith(".h5")]
@@ -152,11 +163,10 @@ def dataset_quality(code: str = "", period: str = "day") -> Dict[str, Any]:
         {"id": "size", "label": "数据体积", "status": "pass" if total_bytes > 0 else "warn", "detail": total_bytes},
         {"id": "revision", "label": "修订标识", "status": "pass" if metadata["data_revision"] else "warn", "detail": metadata["data_revision"]},
     ]
-    sample = None
     if code:
         try:
-            from query_runner import load_records
-            sample = load_records(code, period, "", "", 2000, "none")["list"]
+            if sample is None:
+                raise LookupError("sample data was not loaded")
             times = [str(row.get("time")) for row in sample]
             closes = [float(row.get("close") or 0) for row in sample]
             duplicate_count = len(times) - len(set(times))
@@ -347,6 +357,45 @@ def task_snapshot(task: Dict[str, Any]) -> Dict[str, Any]:
     return item
 
 
+def run_json_process(script: str, arguments: List[str]) -> Any:
+    env = os.environ.copy()
+    env["HOME"] = str(CONFIG_DIR.parent if CONFIG_DIR.name == ".hikyuu" else Path("/root"))
+    env["HIKYUU_STOCKS_DIR"] = str(STOCKS_DIR)
+    env["HIKYUU_CONFIG_DIR"] = str(CONFIG_DIR)
+    env["TZ"] = TZ_NAME
+    try:
+        with task_lock:
+            sync_running = active_task_id is not None
+        if sync_running:
+            raise HTTPException(status_code=503, detail="hikyuu 数据同步中，请稍后重试")
+        with data_access_lock:
+            completed = subprocess.run(
+                [PYTHON_BIN, script, *arguments],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=QUERY_TIMEOUT_SECONDS,
+                check=False,
+            )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="hikyuu 查询超时") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"hikyuu 查询进程启动失败: {exc}") from exc
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "hikyuu 查询失败"
+        raise HTTPException(status_code=503, detail=detail[-1000:])
+    output_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    if not output_lines:
+        raise HTTPException(status_code=503, detail="hikyuu 查询没有返回数据")
+    for line in reversed(output_lines):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    raise HTTPException(status_code=503, detail="hikyuu 查询返回格式错误")
+
+
 def parse_task_progress(lines: List[str]) -> Dict[str, Any]:
     result: Dict[str, Any] = {"progress": None, "stage": None, "message": None}
     for raw_line in reversed(lines):
@@ -419,6 +468,7 @@ def run_task(task_id: str) -> None:
     env["HIKYUU_CONFIG_DIR"] = str(CONFIG_DIR)
     env["TZ"] = TZ_NAME
 
+    data_access_lock.acquire()
     try:
         build_import_config(request)
         with log_path.open("a", encoding="utf-8") as log:
@@ -432,10 +482,22 @@ def run_task(task_id: str) -> None:
                 text=True,
             )
             exit_code = proc.wait()
+            log.flush()
+            try:
+                log_text = log_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                log_text = ""
+            failure_markers = (
+                "'HDF5_IMPORT', 'THREAD', 'FAILURE'",
+                "ImportPytdxToH5Task failed!",
+                "Unable to open/create file",
+                "All process is finished, but some tasks are running!",
+            )
+            import_failed = any(marker in log_text for marker in failure_markers)
             with task_lock:
                 task["exit_code"] = exit_code
                 task["ended_at"] = now_text()
-                if exit_code == 0:
+                if exit_code == 0 and not import_failed:
                     task["status"] = "success"
                     try:
                         DATA_REVISION_FILE.write_text(f"{uuid.uuid4().hex[:12]}\n", encoding="utf-8")
@@ -443,7 +505,7 @@ def run_task(task_id: str) -> None:
                         pass
                 else:
                     task["status"] = "failed"
-                    task["error"] = f"import process exited with code {exit_code}"
+                    task["error"] = "hikyuu import reported failure" if import_failed else f"import process exited with code {exit_code}"
             log.write(f"[{now_text()}] task {task_id} ended: exit_code={exit_code}\n")
     except Exception as exc:
         with task_lock:
@@ -451,6 +513,7 @@ def run_task(task_id: str) -> None:
             task["error"] = str(exc)
             task["ended_at"] = now_text()
     finally:
+        data_access_lock.release()
         with task_lock:
             if active_task_id == task_id:
                 active_task_id = None
@@ -528,23 +591,7 @@ def query_kline(
     ensure_dirs()
     if not (CONFIG_DIR / "hikyuu.ini").exists():
         write_hikyuu_ini()
-    try:
-        from query_runner import load_records
-        data = load_records(code.strip(), kline_type.strip().lower() or "day", start.strip(), end.strip(), limit, recover.strip().lower() or "none")
-        return {"code": 0, "message": "success", "data": data}
-    except Exception as in_process_error:
-        # Keep the subprocess path as an isolation fallback for incompatible
-        # Hikyuu builds or a damaged native runtime.
-        fallback_error = in_process_error
-    env = os.environ.copy()
-    env["HOME"] = str(CONFIG_DIR.parent if CONFIG_DIR.name == ".hikyuu" else Path("/root"))
-    env["HIKYUU_STOCKS_DIR"] = str(STOCKS_DIR)
-    env["HIKYUU_CONFIG_DIR"] = str(CONFIG_DIR)
-    env["TZ"] = TZ_NAME
-
-    command = [
-        PYTHON_BIN,
-        QUERY_SCRIPT,
+    data = run_json_process(QUERY_SCRIPT, [
         "--symbol",
         code.strip(),
         "--period",
@@ -557,33 +604,28 @@ def query_kline(
         str(limit),
         "--recover",
         recover.strip().lower() or "none",
-    ]
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=QUERY_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="hikyuu 查询超时") from exc
-    except OSError as exc:
-        raise HTTPException(status_code=503, detail=f"hikyuu 查询进程启动失败: {exc}") from exc
+    ])
+    return {"code": 0, "message": "success", "data": data}
 
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or str(fallback_error) or "hikyuu 查询失败"
-        raise HTTPException(status_code=503, detail=detail[-1000:])
 
-    output_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    if not output_lines:
-        raise HTTPException(status_code=503, detail="hikyuu 查询没有返回数据")
-    try:
-        data = json.loads(output_lines[-1])
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=503, detail="hikyuu 查询返回格式错误") from exc
-
+@app.post("/api/hikyuu/kline/batch")
+def query_kline_batch(request: KlineBatchRequest) -> Dict[str, Any]:
+    symbols = list(dict.fromkeys(symbol.strip() for symbol in request.symbols if symbol.strip()))
+    if not symbols:
+        raise HTTPException(status_code=400, detail="symbols must not be empty")
+    if len(symbols) > 128:
+        raise HTTPException(status_code=400, detail="a batch supports at most 128 symbols")
+    ensure_dirs()
+    if not (CONFIG_DIR / "hikyuu.ini").exists():
+        write_hikyuu_ini()
+    data = run_json_process(QUERY_SCRIPT, [
+        "--symbols-json", json.dumps(symbols, ensure_ascii=False),
+        "--period", request.period.strip().lower() or "day",
+        "--start", request.start.strip(),
+        "--end", request.end.strip(),
+        "--limit", str(request.limit),
+        "--recover", request.recover.strip().lower() or "qfq",
+    ])
     return {"code": 0, "message": "success", "data": data}
 
 
@@ -596,7 +638,17 @@ def metadata() -> Dict[str, Any]:
 @app.get("/api/hikyuu/quality")
 def quality(code: str = Query(""), period: str = Query("day")) -> Dict[str, Any]:
     ensure_dirs()
-    return {"code": 0, "message": "success", "data": dataset_quality(code.strip(), period.strip().lower() or "day")}
+    normalized_code = code.strip()
+    normalized_period = period.strip().lower() or "day"
+    sample = None
+    if normalized_code:
+        sample = run_json_process(QUERY_SCRIPT, [
+            "--symbol", normalized_code,
+            "--period", normalized_period,
+            "--limit", "2000",
+            "--recover", "none",
+        ])["list"]
+    return {"code": 0, "message": "success", "data": dataset_quality(normalized_code, normalized_period, sample)}
 
 
 @app.post("/api/hikyuu/indicators")
@@ -607,11 +659,10 @@ def indicators(payload: Dict[str, Any]) -> Dict[str, Any]:
         cached = indicator_cache.get(cache_key)
         if cached and current_time - cached["created_at"] < INDICATOR_CACHE_SECONDS:
             return {"code": 0, "message": "success", "data": cached["data"]}
-    try:
-        from research_runner import calculate_indicator
-        result = calculate_indicator(payload)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"指标计算失败: {exc}") from exc
+    result = run_json_process(RESEARCH_SCRIPT, [
+        "--operation", "indicator",
+        "--payload-json", json.dumps(payload, ensure_ascii=False),
+    ])
     with indicator_cache_lock:
         indicator_cache[cache_key] = {"created_at": current_time, "data": result}
         if len(indicator_cache) > 128:
@@ -622,11 +673,10 @@ def indicators(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.post("/api/hikyuu/backtest")
 def backtest(payload: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        from research_runner import run_reference_backtest
-        result = run_reference_backtest(payload)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Hikyuu 回测失败: {exc}") from exc
+    result = run_json_process(RESEARCH_SCRIPT, [
+        "--operation", "backtest",
+        "--payload-json", json.dumps(payload, ensure_ascii=False),
+    ])
     return {"code": 0, "message": "success", "data": result}
 
 

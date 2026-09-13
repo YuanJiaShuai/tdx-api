@@ -9,6 +9,10 @@ type Strategy = workbench.Strategy
 type AutomationTask = workbench.AutomationTask
 type AutomationRun = workbench.AutomationRun
 type SelectionResult = workbench.SelectionResult
+type HistoricalBacktestRun = workbench.HistoricalBacktestRun
+type HistoricalBacktestSignal = workbench.HistoricalBacktestSignal
+type HistoricalBacktestSignalQuery = workbench.HistoricalBacktestSignalQuery
+type HistoricalBacktestSignalPage = workbench.HistoricalBacktestSignalPage
 type TrackingBar = workbench.TrackingBar
 type SelectionHorizon = workbench.SelectionHorizon
 type SelectionTracking = workbench.SelectionTracking
@@ -29,11 +33,12 @@ const (
 )
 
 const (
-	DecisionWatchPoolID          = workbench.DecisionWatchPoolID
-	DecisionExcludePoolID        = workbench.DecisionExcludePoolID
-	FixedCloseSyncTaskID         = workbench.FixedCloseSyncTaskID
-	FixedSelectionTrackingTaskID = workbench.FixedSelectionTrackingTaskID
-	TradingSystemStateID         = workbench.TradingSystemStateID
+	DecisionWatchPoolID            = workbench.DecisionWatchPoolID
+	DecisionExcludePoolID          = workbench.DecisionExcludePoolID
+	FixedCloseSyncTaskID           = workbench.FixedCloseSyncTaskID
+	FixedSelectionTrackingTaskID   = workbench.FixedSelectionTrackingTaskID
+	SystemStrategyDailyBatchTaskID = workbench.SystemStrategyDailyBatchTaskID
+	TradingSystemStateID           = workbench.TradingSystemStateID
 )
 
 func OpenAppStore() (*AppStore, error) {

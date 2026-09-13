@@ -128,9 +128,9 @@ export function DataCenterWorkspace() {
     }
   }
 
-  async function loadHikyuu(path = '/api/hikyuu/health') {
+  async function loadHikyuu(path = '/api/hikyuu/health', options: RequestInit = {}) {
     try {
-      setHikyuuStatus(await apiFetch(path));
+      setHikyuuStatus(await apiFetch(path, options));
     } catch (error) {
       setHikyuuStatus(error instanceof Error ? error.message : '数据服务不可用');
     }
@@ -211,8 +211,8 @@ export function DataCenterWorkspace() {
           ))}
         </div>
         <Space wrap className="toolbar-row">
-          <Button type="primary" onClick={() => loadHikyuu('/api/hikyuu/tasks/full-sync')}>全量同步</Button>
-          <Button onClick={() => loadHikyuu('/api/hikyuu/tasks/after-close-sync')}>盘后同步</Button>
+          <Button type="primary" onClick={() => loadHikyuu('/api/hikyuu/tasks/full-sync', { method: 'POST', body: '{}' })}>全量同步</Button>
+          <Button onClick={() => loadHikyuu('/api/hikyuu/tasks/after-close-sync', { method: 'POST', body: '{}' })}>盘后同步</Button>
           <Button onClick={() => loadHikyuu('/api/hikyuu/tasks')}>刷新任务</Button>
         </Space>
         <JsonPane value={hikyuuStatus} />

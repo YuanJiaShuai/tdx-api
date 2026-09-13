@@ -41,6 +41,28 @@ type MarketQuoteSnapshot struct {
 	Quote  *protocol.Quote `json:"quote"`
 }
 
+type MarketKlineBatch struct {
+	Data             map[string]*protocol.KlineResp `json:"data"`
+	Errors           map[string]string              `json:"errors"`
+	Source           string                         `json:"source"`
+	HikyuuCount      int                            `json:"hikyuu_count"`
+	TDXFallbackCount int                            `json:"tdx_fallback_count"`
+}
+
+type MarketHikyuuTask struct {
+	ID        string   `json:"id"`
+	Type      string   `json:"type"`
+	Status    string   `json:"status"`
+	StartedAt string   `json:"started_at"`
+	EndedAt   string   `json:"ended_at"`
+	ExitCode  *int     `json:"exit_code"`
+	Error     string   `json:"error"`
+	Progress  *int     `json:"progress,omitempty"`
+	Stage     string   `json:"stage,omitempty"`
+	Message   string   `json:"message,omitempty"`
+	LogTail   []string `json:"log_tail,omitempty"`
+}
+
 func NewMarketServiceClient() *MarketServiceClient {
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MARKET_SERVICE_URL")), "/")
 	return &MarketServiceClient{
@@ -142,6 +164,49 @@ func (c *MarketServiceClient) KlineHistory(ctx context.Context, code, klineType 
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (c *MarketServiceClient) KlineHistoryBatch(ctx context.Context, symbols []string, klineType string, limit int) (*MarketKlineBatch, error) {
+	var resp MarketKlineBatch
+	if err := c.post(ctx, "/api/hikyuu/kline/batch", map[string]interface{}{
+		"symbols": symbols,
+		"period":  klineType,
+		"recover": "qfq",
+		"limit":   limit,
+	}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *MarketServiceClient) StartHikyuuAfterCloseSync(ctx context.Context) (*MarketHikyuuTask, error) {
+	var resp MarketHikyuuTask
+	if err := c.post(ctx, "/api/hikyuu/tasks/after-close-sync", map[string]interface{}{}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *MarketServiceClient) HikyuuTask(ctx context.Context, id string) (*MarketHikyuuTask, error) {
+	var resp MarketHikyuuTask
+	if err := c.get(ctx, "/api/hikyuu/tasks/"+url.PathEscape(id), nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *MarketServiceClient) IsWorkday(ctx context.Context, date string) (bool, error) {
+	query := url.Values{}
+	if strings.TrimSpace(date) != "" {
+		query.Set("date", date)
+	}
+	var resp struct {
+		IsWorkday bool `json:"is_workday"`
+	}
+	if err := c.get(ctx, "/api/workday", query, &resp); err != nil {
+		return false, err
+	}
+	return resp.IsWorkday, nil
 }
 
 func (c *MarketServiceClient) IndexKline(ctx context.Context, code, klineType string, limit int) (*protocol.KlineResp, error) {

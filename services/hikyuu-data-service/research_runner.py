@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import math
 import os
+import argparse
+import contextlib
+import io
+import json
+import sys
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -280,3 +285,26 @@ def run_reference_backtest(payload: dict[str, Any]) -> dict[str, Any]:
         total_return = curve[-1]["equity"] / (initial_cash * len(symbols)) - 1
     wins = [trade for trade in trades if trade["return"] > 0]
     return {"engine": "hikyuu", "calculation_engine": "hikyuu-data-reference", "symbols": len(symbols), "signals": len(trades), "trades": trades, "equity_curve": curve, "per_symbol": per_symbol, "metrics": {"symbols": len(symbols), "trades": len(trades), "win_rate": len(wins) / len(trades) if trades else 0, "total_return": total_return}, "warnings": warnings, "meta": {"source": "hikyuu", "data_revision": os.getenv("HIKYUU_DATA_REVISION", "runtime"), "strategy": "ma_cross_reference", "params": {"fast": fast, "slow": slow}}}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--operation", choices=("indicator", "backtest"), required=True)
+    parser.add_argument("--payload-json", required=True)
+    args = parser.parse_args()
+    try:
+        payload = json.loads(args.payload_json)
+        if not isinstance(payload, dict):
+            raise ValueError("payload-json must be an object")
+        native_output = io.StringIO()
+        with contextlib.redirect_stdout(native_output), contextlib.redirect_stderr(native_output):
+            result = calculate_indicator(payload) if args.operation == "indicator" else run_reference_backtest(payload)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        return 1
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

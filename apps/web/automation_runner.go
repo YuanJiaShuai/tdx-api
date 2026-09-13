@@ -117,7 +117,7 @@ func (r *AutomationRunner) Reload() error {
 		return err
 	}
 	for _, task := range tasks {
-		if !task.Enabled {
+		if !task.Enabled || task.Type == "system_strategy_batch" {
 			continue
 		}
 		entryID, err := r.cron.AddFunc(task.Cron, func(taskID string) func() {
@@ -344,13 +344,14 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 	batches := chunkSymbols(symbols, batchSize)
 	for _, batch := range batches {
 		resp, err := r.worker.Run(ctx, FormulaRunRequest{
-			Symbols:   batch,
-			Script:    formula.Script,
-			Args:      json.RawMessage(formula.ArgsJSON),
-			Period:    period,
-			Right:     right,
-			OutCount:  outCount,
-			CalcCount: calcCount,
+			Symbols:       batch,
+			Script:        formula.Script,
+			Args:          json.RawMessage(formula.ArgsJSON),
+			Period:        period,
+			Right:         right,
+			OutCount:      outCount,
+			CalcCount:     calcCount,
+			ForceFallback: true,
 		})
 		if err == nil {
 			mergeFormulaData(allData, resp.Data)
@@ -361,13 +362,14 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 		}
 		for _, symbol := range batch {
 			singleResp, singleErr := r.worker.Run(ctx, FormulaRunRequest{
-				Symbols:   []string{symbol},
-				Script:    formula.Script,
-				Args:      json.RawMessage(formula.ArgsJSON),
-				Period:    period,
-				Right:     right,
-				OutCount:  outCount,
-				CalcCount: calcCount,
+				Symbols:       []string{symbol},
+				Script:        formula.Script,
+				Args:          json.RawMessage(formula.ArgsJSON),
+				Period:        period,
+				Right:         right,
+				OutCount:      outCount,
+				CalcCount:     calcCount,
+				ForceFallback: true,
 			})
 			if singleErr != nil {
 				errorsBySymbol[symbol] = singleErr.Error()

@@ -15,6 +15,8 @@
 
 - `apps/web`: Web UI and API gateway
 - `services/market-service`: market-data API
+- `services/hikyuu-data-service`: full and after-close historical-data ingestion backed by HDF5
+- `services/selection-worker`: scheduled selection, shared K-line loading and historical strategy replay
 - `packages/tdx-core`: TDX protocol client and data models
 
 ## Conventions
@@ -26,7 +28,11 @@
 
 - Frontend quote consumers normalize the current `Kline` response and the legacy `K` response through shared helpers in `apps/web/frontend/src/lib/format.ts`.
 - Selection tracking treats signals created before 09:30 Asia/Shanghai as executable at the signal-day open and counts that session as D1. Later signals start their observation window on the next trading session.
-- Fixed close data sync runs at 16:00 on weekdays; fixed D1/D5/D10 tracking runs at 17:15 after the close-data jobs have had time to finish.
+- Market data consumers use `market-service` as the only K-line entry point. It reads Hikyuu local history first and falls back to TDX when a symbol is absent; selection and historical backtests must not read legacy per-symbol SQLite files directly.
+- Hikyuu history is requested with forward adjustment. The rare TDX fallback returns raw daily bars and must not be merged into the same series; a later Hikyuu sync remains the authoritative repair.
+- Hikyuu owns full initialization and after-close incremental persistence. The fixed close task runs at 16:30 on weekdays, verifies the exchange calendar, waits for Hikyuu to finish, and only then triggers the system-strategy daily batch. Its timeout is two hours.
+- Compose disables Hikyuu's internal scheduler because `selection-worker` owns the close-sync workflow; this avoids duplicate HDF5 writers.
+- Fixed D1/D5/D10 tracking runs at 17:15.
 
 ## Pitfalls
 
@@ -34,3 +40,6 @@
 - Quote rate is encoded as a signed 16-bit hundredth-percent value. Decode through `int16`; treating it as unsigned turns small negative values into `655.xx%`.
 - Tracking calculations must ignore placeholder or malformed daily bars: date and OHLC must be positive, and high/low must contain open and close.
 - `000001` is ambiguous: `AddPrefix` maps the bare code to `sz000001` (平安银行) because `isSZStock` (leading `0`) is checked before `isSHIndex` (leading `000`). Reach 上证指数 only via the explicit `sh000001` prefix. Index K-lines must go through the index API (`KindIndex`) — the stock path (`KindStock`) misparses the 4 extra up/down-count bytes per bar.
+- Legacy files under `data/database/kline/*.db` and the newer `data/database/kline/day-kline/*.db` have different layouts and update histories. They are retained for compatibility but are not authoritative for strategy history.
+- Hikyuu's importer may exit with code 0 after emitting `HDF5_IMPORT/THREAD/FAILURE`; task success must inspect that failure event before publishing a new `data_revision` or starting strategies.
+- Hikyuu reads run in short-lived subprocesses and are serialized inside `hikyuu-data-service`; an active sync rejects local reads so `market-service` can fall back to TDX. This prevents the Hikyuu runtime from retaining HDF5 read locks across the after-close writer.

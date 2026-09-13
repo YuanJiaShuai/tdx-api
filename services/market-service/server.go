@@ -213,8 +213,8 @@ func handleGetKline(w http.ResponseWriter, r *http.Request) {
 	case "day":
 		fallthrough
 	default:
-		// 日K线使用前复权数据
-		resp, err = getQfqKlineDay(code)
+		// 本地Hikyuu不可用时，回源通达信原始日线应急返回。
+		resp, err = loadTDXKline(r.Context(), code, "day", 0)
 	}
 
 	if err != nil {
@@ -897,6 +897,9 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/tasks/pull-trade", handleCreatePullTradeTask)
 	http.HandleFunc("/api/tasks", handleListTasks)
 	http.HandleFunc("/api/tasks/", handleTaskOperations)
+	http.HandleFunc("/api/hikyuu/kline/batch", handleHikyuuKlineBatch)
+	http.HandleFunc("/api/hikyuu/tasks/after-close-sync", handleHikyuuAfterCloseSync)
+	http.HandleFunc("/api/hikyuu/tasks/", handleHikyuuTask)
 }
 
 func listenAndServe(defaultPort string) {

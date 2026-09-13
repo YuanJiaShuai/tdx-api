@@ -334,10 +334,11 @@ python3 services/formula-worker/worker.py
 
 Hikyuu 服务需要先安装 `services/hikyuu-data-service/requirements.txt` 和 `hikyuu==2.8.2`，再从该目录运行 `uvicorn app:app --host 0.0.0.0 --port 8091`。
 
-Hikyuu 在本项目中的职责边界是：负责可复现的历史研究数据、指标和参考回测；TDX
-负责实时行情；Go 负责业务编排。数据同步成功后会生成 `data_revision`，指标和
-回测结果都会返回该修订号。策略中心中的“回测”默认使用 Go 引擎，“Hikyuu 校验”
-显式调用 Hikyuu MA 交叉参考策略，不能把两者结果混用。
+Hikyuu 在本项目中的职责边界是：负责历史数据的全量初始化和盘后增量落库；TDX
+负责实时行情，并在本地历史缺失时兜底；Go 负责统一行情入口和业务编排。策略与
+回测只调用 market-service，由它执行“Hikyuu 本地优先、TDX 回退”。数据同步成功
+后会生成 `data_revision`。Compose 中的盘后同步由 selection-worker 在交易日 16:30
+发起，等待同步成功后再执行系统策略日报。
 
 源码模式下，如需让 Web 走独立行情、公式和 AI 服务，请显式设置服务地址：
 

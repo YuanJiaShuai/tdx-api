@@ -54,6 +54,20 @@ interface HistoryBar {
   amount: number;
 }
 
+// A bare six-digit code is ambiguous for symbols such as 000001: it can be
+// either SZ000001 (Ping An Bank) or SH000001 (Shanghai Composite). Keep the
+// exchange whenever the caller supplied one before making market requests.
+function normalizeKlineSymbol(value: unknown): string {
+  const raw = String(value || '').trim().toUpperCase();
+  const prefixed = raw.match(/^(SH|SZ|BJ)(\d{6})$/);
+  if (prefixed) return `${prefixed[2]}.${prefixed[1]}`;
+
+  const suffixed = raw.match(/^(\d{6})[._-]?(SH|SZ|BJ)$/);
+  if (suffixed) return `${suffixed[1]}.${suffixed[2]}`;
+
+  return normalizeSymbol(raw);
+}
+
 const periodOptions: Array<{ value: Period; label: string }> = [
   { value: 'minute5', label: '5 分' },
   { value: 'minute15', label: '15 分' },
@@ -326,7 +340,7 @@ export function KlineAnalysisWorkspace() {
   }, []);
 
   const loadData = useCallback(async (nextSymbol = symbol, nextPeriod = period) => {
-    const normalized = normalizeSymbol(nextSymbol);
+    const normalized = normalizeKlineSymbol(nextSymbol);
     if (!normalized) {
       message.warning('请输入有效股票代码');
       return;
@@ -548,7 +562,7 @@ export function KlineAnalysisWorkspace() {
     setSymbolName(result.name);
     setSearchValue('');
     setSearchResults([]);
-    void loadData(result.code, period);
+    void loadData(result.exchange ? `${result.code}.${result.exchange}` : result.code, period);
   };
 
   return (

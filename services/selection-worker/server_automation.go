@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -513,7 +512,7 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			Type:        "selection_tracking",
 			Cron:        "0 15 17 * * 1-5",
 			Enabled:     false,
-			PayloadJSON: `{"limit":500,"horizons":[1,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+			PayloadJSON: `{"limit":500,"horizons":[3,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
 	case "market_long_tiger_sync":
@@ -603,6 +602,15 @@ func handleAutomationOperations(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && parts[1] == "run" {
 		if r.Method != http.MethodPost {
 			errorResponse(w, "只支持POST请求")
+			return
+		}
+		if id == SystemStrategyDailyBatchTaskID {
+			run, err := automationRunner.startSystemStrategyBatch()
+			if err != nil {
+				errorResponse(w, "任务运行失败: "+err.Error())
+				return
+			}
+			successResponse(w, run)
 			return
 		}
 		run, err := automationRunner.RunTask(r.Context(), id)
@@ -738,93 +746,20 @@ func handleDailyReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 300 {
-		limit = 200
+	data, err := appStore.BuildDailyReview(
+		strings.TrimSpace(r.URL.Query().Get("date")),
+		strings.TrimSpace(r.URL.Query().Get("batch_id")),
+		limit,
+	)
+	if err == sql.ErrNoRows {
+		errorResponse(w, "日报批次不存在")
+		return
 	}
-	items, err := appStore.ListSelectionResults("", "", "", true, limit)
 	if err != nil {
 		errorResponse(w, err.Error())
 		return
 	}
-	notes, err := appStore.ListDecisionNotes("", 500)
-	if err != nil {
-		errorResponse(w, err.Error())
-		return
-	}
-	noteMap := map[string]DecisionNote{}
-	for _, note := range notes {
-		noteMap[strings.ToUpper(note.Symbol)] = note
-	}
-	watchPool, _ := appStore.GetStockPool(DecisionWatchPoolID)
-	excludePool, _ := appStore.GetStockPool(DecisionExcludePoolID)
-	watchSet := symbolSet(watchPool.Symbols)
-	excludeSet := symbolSet(excludePool.Symbols)
-
-	reviewItems := make([]ReviewItem, 0, len(items))
-	scoreTotal := 0
-	trackedCount := 0
-	positiveCount := 0
-	closeChangeTotal := 0.0
-	for _, item := range items {
-		symbol := strings.ToUpper(item.Symbol)
-		score, track := buildReviewMetrics(r.Context(), item)
-		scoreTotal += score.Total
-		if track.Available {
-			trackedCount++
-			closeChangeTotal += track.CloseChange
-			if track.CloseChange > 0 {
-				positiveCount++
-			}
-		}
-		note := noteMap[symbol]
-		status := note.Status
-		if excludeSet[symbol] {
-			status = "exclude"
-		} else if watchSet[symbol] {
-			status = "watch"
-		}
-		reviewItems = append(reviewItems, ReviewItem{
-			Result:   item,
-			Score:    score,
-			Track:    track,
-			Note:     note,
-			Status:   status,
-			Watch:    watchSet[symbol],
-			Excluded: excludeSet[symbol],
-		})
-	}
-	sort.Slice(reviewItems, func(i, j int) bool {
-		return reviewItems[i].Score.Total > reviewItems[j].Score.Total
-	})
-	avgScore := 0.0
-	if len(reviewItems) > 0 {
-		avgScore = roundFloat(float64(scoreTotal)/float64(len(reviewItems)), 2)
-	}
-	winRate := 0.0
-	avgCloseChange := 0.0
-	if trackedCount > 0 {
-		winRate = roundFloat(float64(positiveCount)/float64(trackedCount)*100, 2)
-		avgCloseChange = roundFloat(closeChangeTotal/float64(trackedCount), 2)
-	}
-	today := time.Now().Format("2006-01-02")
-	successResponse(w, map[string]interface{}{
-		"date": today,
-		"summary": map[string]interface{}{
-			"hits":             len(reviewItems),
-			"watch_count":      len(watchPool.Symbols),
-			"exclude_count":    len(excludePool.Symbols),
-			"avg_score":        avgScore,
-			"handled_count":    countHandled(reviewItems),
-			"tracked_count":    trackedCount,
-			"positive_count":   positiveCount,
-			"win_rate":         winRate,
-			"avg_close_change": avgCloseChange,
-		},
-		"items":   reviewItems,
-		"watch":   watchPool.Symbols,
-		"exclude": excludePool.Symbols,
-		"notes":   notes,
-	})
+	successResponse(w, data)
 }
 
 func symbolSet(symbols []string) map[string]bool {

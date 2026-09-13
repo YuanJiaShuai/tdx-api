@@ -100,7 +100,7 @@ export function StrategiesWorkspace() {
         universe: cfg.universe || '',
         pool_id: typeof cfg.pool_id === 'string' ? cfg.pool_id : '',
         symbols: Array.isArray(cfg.symbols) ? cfg.symbols : [],
-        max_codes: 300
+        max_codes: typeof cfg.scan_limit === 'number' ? cfg.scan_limit : 300
       })
     })
       .then((data) => { if (active) setRangeCoverage(data); })
@@ -441,7 +441,7 @@ export function StrategiesWorkspace() {
             </div>
           </section>
           <div className="strategy-form-actions">
-            <Text type="secondary">{editing?.readonly ? '系统模板不可直接修改，请复制后编辑' : '保存后可在自动化任务中调用这条策略'}</Text>
+            <Text type="secondary">{editing?.readonly ? '系统策略的因子和评分条件不可修改；候选覆盖可在“选股范围”页调整。' : '保存后可在自动化任务中调用这条策略'}</Text>
             <Space>
               {editing?.readonly ? <Button icon={<CopyOutlined />} onClick={() => { setDialogOpen(false); cloneStrategy(editing.id); }}>复制副本</Button> : null}
               <Button onClick={() => setDialogOpen(false)}>取消</Button>

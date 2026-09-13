@@ -626,9 +626,13 @@ class WorkerHandler(BaseHTTPRequestHandler):
             data = req.get("data") or {}
             if not data:
                 raise ValueError("data不能为空")
+            force_fallback = bool(req.get("force_fallback") or req.get("ForceFallback"))
             engine = "fallback"
             fallback_error = ""
-            if HQCHARTPY2 is not None:
+            # HQChartPy2's native multi-symbol path can abort the whole process
+            # on uneven or sparse histories. Batch scans use the deterministic
+            # Python evaluator; single-symbol chart/tests retain the native engine.
+            if HQCHARTPY2 is not None and len(data) == 1 and not force_fallback:
                 try:
                     result = try_eval_hqchartpy2(
                         script,

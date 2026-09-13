@@ -832,6 +832,10 @@ func hikyuuProxyOnly(w http.ResponseWriter, r *http.Request) {
 	errorResponse(w, "该接口需要配置HIKYUU_DATA_SERVICE_URL")
 }
 
+func selectionProxyOnly(w http.ResponseWriter, r *http.Request) {
+	errorResponse(w, "该接口需要配置SELECTION_WORKER_URL")
+}
+
 func staticDir() string {
 	if _, err := os.Stat("./static-react/index.html"); err == nil {
 		return "./static-react"
@@ -1006,6 +1010,9 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/decision-notes", handleDecisionNotes)
 	http.HandleFunc("/api/decision-notes/", handleDecisionNoteOperations)
 	http.HandleFunc("/api/daily-review", handleDailyReview)
+	historicalBacktestHandler := proxyToService("SELECTION_WORKER_URL", selectionProxyOnly)
+	http.HandleFunc("/api/historical-backtests", historicalBacktestHandler)
+	http.HandleFunc("/api/historical-backtests/", historicalBacktestHandler)
 	http.HandleFunc("/api/macro-events", handleMacroEvents)
 	http.HandleFunc("/api/macro-events/sync", handleMacroEventSync)
 	http.HandleFunc("/api/macro-events/settings", handleMacroAlertSettings)
