@@ -10126,7 +10126,7 @@ textarea::placeholder {
   display: grid;
   grid-template-columns: 150px 150px minmax(280px, 1fr) 130px 130px 120px;
   gap: 10px;
-  align-items: end;
+  align-items: start;
 }
 
 .historical-backtest-form label {
@@ -10147,8 +10147,16 @@ textarea::placeholder {
   width: 100%;
 }
 
+.historical-backtest-form .ant-picker,
+.historical-backtest-form .ant-input-number,
+.historical-backtest-form .ant-select-selector {
+  margin-bottom: 0;
+}
+
 .historical-start-button {
   width: 120px;
+  align-self: end;
+  margin-bottom: 0;
 }
 
 .historical-backtest-main {
