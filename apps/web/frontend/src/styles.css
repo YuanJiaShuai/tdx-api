@@ -10153,9 +10153,19 @@ textarea::placeholder {
   margin-bottom: 0;
 }
 
+.historical-backtest-form .ant-select-selector {
+  min-height: 60px !important;
+  padding: 6px 11px !important;
+}
+
+.historical-backtest-form .ant-select-selection-overflow {
+  align-content: center;
+  min-height: 46px;
+}
+
 .historical-start-button {
   width: 120px;
-  align-self: end;
+  align-self: center;
   margin-bottom: 0;
 }
 
