@@ -185,7 +185,7 @@ services:
       start_period: 10s
     labels:
       - "com.stock.description=TDX Workbench"
-      - "com.stock.version=0.1.0-beta.1"
+      - "com.stock.version=0.1.0"
 
 networks:
   stock-network:
