@@ -12,6 +12,8 @@ import (
 type portfolioSimConfig struct {
 	InitialCash  float64 `json:"initial_cash"`
 	MaxPositions int     `json:"max_positions"`
+	BuyCost      float64 `json:"buy_cost"`  // 买入费率(佣金+过户),与策略回测引擎一致
+	SellCost     float64 `json:"sell_cost"` // 卖出费率(佣金+过户+印花税),与策略回测引擎一致
 }
 
 type portfolioSimPosition struct {
@@ -46,6 +48,13 @@ type portfolioSimulator struct {
 }
 
 func newPortfolioSimulator(cfg portfolioSimConfig) *portfolioSimulator {
+	// 费率默认值与策略回测引擎一致:无论请求层是否填充,引擎内兜底保证费用开启
+	if cfg.BuyCost <= 0 {
+		cfg.BuyCost = 0.0005 // 佣金+过户
+	}
+	if cfg.SellCost <= 0 {
+		cfg.SellCost = 0.001 // 佣金+过户+印花税
+	}
 	return &portfolioSimulator{
 		cfg:         cfg,
 		cash:        cfg.InitialCash,
@@ -152,19 +161,20 @@ func (sim *portfolioSimulator) tryBuy(buy portfolioPendingBuy, date int, dateTex
 		return
 	}
 	target := sim.equity() / float64(sim.cfg.MaxPositions)
-	shares := int(target / row.Open / 100) * 100
+	shares := int(target/row.Open/100) * 100
 	if shares < 100 {
 		sim.appendSkip(buy, dateText, "资金不足一手")
 		return
 	}
-	cost := float64(shares) * row.Open
+	// 买入总支出含费率:现金约束与降级重算都以含费单价为准
+	cost := float64(shares) * row.Open * (1 + sim.cfg.BuyCost)
 	if cost > sim.cash {
-		shares = int(sim.cash / row.Open / 100) * 100
+		shares = int(sim.cash/(row.Open*(1+sim.cfg.BuyCost))/100) * 100
 		if shares < 100 {
 			sim.appendSkip(buy, dateText, "现金不足")
 			return
 		}
-		cost = float64(shares) * row.Open
+		cost = float64(shares) * row.Open * (1 + sim.cfg.BuyCost)
 	}
 	sim.cash -= cost
 	sim.positions[buy.symbol] = &portfolioSimPosition{
@@ -180,11 +190,14 @@ func (sim *portfolioSimulator) tryBuy(buy portfolioPendingBuy, date int, dateTex
 }
 
 func (sim *portfolioSimulator) executeSell(pos *portfolioSimPosition, price float64, date int, dateText string) {
-	sim.cash += float64(pos.shares) * price
-	pnl := (price - pos.entryPrice) * float64(pos.shares)
+	// 卖出收入扣费率,盈亏按含费双边成本计算(与策略回测引擎 tradeReturn 语义一致)
+	proceeds := float64(pos.shares) * price * (1 - sim.cfg.SellCost)
+	entryCost := float64(pos.shares) * pos.entryPrice * (1 + sim.cfg.BuyCost)
+	sim.cash += proceeds
+	pnl := proceeds - entryCost
 	pnlRate := 0.0
-	if pos.entryPrice > 0 {
-		pnlRate = (price - pos.entryPrice) / pos.entryPrice * 100
+	if entryCost > 0 {
+		pnlRate = (proceeds/entryCost - 1) * 100
 	}
 	sim.trades = append(sim.trades, HistoricalBacktestTrade{
 		Symbol:       pos.symbol,

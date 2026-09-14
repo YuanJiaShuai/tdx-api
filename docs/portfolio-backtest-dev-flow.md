@@ -43,6 +43,7 @@
 | 落地入口 | `StrategiesWorkspace.tsx` 策略回测(`/api/strategies/{id}/backtest`,mode=symbol/portfolio) | `HistoricalBacktestWorkspace.tsx` 历史选股回放(`/api/historical-backtests`),无需 mode 开关 |
 | 需求动因 | 扩展策略回测为组合模式 | 用户需求演进:"保留策略信号列表,新开交易记录列表"(信号=候选,交易=账户实际买卖) |
 | 撮合引擎位置 | apps/web 新增 strategy_backtest_portfolio.go | `services/selection-worker/portfolio_simulator.go`,挂入历史回放主循环(T 日信号 → T+1 开盘撮合) |
+| 手续费/印花税 | 未提及(原规划以策略回测 buy/sell cost 系数为参照) | 已对齐现有引擎:买入 0.05%、卖出 0.1%(含印花税),引擎内兜底默认值;买入总支出与卖出净收入均按含费口径计算 |
 | 交易流水存储 | 无(原规划随回测结果返回) | workbench-core 新增 `historical_backtest_trades` 表 + `/api/historical-backtests/{id}/trades` 分页 API |
 | 结果展示 | PortfolioResultCard:指标卡 + SVG 净值曲线 + 月度收益表 | 交易记录 Tab + 7 格绩效汇总条(期末权益/总收益/回撤/胜率等);SVG 净值曲线与月度收益表**未实施** |
 | 信号列表 | 无提及 | 原样保留(信号明细 Tab),交易列表为新增视角 |
@@ -485,7 +486,7 @@ curl -s -X POST http://localhost:8080/api/strategies/<id>/backtest \
 - [ ] 已知限制随文档记录:
   - ST 股 5% 限幅不区分(按 10% 处理,漏判)
   - 开盘价=涨停价但盘中开板的情况无法用日K判断(取保守:视为买不进)
-  - 滑点用固定 buy/sell cost 系数近似
+  - 交易成本对齐现有策略回测引擎(买入 0.05%、卖出 0.1%),未额外建模滑点与冲击成本(散户量级可忽略)
   - 停牌股按"不可交易"处理(买入日停牌则放弃信号)
   - market_momentum 等大盘因子不在回测支持列表
 

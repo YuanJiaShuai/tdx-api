@@ -70,7 +70,7 @@ func TestPortfolioLimitDownDelay(t *testing.T) {
 			{date: 20260108, yclose: 9.0, open: 9.2, close: 9.2}, // 开盘可卖
 		}),
 	}
-	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10000, MaxPositions: 1})
+	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10050, MaxPositions: 1}) // 多留 50 覆盖买入费率,保证满 1000 股
 	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260104, "策略A")})
 	sim.onDayClose(20260105, klines)
 	sim.onDayOpen(20260106, "2026-01-06", klines, nil)
@@ -89,8 +89,8 @@ func TestPortfolioLimitDownDelay(t *testing.T) {
 	if trade.Reason != "止损(收盘≤-8%)" {
 		t.Fatalf("reason = %s, want 止损(收盘≤-8%%)", trade.Reason)
 	}
-	if math.Abs(trade.Pnl+800) > 1e-6 { // (9.2-10)*1000股,浮点容差
-		t.Fatalf("pnl = %v, want -800", trade.Pnl)
+	if math.Abs(trade.Pnl+814.2) > 0.01 { // 1000股买入扣 0.05% 费率,卖出扣 0.1% 费率
+		t.Fatalf("pnl = %v, want -814.2", trade.Pnl)
 	}
 }
 
@@ -134,8 +134,8 @@ func TestPortfolioCashConstrainedBuy(t *testing.T) {
 	if b.Status != "open" || b.Shares != 400 {
 		t.Fatalf("trade = %+v, want open with 400 shares(全现金降级买入)", b)
 	}
-	if math.Abs(sim.cash-450) > 1e-6 {
-		t.Fatalf("cash = %v, want 450", sim.cash)
+	if math.Abs(sim.cash-440.225) > 0.01 {
+		t.Fatalf("cash = %v, want 440.225(含买入费率)", sim.cash)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestPortfolioTPlusOneAndStopPriority(t *testing.T) {
 		pfBar{date: 20251226, yclose: 9.0, open: 9.1, close: 9.1},
 	)
 	klines := map[string][]FormulaKline{"000001": pfKline(bars)}
-	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10000, MaxPositions: 1})
+	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10050, MaxPositions: 1}) // 多留 50 覆盖买入费率
 	sim.onDayOpen(20251225, "2025-12-25", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20251224, "策略A")})
 	sim.onDayClose(20251225, klines)
 	sim.onDayOpen(20251226, "2025-12-26", klines, nil)
@@ -200,9 +200,13 @@ func TestPortfolioEqualWeight(t *testing.T) {
 		t.Fatalf("len(trades) = %d, want 2: %+v", len(trades), trades)
 	}
 	for _, trade := range trades {
-		if trade.Status != "open" || trade.Shares != 5000 {
-			t.Fatalf("trade = %+v, want open with 5000 shares", trade)
+		if trade.Status != "open" {
+			t.Fatalf("trade = %+v, want open", trade)
 		}
+	}
+	// 第一笔 5000 股(目标 50000);第二笔因费率+等权整手截断降为 4900 股
+	if trades[0].Shares != 5000 || trades[1].Shares != 4900 {
+		t.Fatalf("shares = %d/%d, want 5000/4900(费率导致第二笔整手截断)", trades[0].Shares, trades[1].Shares)
 	}
 }
 
@@ -297,7 +301,7 @@ func TestMergePendingBuy(t *testing.T) {
 func TestPortfolioSummary(t *testing.T) {
 	klines := map[string][]FormulaKline{
 		"000001": pfKline([]pfBar{
-			{date: 20260105, yclose: 10, open: 10, close: 11.3}, // 触及 +12%,激活回撤止盈(避开 10*1.12 浮点边界)
+			{date: 20260105, yclose: 10, open: 10, close: 11.3},   // 触及 +12%,激活回撤止盈(避开 10*1.12 浮点边界)
 			{date: 20260106, yclose: 11.3, open: 11.3, close: 10}, // 回撤到峰值*90%以下,触发回撤止盈
 			{date: 20260107, yclose: 10, open: 10.2, close: 10.2},
 		}),
@@ -327,11 +331,42 @@ func TestPortfolioSummary(t *testing.T) {
 	if summary["win_rate"] != 50.0 {
 		t.Fatalf("win_rate = %v, want 50", summary["win_rate"])
 	}
-	// 盈亏:+200(000001) / -900(000002) → 期末权益 19300,总收益 -3.5%
-	if summary["final_equity"] != 19300.0 {
-		t.Fatalf("final_equity = %v, want 19300", summary["final_equity"])
+	// 盈亏(含双边费率):A +184.8(1000股 10→10.2) / B -822.69(900股 10→9.1)
+	// → 期末权益 ≈ 19362.11,总收益 ≈ -3.19%
+	if math.Abs(summary["final_equity"].(float64)-19362.11) > 0.5 {
+		t.Fatalf("final_equity = %v, want ≈19362.11", summary["final_equity"])
 	}
-	if got := summary["total_return"].(float64); math.Abs(got+3.5) > 0.01 {
-		t.Fatalf("total_return = %v, want -3.5(±0.01)", got)
+	if got := summary["total_return"].(float64); math.Abs(got+3.19) > 0.1 {
+		t.Fatalf("total_return = %v, want ≈-3.19", got)
+	}
+}
+
+// 买入费率生效:全仓买入时 1000 股被费率截断为 900 股,盈亏扣双边费率。
+func TestPortfolioCosts(t *testing.T) {
+	klines := map[string][]FormulaKline{
+		"000001": pfKline([]pfBar{
+			{date: 20260105, yclose: 10, open: 10, close: 9.0}, // 买入日收盘触发止损
+			{date: 20260106, yclose: 9.0, open: 9.5, close: 9.5},
+		}),
+	}
+	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10000, MaxPositions: 1})
+	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260104, "策略A")})
+	sim.onDayClose(20260105, klines)
+	sim.onDayOpen(20260106, "2026-01-06", klines, nil)
+
+	trade := pfSingleTrade(t, sim, "run1")
+	if trade.Status != "closed" {
+		t.Fatalf("trade status = %s, want closed", trade.Status)
+	}
+	// 无费率时全仓 1000 股;含 0.05% 买入费率后 10005 > 10000,降级为 900 股
+	if trade.Shares != 900 {
+		t.Fatalf("shares = %d, want 900(买入费率截断)", trade.Shares)
+	}
+	// 无费率盈亏 = 900*(9.5-10) = -450;扣双边费率后 = -463.05
+	if math.Abs(trade.Pnl+463.05) > 0.01 {
+		t.Fatalf("pnl = %v, want -463.05(扣双边费率)", trade.Pnl)
+	}
+	if math.Abs(sim.cash-9536.95) > 0.01 {
+		t.Fatalf("cash = %v, want 9536.95", sim.cash)
 	}
 }

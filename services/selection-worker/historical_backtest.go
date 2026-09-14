@@ -25,6 +25,8 @@ type historicalBacktestRequest struct {
 	DrawdownLimit float64  `json:"drawdown_limit"`
 	InitialCash   float64  `json:"initial_cash"`
 	MaxPositions  int      `json:"max_positions"`
+	BuyCost       float64  `json:"buy_cost"`
+	SellCost      float64  `json:"sell_cost"`
 }
 
 type historicalStrategyPlan struct {
@@ -206,6 +208,12 @@ func normalizeHistoricalBacktestRequest(req historicalBacktestRequest) (historic
 	if req.MaxPositions <= 0 || req.MaxPositions > 20 {
 		req.MaxPositions = 5
 	}
+	if req.BuyCost <= 0 {
+		req.BuyCost = 0.0005 // 与策略回测引擎默认一致(佣金+过户)
+	}
+	if req.SellCost <= 0 {
+		req.SellCost = 0.001 // 与策略回测引擎默认一致(佣金+过户+印花税)
+	}
 	req.StrategyIDs = normalizeIDList(req.StrategyIDs)
 	return req, start, end, nil
 }
@@ -355,7 +363,7 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 	consensus := map[string]*historicalConsensusAccumulator{}
 	trackingBars := map[string][]workbench.TrackingBar{}
 	signalCount := 0
-	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: req.InitialCash, MaxPositions: req.MaxPositions})
+	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: req.InitialCash, MaxPositions: req.MaxPositions, BuyCost: req.BuyCost, SellCost: req.SellCost})
 	pendingBuys := []portfolioPendingBuy{}
 	for dateIndex, signalDate := range dates {
 		if ctx.Err() != nil || r.store.HistoricalBacktestCancelRequested(run.ID) {
