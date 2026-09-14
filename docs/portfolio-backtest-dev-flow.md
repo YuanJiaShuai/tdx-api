@@ -1,6 +1,8 @@
 # 组合级回测(Portfolio Backtest)开发流程(详细版)
 
-> 状态:**待实施**。本文档整理自已批准的《组合级回测设计方案》,描述后续开发流程、数据结构草案、算法细节与验收标准。本文档仅是流程文档,**未修改任何代码**。
+> 状态:**已实施(落地位置有变更)**。本文档整理自已批准的《组合级回测设计方案》,描述开发流程、数据结构草案、算法细节与验收标准。
+>
+> ⚠️ **重要变更**:实际落地在 `HistoricalBacktestWorkspace.tsx` 历史回放页,而非 4.2 原规划的 `StrategiesWorkspace.tsx` 策略回测页——详见 0.4 实施记录。
 
 ## 0. 背景速览
 
@@ -32,6 +34,21 @@
 - 目标:新增**组合模式(portfolio)**——单账户资金池按信号轮动,模拟涨停买不进、跌停卖不出、100 股整手、T+1 等 A 股约束,输出账户净值曲线、最大回撤与月度收益
 - 边界:复用现有入口(默认 mode=symbol 行为完全不变);前端基于 React 版;不做 ST 差异化限幅、滑点模型、自动下单
 
+### 0.4 实施记录(2026-09-14,与原文规划的关键差异)
+
+> 实际开发受后续需求演进驱动,落地位置与原文 2/3/4 章的规划不同。**以本节为准**,后续章节中与本节冲突的描述均已加标注。
+
+| 规划项 | 原文规划 | 实际落地 |
+|---|---|---|
+| 落地入口 | `StrategiesWorkspace.tsx` 策略回测(`/api/strategies/{id}/backtest`,mode=symbol/portfolio) | `HistoricalBacktestWorkspace.tsx` 历史选股回放(`/api/historical-backtests`),无需 mode 开关 |
+| 需求动因 | 扩展策略回测为组合模式 | 用户需求演进:"保留策略信号列表,新开交易记录列表"(信号=候选,交易=账户实际买卖) |
+| 撮合引擎位置 | apps/web 新增 strategy_backtest_portfolio.go | `services/selection-worker/portfolio_simulator.go`,挂入历史回放主循环(T 日信号 → T+1 开盘撮合) |
+| 交易流水存储 | 无(原规划随回测结果返回) | workbench-core 新增 `historical_backtest_trades` 表 + `/api/historical-backtests/{id}/trades` 分页 API |
+| 结果展示 | PortfolioResultCard:指标卡 + SVG 净值曲线 + 月度收益表 | 交易记录 Tab + 7 格绩效汇总条(期末权益/总收益/回撤/胜率等);SVG 净值曲线与月度收益表**未实施** |
+| 信号列表 | 无提及 | 原样保留(信号明细 Tab),交易列表为新增视角 |
+| 单标的策略回测 | mode=symbol 行为不变 | `StrategiesWorkspace` 策略回测**完全未动**,老功能无回归风险 |
+| 单元测试(5.1) | apps/web 下 10 个 Given/When/Then 用例 | 已补核心用例:`services/selection-worker/portfolio_simulator_test.go`(合成 K 线,12 个用例:涨停/跌停/整手/T+1/退出优先级/等权/重复信号/持仓上限/限幅分板块/信号合并/现金降级/摘要统计),与本节日录表不完全一一对应 |
+
 ---
 
 ## 1. 阶段 0:前置验证 —— 数据复权核查(约 0.5 天)
@@ -57,6 +74,8 @@
 ---
 
 ## 2. 阶段 1:后端组合引擎(约 2~3 天)
+
+> ⚠️ **已实施,但位置变更**:撮合规则与退出优先级已在 `services/selection-worker/portfolio_simulator.go` 落地(挂入历史回放主循环),而非本节规划的 apps/web。本节数据结构草案仅作参照,实际结构为 `HistoricalBacktestTrade`(见 0.4)。
 
 **文件**:`apps/web/strategy_backtest_portfolio.go`(新建)。现有文件零改动。
 
@@ -265,6 +284,8 @@ func exitReason(pos *portfolioPosition, row FormulaKline, params portfolioBackte
 
 ## 3. 阶段 2:API 接入(约 0.5 天)
 
+> ⚠️ **已实施,但接口变更**:实际为历史回放接口——启动请求体新增 `initial_cash`/`max_positions`,新增 `/api/historical-backtests/{id}/trades` 分页查询,结果 `portfolio` 摘要挂在 `result_json` 内。本节 mode 开关方案未实施(见 0.4)。
+
 **文件**:`apps/web/strategy_backtest.go`(结构体扩展 + 分支)、`apps/web/server_strategy.go`(预期无需改动)
 
 ### 3.1 结构体扩展草案
@@ -361,6 +382,8 @@ export interface StrategyBacktestResult {
 
 ### 4.2 StrategiesWorkspace.tsx 改动点
 
+> ⚠️ **未按本节实施**。实际落地在 `HistoricalBacktestWorkspace.tsx` 历史回放页:参数区新增初始资金/最大持仓,结果区新增"交易记录"Tab。见 0.4 实施记录。本节保留仅供对照。
+
 1. **新增状态**(组件内 useState):
    - `backtestMode: 'symbol' | 'portfolio'`(默认 'symbol')
    - `maxPositions: number`(默认 5)
@@ -378,6 +401,8 @@ export interface StrategyBacktestResult {
 5. **JsonPane 仍保留**,供查看完整原始返回
 
 ### 4.3 SVG 净值曲线组件(零新依赖,约 50 行)
+
+> ⚠️ **未实施**。绩效由 7 格汇总条呈现,净值曲线与月度收益表留待后续迭代。
 
 `EquityCurve({ points, width = 640, height = 220 })`:
 
@@ -408,6 +433,8 @@ npm run dev      # 5173,/api 代理 localhost:8080
 **文件**:`apps/web/strategy_backtest_portfolio_test.go`(新建)
 
 ### 5.1 单元测试用例(Given/When/Then)
+
+> ✅ 核心用例已落地在 `services/selection-worker/portfolio_simulator_test.go`(合成 K 线,不依赖行情库),与本表不完全一一对应。`TestPortfolioConsistency`(组合与单标的逐位对照)未写,留给真实数据端到端验证。
 
 | 用例 | Given | When | Then |
 |---|---|---|---|
@@ -502,7 +529,8 @@ curl -s -X POST http://localhost:8080/api/strategies/<id>/backtest \
 
 | 决策 | 结论 | 理由 |
 |---|---|---|
-| 实现位置 | apps/web 新增 strategy_backtest_portfolio.go | 复用现有信号/退出/指标;selection-worker 历史回放定位不同(信号质量统计) |
+| 实现位置 | apps/web 新增 strategy_backtest_portfolio.go | ~~已变更~~:实际为 selection-worker/portfolio_simulator.go,挂入历史回放主循环(见 0.4 实施记录);复用信号/退出语义一致,历史回放定位为信号质量统计+账户模拟 |
+| 落地入口变更 | — | 历史回放页(HistoricalBacktestWorkspace)而非策略回测(StrategiesWorkspace):用户需求"保留信号列表+新开交易列表",历史回放已有日期范围+策略选择参数,天然匹配组合回测语义 |
 | 两遍法 | Pass1 信号预计算 + Pass2 撮合 | 避免日期主循环内重复计算因子,性能与现回测同量级 |
 | 复用 backtestStrategySignal | 是 | 保证对照一致性 |
 | 退出判断时机 | 收盘判断、次日开盘成交 | 与现有引擎一致 |
