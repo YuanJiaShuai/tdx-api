@@ -1,6 +1,6 @@
 import { AutoComplete, Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { CheckCircleOutlined, CloseOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from '@ant-design/icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { normalizeSymbol, priceFromMilli, quoteKline } from '../lib/format';
 import type { AICredential, MacroEventOverview, Quote, TradingSystemState, TradingTrade } from '../types';
@@ -15,6 +15,7 @@ interface StockSearchResult {
 }
 
 interface KlinePoint {
+  Time?: string;
   Open?: number;
   High?: number;
   Low?: number;
@@ -216,6 +217,11 @@ export function TradingSystemWorkspace() {
   const [state, setState] = useState<TradingSystemState | null>(null);
   const [macroOverview, setMacroOverview] = useState<MacroEventOverview | null>(null);
   const [loading, setLoading] = useState(false);
+  const [quotesUpdatedAt, setQuotesUpdatedAt] = useState<string | null>(null);
+  const [refreshingQuotes, setRefreshingQuotes] = useState(false);
+  const [tradingTime, setTradingTime] = useState<boolean | null>(null);
+  const [marketGateInfo, setMarketGateInfo] = useState<{ gate: string; close: number; ma20: number; date?: string } | null>(null);
+  const workdayCacheRef = useRef<{ date: string; value: boolean } | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<TradingTrade | null>(null);
   const [stockSearchField, setStockSearchField] = useState<'name' | 'code' | null>(null);
@@ -232,6 +238,7 @@ export function TradingSystemWorkspace() {
     setLoading(true);
     try {
       setState(await apiFetch<TradingSystemState>('/api/trading-system'));
+      void refreshMarketGate();
       try {
         setMacroOverview(await apiFetch<MacroEventOverview>('/api/macro-events/overview'));
       } catch {
@@ -244,18 +251,125 @@ export function TradingSystemWorkspace() {
     }
   };
 
+  async function isTradingTimeNow() {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    let isWorkday = true;
+    const cached = workdayCacheRef.current;
+    if (cached?.date === today) {
+      isWorkday = cached.value;
+    } else {
+      try {
+        const workday = await apiFetch<{ is_workday?: boolean }>('/api/workday');
+        isWorkday = Boolean(workday?.is_workday);
+      } catch {
+        const day = now.getDay();
+        isWorkday = day !== 0 && day !== 6;
+      }
+      workdayCacheRef.current = { date: today, value: isWorkday };
+    }
+    if (!isWorkday) return false;
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    // A股交易时段：9:30-11:30、13:00-15:00
+    return (minutes >= 570 && minutes <= 690) || (minutes >= 780 && minutes <= 900);
+  }
+
   useEffect(() => {
     load();
     const timer = window.setInterval(async () => {
       try { setMacroOverview(await apiFetch<MacroEventOverview>('/api/macro-events/overview')); } catch { /* optional risk context */ }
+      void refreshMarketGate();
     }, 60000);
     return () => window.clearInterval(timer);
   }, []);
 
   const trades = state?.trades || [];
+
+  async function refreshMarketGate() {
+    try {
+      const history = await apiFetch<KlineHistory>('/api/kline-history?code=sh000001&type=day&limit=25');
+      const rows = Array.isArray(history?.List)
+        ? history.List.filter((item) => numericPrice(item.Close) > 0)
+        : [];
+      if (rows.length < 20) return;
+      const closes = rows.map((item) => numericPrice(item.Close));
+      const close = closes[closes.length - 1];
+      const ma20 = closes.slice(-20).reduce((sum, value) => sum + value, 0) / 20;
+      setMarketGateInfo({
+        gate: close >= ma20 ? '开' : '关',
+        close,
+        ma20,
+        date: String(rows[rows.length - 1].Time || '').slice(0, 10)
+      });
+    } catch { /* 大盘开关获取失败时保持现状 */ }
+  }
+
+  // 批量拉取活跃持仓的实时行情，仅更新内存中的现价（保存交易卡时才持久化）
+  const refreshMarketPrices = useCallback(async () => {
+    const activeCodes = Array.from(new Set(
+      trades
+        .filter((trade) => tradeDirection(trade) === 'buy' && trade.status === 'active' && String(trade.stockCode || '').trim())
+        .map((trade) => normalizeSymbol(trade.stockCode))
+    ));
+    if (!activeCodes.length) return;
+    const quotes = await apiFetch<Quote[]>(`/api/quote?code=${encodeURIComponent(activeCodes.join(','))}`);
+    const priceMap = new Map<string, number>();
+    (Array.isArray(quotes) ? quotes : []).forEach((quote) => {
+      const code = normalizeSymbol(quote.Code);
+      const price = priceFromMilli(quoteKline(quote)?.Close);
+      if (code && price > 0) priceMap.set(code, price);
+    });
+    if (!priceMap.size) return;
+    setState((current) => current ? {
+      ...current,
+      trades: current.trades.map((trade) => {
+        if (tradeDirection(trade) !== 'buy' || trade.status !== 'active') return trade;
+        const price = priceMap.get(normalizeSymbol(trade.stockCode));
+        return price ? { ...trade, currentPrice: price } : trade;
+      })
+    } : current);
+    setQuotesUpdatedAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
+  }, [trades]);
+
+  const refreshMarketPricesRef = useRef(refreshMarketPrices);
+  refreshMarketPricesRef.current = refreshMarketPrices;
+
+  // 交易时间内每 30 秒自动刷新行情，非交易时间由用户点击按钮手动刷新
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const trading = await isTradingTimeNow();
+      if (cancelled) return;
+      setTradingTime(trading);
+      if (trading) {
+        try {
+          await refreshMarketPricesRef.current();
+        } catch { /* 行情刷新失败时静默，等待下一轮 */ }
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const handleManualQuoteRefresh = async () => {
+    setRefreshingQuotes(true);
+    try {
+      await refreshMarketPrices();
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : '行情刷新失败');
+    } finally {
+      setRefreshingQuotes(false);
+    }
+  };
   const direction = Form.useWatch('direction', form) || (editing?.direction === 'sell' ? 'sell' : 'buy');
   const stockCode = Form.useWatch('stockCode', form) || '';
   const stockName = Form.useWatch('stockName', form) || '';
+  const plannedR = Number(Form.useWatch('plannedR', form) || 0);
+  const actualR = Number(Form.useWatch('actualR', form) || 0);
   const availableShares = useMemo(
     () => getAvailableShares(trades, stockCode, editing?.id),
     [trades, stockCode, editing?.id]
@@ -338,7 +452,8 @@ export function TradingSystemWorkspace() {
     form.resetFields();
     form.setFieldsValue(trade ? {
       ...trade,
-      direction: tradeDirection(trade)
+      direction: tradeDirection(trade),
+      marketGate: trade.marketGate || ''
     } : {
       id: '',
       stockName: '',
@@ -356,7 +471,11 @@ export function TradingSystemWorkspace() {
       tradeMode: '',
       buyReason: '',
       exitRules: '',
-      review: ''
+      review: '',
+      plannedR: 0,
+      actualR: 0,
+      timeStopDate: '',
+      marketGate: marketGateInfo?.gate || ''
     });
     setDialogOpen(true);
   }
@@ -550,6 +669,13 @@ export function TradingSystemWorkspace() {
           <WarningOutlined />
           <div><strong>{macroOverview?.active_risk_events?.length ? `宏观风险窗口 ${macroOverview.active_risk_events.length} 个` : '宏观风险窗口暂无'}</strong><span>{macroOverview?.holding_risk_events ? `当前持仓相关 ${macroOverview.holding_risk_events} 个，交易前请复核计划。` : '预警只提供复核提示，不会自动阻止交易。'}</span></div>
         </div>
+        <div className={`trading-market-gate is-${marketGateInfo?.gate === '开' ? 'open' : marketGateInfo?.gate === '关' ? 'closed' : 'pending'}`}>
+          <div>
+            <strong>大盘开关</strong>
+            <span>{marketGateInfo ? `上证 ${marketGateInfo.close.toFixed(2)} · 20日线 ${marketGateInfo.ma20.toFixed(2)}${marketGateInfo.date ? ` · ${marketGateInfo.date}` : ''}` : '正在获取上证指数 20 日线状态…'}</span>
+          </div>
+          <em>{marketGateInfo ? (marketGateInfo.gate === '开' ? '开 · 可开新仓' : '关 · 只处理持仓') : '--'}</em>
+        </div>
         <section className="trading-account-summary">
           <div className="trading-account-total">
             <span>总资产</span>
@@ -609,11 +735,15 @@ export function TradingSystemWorkspace() {
         title={
           <div className="trading-panel-title">
             <span>持仓与交易</span>
-            <Text type="secondary">{trades.length} 条记录 · 计划驱动</Text>
+            <Text type="secondary">
+              {trades.length} 条记录 · {quotesUpdatedAt ? `行情 ${quotesUpdatedAt}` : '行情待刷新'}
+              {tradingTime === true ? ' · 盘中自动刷新' : ''}
+            </Text>
           </div>
         }
         extra={
           <Space>
+            <Button icon={<ReloadOutlined />} onClick={handleManualQuoteRefresh} loading={refreshingQuotes}>刷新行情</Button>
             <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => openTradeDialog()}>新建交易</Button>
           </Space>
@@ -815,6 +945,12 @@ export function TradingSystemWorkspace() {
               <Form.Item name="positionLabel" label={<span className="trade-field-label"><span>仓位标签</span><em>手填</em></span>}><Select options={[{ value: '试错仓' }, { value: '确认仓' }, { value: '趋势仓' }, { value: '观察仓' }]} /></Form.Item>
               <Form.Item name="targetOne" label={<span className="trade-field-label"><span>{direction === 'sell' ? '第一观察 / 支撑位' : '第一观察 / 压力位'}</span><em className="is-auto">分析</em></span>}><Input placeholder="自动生成，可手动调整" /></Form.Item>
               <Form.Item name="targetTwo" label={<span className="trade-field-label"><span>{direction === 'sell' ? '强支撑 / 止盈区' : '强压力 / 止盈区'}</span><em className="is-auto">分析</em></span>}><Input placeholder="自动生成，可手动调整" /></Form.Item>
+              <Form.Item name="plannedR" label={<span className="trade-field-label"><span>计划亏损(1R)</span><em>手填</em></span>} extra={plannedR > 0 ? `账户风险 ${(plannedR / Number(stats.principal || 1) * 100).toFixed(2)}%` : '下单前写明的计划亏损金额'}>
+                <InputNumber style={{ width: '100%' }} min={0} placeholder="例如：360" />
+              </Form.Item>
+              <Form.Item name="timeStopDate" label={<span className="trade-field-label"><span>时间止损</span><em>手填</em></span>} extra="买入日+5个交易日未走强离场">
+                <Input type="date" />
+              </Form.Item>
             </div>
           </section>
 
@@ -825,9 +961,15 @@ export function TradingSystemWorkspace() {
             </div>
             <div className="trade-form-grid trade-form-grid-plan">
               <Form.Item name="tradeMode" label="交易模式"><Input placeholder="例如：支撑位轻仓试错 / 突破后跟随" /></Form.Item>
+              <Form.Item name="marketGate" label="开仓当日大盘开关" extra={marketGateInfo ? `当前：上证 ${marketGateInfo.close.toFixed(2)} vs 20日线 ${marketGateInfo.ma20.toFixed(2)} → ${marketGateInfo.gate}` : '上证收盘是否站上20日线'}>
+                <Select options={[{ value: '开', label: '开(站上20日线)' }, { value: '关', label: '关(跌破20日线)' }]} />
+              </Form.Item>
               <Form.Item name="buyReason" label={direction === 'sell' ? '卖出理由' : '买入理由'}><Input.TextArea rows={3} placeholder={direction === 'sell' ? '记录减仓、止盈或退出的事实与判断' : '记录触发交易的事实与判断'} /></Form.Item>
               <Form.Item name="exitRules" label={direction === 'sell' ? '成交后处理规则' : '退出 / 加仓规则'}><Input.TextArea rows={3} placeholder={direction === 'sell' ? '记录剩余仓位、止盈或重新买回条件' : '写明失效条件、止损和加仓条件'} /></Form.Item>
               <Form.Item name="review" label="盘后复盘"><Input.TextArea rows={3} placeholder="收盘后补充执行结果与偏差" /></Form.Item>
+              <Form.Item name="actualR" label="实际盈亏(元)" extra={plannedR > 0 && actualR !== 0 ? `实际 ${actualR > 0 ? '+' : ''}${(actualR / plannedR).toFixed(2)}R` : '交易结束后填写，用于月度R统计'}>
+                <InputNumber style={{ width: '100%' }} placeholder="实际盈亏金额，正盈负亏" />
+              </Form.Item>
             </div>
           </section>
 

@@ -190,6 +190,10 @@ type TradingTrade struct {
 	BuyReason     string  `json:"buyReason"`
 	ExitRules     string  `json:"exitRules"`
 	Review        string  `json:"review"`
+	PlannedR      float64 `json:"plannedR"`
+	ActualR       float64 `json:"actualR"`
+	TimeStopDate  string  `json:"timeStopDate"`
+	MarketGate    string  `json:"marketGate"`
 }
 
 type TradingSystemState struct {
@@ -358,6 +362,27 @@ func (s *AppStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_date ON historical_backtest_signals(run_id, signal_date DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_strategy ON historical_backtest_signals(run_id, strategy_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_symbol ON historical_backtest_signals(run_id, symbol)`,
+		`CREATE TABLE IF NOT EXISTS historical_backtest_trades (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			symbol TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			entry_date TEXT NOT NULL DEFAULT '',
+			entry_price REAL NOT NULL DEFAULT 0,
+			shares INTEGER NOT NULL DEFAULT 0,
+			exit_date TEXT NOT NULL DEFAULT '',
+			exit_price REAL NOT NULL DEFAULT 0,
+			pnl REAL NOT NULL DEFAULT 0,
+			pnl_rate REAL NOT NULL DEFAULT 0,
+			hold_days INTEGER NOT NULL DEFAULT 0,
+			strategy_name TEXT NOT NULL DEFAULT '',
+			signal_date TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_trades_run_date ON historical_backtest_trades(run_id, entry_date DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_trades_run_status ON historical_backtest_trades(run_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_trades_run_symbol ON historical_backtest_trades(run_id, symbol)`,
 		`CREATE TABLE IF NOT EXISTS decision_notes (
 			symbol TEXT PRIMARY KEY,
 			status TEXT NOT NULL DEFAULT '',

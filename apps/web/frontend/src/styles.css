@@ -9774,6 +9774,15 @@ textarea::placeholder {
 .trading-macro-risk > div { display: grid; gap: 3px; min-width: 0; }
 .trading-macro-risk strong { color: var(--text); font-size: 11px; font-weight: 850; }
 .trading-macro-risk span { font-size: 10px; line-height: 1.45; }
+.trading-market-gate { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-bottom: 12px; padding: 9px 10px; border-left: 3px solid var(--line-strong); background: #f7f9fb; }
+.trading-market-gate > div { display: grid; gap: 3px; min-width: 0; }
+.trading-market-gate strong { color: var(--text); font-size: 11px; font-weight: 850; }
+.trading-market-gate span { font-size: 10px; line-height: 1.45; color: var(--text-soft); }
+.trading-market-gate em { flex: 0 0 auto; font-size: 11px; font-weight: 850; font-style: normal; padding: 3px 8px; border-radius: 4px; background: var(--line-soft, #eef1f4); color: var(--text-soft); }
+.trading-market-gate.is-open { border-left-color: var(--danger); background: #fff6f4; }
+.trading-market-gate.is-open em { color: var(--danger); background: #fde8e4; }
+.trading-market-gate.is-closed { border-left-color: var(--success); background: #eef8f1; }
+.trading-market-gate.is-closed em { color: var(--success); background: #dcefe4; }
 .alerts-sync-strip { display: grid; gap: 8px; margin-top: 10px; padding: 9px 10px; border: 1px solid var(--line); background: #fbfcfd; }
 .alerts-sync-heading { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--text); font-size: 11px; font-weight: 850; }
 .alerts-sync-heading > svg { color: var(--primary); }
@@ -10124,7 +10133,7 @@ textarea::placeholder {
 
 .historical-backtest-form {
   display: grid;
-  grid-template-columns: 150px 150px minmax(280px, 1fr) 130px 130px 120px;
+  grid-template-columns: 150px 150px minmax(280px, 1fr) 130px 130px 130px 130px 120px;
   gap: 10px;
   align-items: start;
 }
@@ -10290,6 +10299,35 @@ textarea::placeholder {
 }
 
 .historical-facts strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.historical-portfolio-facts {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(110px, 1fr));
+  gap: 1px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.historical-portfolio-facts > div {
+  display: grid;
+  gap: 2px;
+  min-height: 64px;
+  align-content: center;
+  padding: 9px 12px;
+  background: #fff;
+}
+
+.historical-portfolio-facts span,
+.historical-portfolio-facts small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.historical-portfolio-facts strong {
   color: var(--text);
   font-size: 16px;
 }

@@ -2,7 +2,7 @@ import {
   Alert, Button, Card, DatePicker, Empty, Input, InputNumber, Progress, Segmented, Select, Space, Table, Tag, Typography, message
 } from 'antd';
 import {
-  BarChartOutlined, ClockCircleOutlined, ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, TeamOutlined
+  BarChartOutlined, ClockCircleOutlined, ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, SwapOutlined, TeamOutlined
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -10,12 +10,13 @@ import { apiFetch } from '../lib/api';
 import { normalizeSymbol } from '../lib/format';
 import type {
   HistoricalBacktestResult, HistoricalBacktestRun, HistoricalBacktestSignal, HistoricalBacktestSignalPage,
+  HistoricalBacktestTrade, HistoricalBacktestTradePage,
   HistoricalConsensusSummary, HistoricalHorizonSummary, HistoricalStrategySummary, SelectionTracking, Strategy
 } from '../types';
 import { StockQuoteModal, type StockQuoteTarget } from './StockQuoteModal';
 
 const { Text } = Typography;
-type ResultView = 'ranking' | 'signals' | 'consensus';
+type ResultView = 'ranking' | 'signals' | 'consensus' | 'trades';
 interface StockDirectoryItem { code?: string; name?: string; }
 interface StockDirectory { codes?: StockDirectoryItem[]; }
 
@@ -34,6 +35,10 @@ function pct(value?: number) {
   if (!Number.isFinite(value)) return '--';
   const number = Number(value);
   return `${number >= 0 ? '+' : ''}${number.toFixed(2)}%`;
+}
+
+function formatMoney(value?: number) {
+  return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
 }
 
 function horizonMetric(raw: string | undefined, horizon: number) {
@@ -69,8 +74,12 @@ export function HistoricalBacktestWorkspace() {
   const [strategyIDs, setStrategyIDs] = useState<string[]>([]);
   const [targetReturn, setTargetReturn] = useState(3);
   const [drawdownLimit, setDrawdownLimit] = useState(5);
+  const [initialCash, setInitialCash] = useState(100000);
+  const [maxPositions, setMaxPositions] = useState(5);
   const [view, setView] = useState<ResultView>('ranking');
   const [signals, setSignals] = useState<HistoricalBacktestSignalPage>({ items: [], total: 0, limit: 100, offset: 0 });
+  const [trades, setTrades] = useState<HistoricalBacktestTradePage>({ items: [], total: 0, limit: 100, offset: 0 });
+  const [tradePage, setTradePage] = useState(1);
   const [signalStrategy, setSignalStrategy] = useState('all');
   const [signalKeyword, setSignalKeyword] = useState('');
   const [page, setPage] = useState(1);
@@ -140,6 +149,19 @@ export function HistoricalBacktestWorkspace() {
     if (selectedRun && view === 'signals') void loadSignals(selectedRun);
   }, [loadSignals, selectedRun, view]);
 
+  const loadTrades = useCallback(async (run: HistoricalBacktestRun, nextPage = tradePage) => {
+    const params = new URLSearchParams({ limit: '100', offset: String((nextPage - 1) * 100) });
+    try {
+      setTrades(await apiFetch<HistoricalBacktestTradePage>(`/api/historical-backtests/${run.id}/trades?${params}`));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '交易记录加载失败');
+    }
+  }, [tradePage]);
+
+  useEffect(() => {
+    if (selectedRun && view === 'trades') void loadTrades(selectedRun);
+  }, [loadTrades, selectedRun, view]);
+
   async function startBacktest() {
     if (!startDate || !endDate) return message.warning('请选择开始和结束日期');
     if (!strategyIDs.length) return message.warning('至少选择一个策略');
@@ -149,7 +171,8 @@ export function HistoricalBacktestWorkspace() {
         method: 'POST',
         body: JSON.stringify({
           start_date: startDate.format('YYYY-MM-DD'), end_date: endDate.format('YYYY-MM-DD'), strategy_ids: strategyIDs,
-          horizons: [3, 5, 10], target_return: targetReturn, drawdown_limit: drawdownLimit
+          horizons: [3, 5, 10], target_return: targetReturn, drawdown_limit: drawdownLimit,
+          initial_cash: initialCash, max_positions: maxPositions
         })
       });
       await loadRuns(run.id);
@@ -179,6 +202,7 @@ export function HistoricalBacktestWorkspace() {
   const result = useMemo(() => parseJSON<HistoricalBacktestResult>(selectedRun?.result_json, {}), [selectedRun?.result_json]);
   const summaries = result.strategy_summaries || [];
   const consensus = result.consensus || [];
+  const portfolio = result.portfolio;
   const progress = selectedRun?.total_dates ? Math.round(selectedRun.processed_dates * 100 / selectedRun.total_dates) : 0;
   const runStrategyOptions = strategies.filter((item) => selectedRun?.strategy_ids.includes(item.id)).map((item) => ({ value: item.id, label: item.name }));
 
@@ -217,6 +241,29 @@ export function HistoricalBacktestWorkspace() {
     }))
   ];
 
+  const tradeColumns = [
+    {
+      title: '状态', dataIndex: 'status', width: 92,
+      render: (value: string) => value === 'skipped' ? <Tag color="warning">已跳过</Tag> : value === 'open' ? <Tag color="blue">持仓中</Tag> : <Tag color="success">已平仓</Tag>
+    },
+    { title: '代码', dataIndex: 'symbol', width: 92, render: (value: string) => <Button type="link" className="code-link" onClick={() => openQuote(value)}>{value}</Button> },
+    { title: '名称', dataIndex: 'symbol', width: 110, render: (value: string) => <strong>{stockName(value) || '--'}</strong> },
+    { title: '买入日期', dataIndex: 'entry_date', width: 104 },
+    { title: '买入价', dataIndex: 'entry_price', width: 82, render: (value: number, row: HistoricalBacktestTrade) => row.status === 'skipped' ? '--' : value?.toFixed(2) || '--' },
+    { title: '股数', dataIndex: 'shares', width: 76, render: (value: number, row: HistoricalBacktestTrade) => row.status === 'skipped' ? '--' : Number(value || 0).toLocaleString() },
+    { title: '卖出日期', dataIndex: 'exit_date', width: 104, render: (value: string) => value || '--' },
+    { title: '卖出价', dataIndex: 'exit_price', width: 82, render: (value: number) => value ? value.toFixed(2) : '--' },
+    {
+      title: '盈亏', dataIndex: 'pnl', width: 96,
+      render: (value: number, row: HistoricalBacktestTrade) => row.status === 'closed' ? <strong className={value >= 0 ? 'trading-positive' : 'trading-negative'}>{value >= 0 ? '+' : ''}{formatMoney(value)}</strong> : '--'
+    },
+    { title: '盈亏率', dataIndex: 'pnl_rate', width: 82, render: (value: number, row: HistoricalBacktestTrade) => row.status === 'closed' ? pct(value) : '--' },
+    { title: '持有天数', dataIndex: 'hold_days', width: 84, render: (value: number, row: HistoricalBacktestTrade) => row.status === 'skipped' ? '--' : value || 0 },
+    { title: '触发策略', dataIndex: 'strategy_name', width: 180 },
+    { title: '信号日', dataIndex: 'signal_date', width: 104, render: (value: string) => value || '--' },
+    { title: '备注', dataIndex: 'reason', width: 220, render: (value: string) => value || '--' }
+  ];
+
   return (
     <div className="historical-backtest-workspace">
       <Card className="work-card historical-backtest-launch" title={<div className="historical-backtest-title"><div><span>历史选股回放</span><Text type="secondary">按交易日重放策略并验证后续表现</Text></div><small>POINT-IN-TIME REPLAY</small></div>} extra={<Button aria-label="刷新历史回测" icon={<ReloadOutlined />} loading={loading} onClick={() => void loadInitial()} />}>
@@ -226,13 +273,15 @@ export function HistoricalBacktestWorkspace() {
           <label className="historical-strategy-picker"><span>执行策略</span><Select mode="multiple" maxTagCount="responsive" value={strategyIDs} onChange={setStrategyIDs} options={strategies.map((item) => ({ value: item.id, label: item.name }))} /></label>
           <label><span>目标收益</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={targetReturn} onChange={(value) => setTargetReturn(value || 3)} /></label>
           <label><span>回撤上限</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={drawdownLimit} onChange={(value) => setDrawdownLimit(value || 5)} /></label>
+          <label><span>初始资金</span><InputNumber min={10000} step={10000} addonAfter="元" value={initialCash} onChange={(value) => setInitialCash(value || 100000)} /></label>
+          <label><span>最大持仓数</span><InputNumber min={1} max={20} value={maxPositions} onChange={(value) => setMaxPositions(value || 5)} /></label>
           <Button className="historical-start-button" type="primary" icon={<PlayCircleOutlined />} loading={starting} disabled={runs.some((item) => item.status === 'running')} onClick={() => void startBacktest()}>开始回测</Button>
         </div>
       </Card>
 
       <div className="historical-backtest-main">
         <Card className="work-card historical-run-list" title={<div className="historical-backtest-title"><div><span>回测批次</span><Text type="secondary">{runs.length} 条记录</Text></div><small>RUNS</small></div>}>
-          {runs.length ? <div className="historical-run-stack">{runs.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedRun?.id ? 'is-active' : ''} onClick={() => { setSelectedRun(run); setPage(1); }}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · {run.signal_count} 条信号</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_dates}/{run.total_dates || '--'} 交易日</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史回测" />}
+          {runs.length ? <div className="historical-run-stack">{runs.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedRun?.id ? 'is-active' : ''} onClick={() => { setSelectedRun(run); setPage(1); setTradePage(1); }}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · {run.signal_count} 条信号</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_dates}/{run.total_dates || '--'} 交易日</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史回测" />}
         </Card>
 
         <Card className="work-card historical-result-card" title={<div className="historical-backtest-title"><div><span>回测结果</span><Text type="secondary">{selectedRun ? `${selectedRun.start_date} 至 ${selectedRun.end_date}` : '等待任务'}</Text></div><small>RESULT</small></div>} extra={selectedRun?.status === 'running' ? <Button danger icon={<StopOutlined />} onClick={() => void cancelRun()}>取消</Button> : null}>
@@ -253,13 +302,26 @@ export function HistoricalBacktestWorkspace() {
               <Segmented value={view} onChange={(value) => setView(value as ResultView)} options={[
                 { value: 'ranking', label: '策略排行', icon: <BarChartOutlined /> },
                 { value: 'signals', label: '信号明细', icon: <ExperimentOutlined /> },
-                { value: 'consensus', label: '多策略共振', icon: <TeamOutlined /> }
+                { value: 'consensus', label: '多策略共振', icon: <TeamOutlined /> },
+                { value: 'trades', label: '交易记录', icon: <SwapOutlined /> }
               ]} />
               {view === 'signals' ? <Space wrap><Select value={signalStrategy} onChange={(value) => { setSignalStrategy(value); setPage(1); }} options={[{ value: 'all', label: '全部策略' }, ...runStrategyOptions]} /><Input allowClear placeholder="股票代码" value={signalKeyword} onChange={(event) => { setSignalKeyword(event.target.value); setPage(1); }} /></Space> : null}
             </div>
             {view === 'ranking' ? <Table<HistoricalStrategySummary> size="small" rowKey="strategy_id" dataSource={summaries} columns={rankingColumns} pagination={false} scroll={{ x: 1050 }} locale={{ emptyText: selectedRun.status === 'running' ? '完成后生成策略统计' : '暂无策略统计' }} /> : null}
             {view === 'signals' ? <Table<HistoricalBacktestSignal> size="small" rowKey="id" dataSource={signals.items} columns={signalColumns} scroll={{ x: 1000 }} pagination={{ current: page, pageSize: 100, total: signals.total, showSizeChanger: false, onChange: (next) => setPage(next) }} locale={{ emptyText: '暂无历史信号' }} /> : null}
             {view === 'consensus' ? <Table<HistoricalConsensusSummary> size="small" rowKey={(row) => `${row.signal_date}-${row.symbol}`} dataSource={consensus} columns={consensusColumns} sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false }} scroll={{ x: 1050 }} locale={{ emptyText: selectedRun.status === 'running' ? '完成后生成共振统计' : '暂无多策略共振信号' }} /> : null}
+            {view === 'trades' ? <>
+              {portfolio ? <div className="historical-portfolio-facts">
+                <div><span>初始资金</span><strong>{formatMoney(portfolio.initial_cash)}</strong></div>
+                <div><span>期末权益</span><strong>{formatMoney(portfolio.final_equity)}</strong></div>
+                <div><span>总收益</span><strong className={Number(portfolio.total_return) >= 0 ? 'trading-positive' : 'trading-negative'}>{pct(portfolio.total_return)}</strong></div>
+                <div><span>最大回撤</span><strong className="trading-negative">-{Number(portfolio.max_drawdown || 0).toFixed(2)}%</strong></div>
+                <div><span>已平仓</span><strong>{portfolio.closed_count || 0} 笔</strong><small>胜 {portfolio.win_count || 0} · 胜率 {Number(portfolio.win_rate || 0).toFixed(1)}%</small></div>
+                <div><span>持仓中</span><strong>{portfolio.open_count || 0} 笔</strong><small>最大持仓 {portfolio.max_positions || '--'} 只</small></div>
+                <div><span>未成交</span><strong>{portfolio.skipped_count || 0} 笔</strong><small>资金不足或涨停买不进</small></div>
+              </div> : null}
+              <Table<HistoricalBacktestTrade> size="small" rowKey="id" dataSource={trades.items} columns={tradeColumns} scroll={{ x: 1560 }} pagination={{ current: tradePage, pageSize: 100, total: trades.total, showSizeChanger: false, onChange: (next) => setTradePage(next) }} locale={{ emptyText: selectedRun.status === 'running' ? '完成后生成交易流水' : '暂无交易记录' }} />
+            </> : null}
           </>}
         </Card>
       </div>

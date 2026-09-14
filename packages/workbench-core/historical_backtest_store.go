@@ -257,3 +257,109 @@ func (s *AppStore) ListHistoricalBacktestSignals(runID string, query HistoricalB
 	}
 	return page, rows.Err()
 }
+
+// HistoricalBacktestTrade 是组合模拟的一条交易行：已平仓记录带完整买卖字段，
+// 回测结束时未平仓为 open，信号未成交记录为 skipped。
+type HistoricalBacktestTrade struct {
+	ID           string  `json:"id"`
+	RunID        string  `json:"run_id"`
+	Symbol       string  `json:"symbol"`
+	Status       string  `json:"status"`
+	EntryDate    string  `json:"entry_date"`
+	EntryPrice   float64 `json:"entry_price"`
+	Shares       int     `json:"shares"`
+	ExitDate     string  `json:"exit_date"`
+	ExitPrice    float64 `json:"exit_price"`
+	Pnl          float64 `json:"pnl"`
+	PnlRate      float64 `json:"pnl_rate"`
+	HoldDays     int     `json:"hold_days"`
+	StrategyName string  `json:"strategy_name"`
+	SignalDate   string  `json:"signal_date"`
+	Reason       string  `json:"reason"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+type HistoricalBacktestTradeQuery struct {
+	Status string
+	Symbol string
+	Limit  int
+	Offset int
+}
+
+type HistoricalBacktestTradePage struct {
+	Items  []HistoricalBacktestTrade `json:"items"`
+	Total  int                       `json:"total"`
+	Limit  int                       `json:"limit"`
+	Offset int                       `json:"offset"`
+}
+
+func (s *AppStore) InsertHistoricalBacktestTrades(items []HistoricalBacktestTrade) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT INTO historical_backtest_trades
+		(id,run_id,symbol,status,entry_date,entry_price,shares,exit_date,exit_price,pnl,pnl_rate,hold_days,strategy_name,signal_date,reason,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, item := range items {
+		if item.ID == "" {
+			item.ID = uuid.NewString()
+		}
+		if item.CreatedAt == "" {
+			item.CreatedAt = NowText()
+		}
+		if _, err := stmt.Exec(item.ID, item.RunID, item.Symbol, item.Status, item.EntryDate, item.EntryPrice, item.Shares,
+			item.ExitDate, item.ExitPrice, item.Pnl, item.PnlRate, item.HoldDays, item.StrategyName, item.SignalDate, item.Reason, item.CreatedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *AppStore) ListHistoricalBacktestTrades(runID string, query HistoricalBacktestTradeQuery) (HistoricalBacktestTradePage, error) {
+	if query.Limit <= 0 || query.Limit > 500 {
+		query.Limit = 100
+	}
+	if query.Offset < 0 {
+		query.Offset = 0
+	}
+	conditions := []string{"run_id=?"}
+	args := []interface{}{runID}
+	if strings.TrimSpace(query.Status) != "" {
+		conditions = append(conditions, "status=?")
+		args = append(args, query.Status)
+	}
+	if strings.TrimSpace(query.Symbol) != "" {
+		conditions = append(conditions, "symbol=?")
+		args = append(args, strings.ToUpper(strings.TrimSpace(query.Symbol)))
+	}
+	where := strings.Join(conditions, " AND ")
+	page := HistoricalBacktestTradePage{Items: []HistoricalBacktestTrade{}, Limit: query.Limit, Offset: query.Offset}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM historical_backtest_trades WHERE `+where, args...).Scan(&page.Total); err != nil {
+		return page, err
+	}
+	listArgs := append(append([]interface{}{}, args...), query.Limit, query.Offset)
+	rows, err := s.db.Query(`SELECT id,run_id,symbol,status,entry_date,entry_price,shares,exit_date,exit_price,pnl,pnl_rate,hold_days,strategy_name,signal_date,reason,created_at
+		FROM historical_backtest_trades WHERE `+where+` ORDER BY entry_date DESC,symbol LIMIT ? OFFSET ?`, listArgs...)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item HistoricalBacktestTrade
+		if err := rows.Scan(&item.ID, &item.RunID, &item.Symbol, &item.Status, &item.EntryDate, &item.EntryPrice, &item.Shares,
+			&item.ExitDate, &item.ExitPrice, &item.Pnl, &item.PnlRate, &item.HoldDays, &item.StrategyName, &item.SignalDate, &item.Reason, &item.CreatedAt); err != nil {
+			return page, err
+		}
+		page.Items = append(page.Items, item)
+	}
+	return page, rows.Err()
+}

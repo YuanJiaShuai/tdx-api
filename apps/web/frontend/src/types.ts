@@ -669,6 +669,7 @@ export interface HistoricalBacktestResult {
   history_count?: number;
   policy?: { horizons?: number[]; target_return?: number; drawdown_limit?: number; entry?: string };
   warnings?: string[];
+  portfolio?: HistoricalPortfolioSummary;
 }
 
 export interface HistoricalBacktestSignal {
@@ -690,6 +691,45 @@ export interface HistoricalBacktestSignalPage {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface HistoricalBacktestTrade {
+  id: string;
+  run_id: string;
+  symbol: string;
+  status: string;
+  entry_date: string;
+  entry_price: number;
+  shares: number;
+  exit_date?: string;
+  exit_price?: number;
+  pnl?: number;
+  pnl_rate?: number;
+  hold_days?: number;
+  strategy_name: string;
+  signal_date?: string;
+  reason?: string;
+  created_at: string;
+}
+
+export interface HistoricalBacktestTradePage {
+  items: HistoricalBacktestTrade[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface HistoricalPortfolioSummary {
+  initial_cash?: number;
+  max_positions?: number;
+  final_equity?: number;
+  total_return?: number;
+  max_drawdown?: number;
+  closed_count?: number;
+  open_count?: number;
+  skipped_count?: number;
+  win_count?: number;
+  win_rate?: number;
 }
 
 export interface Webhook {
@@ -726,6 +766,10 @@ export interface TradingTrade {
   buyReason: string;
   exitRules: string;
   review: string;
+  plannedR?: number;
+  actualR?: number;
+  timeStopDate?: string;
+  marketGate?: string;
 }
 
 export interface TradingSystemState {

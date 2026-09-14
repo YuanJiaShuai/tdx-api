@@ -23,6 +23,8 @@ type historicalBacktestRequest struct {
 	Horizons      []int    `json:"horizons"`
 	TargetReturn  float64  `json:"target_return"`
 	DrawdownLimit float64  `json:"drawdown_limit"`
+	InitialCash   float64  `json:"initial_cash"`
+	MaxPositions  int      `json:"max_positions"`
 }
 
 type historicalStrategyPlan struct {
@@ -122,6 +124,23 @@ func handleHistoricalBacktestOperations(w http.ResponseWriter, r *http.Request) 
 		successResponse(w, page)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "trades" {
+		if r.Method != http.MethodGet {
+			errorResponse(w, "只支持GET请求")
+			return
+		}
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		page, err := appStore.ListHistoricalBacktestTrades(id, HistoricalBacktestTradeQuery{
+			Status: r.URL.Query().Get("status"), Symbol: r.URL.Query().Get("symbol"), Limit: limit, Offset: offset,
+		})
+		if err != nil {
+			errorResponse(w, err.Error())
+			return
+		}
+		successResponse(w, page)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "cancel" {
 		if r.Method != http.MethodPost {
 			errorResponse(w, "只支持POST请求")
@@ -181,6 +200,12 @@ func normalizeHistoricalBacktestRequest(req historicalBacktestRequest) (historic
 	sort.Ints(horizons)
 	req.Horizons = horizons
 	req.TargetReturn, req.DrawdownLimit = workbench.DefaultTrackingPolicy(req.TargetReturn, req.DrawdownLimit)
+	if req.InitialCash <= 0 || req.InitialCash > 1e9 {
+		req.InitialCash = 100000
+	}
+	if req.MaxPositions <= 0 || req.MaxPositions > 20 {
+		req.MaxPositions = 5
+	}
 	req.StrategyIDs = normalizeIDList(req.StrategyIDs)
 	return req, start, end, nil
 }
@@ -330,11 +355,16 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 	consensus := map[string]*historicalConsensusAccumulator{}
 	trackingBars := map[string][]workbench.TrackingBar{}
 	signalCount := 0
+	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: req.InitialCash, MaxPositions: req.MaxPositions})
+	pendingBuys := []portfolioPendingBuy{}
 	for dateIndex, signalDate := range dates {
 		if ctx.Err() != nil || r.store.HistoricalBacktestCancelRequested(run.ID) {
 			return historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount), context.Canceled
 		}
 		dateText := historicalDateText(signalDate)
+		// 当日开盘:先执行昨日收盘触发的卖出,再执行昨日信号的买入
+		sim.onDayOpen(signalDate, dateText, klines, pendingBuys)
+		pendingBuys = nil
 		daySignals := make([]HistoricalBacktestSignal, 0)
 		for _, plan := range plans {
 			strategyResult := &StrategyRunResult{
@@ -383,6 +413,7 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 					RunID: run.ID, StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name, SignalDate: dateText,
 					Symbol: item.Symbol, Latest: item.Latest, Score: item.Score, DetailJSON: mustJSON(item), TrackingJSON: trackingJSON,
 				})
+				pendingBuys = mergePendingBuy(pendingBuys, item.Symbol, item.Score, signalDate, plan.strategy.Name)
 				updateHistoricalSummary(summaries[plan.strategy.ID], tracking, req.Horizons)
 				key := dateText + ":" + item.Symbol
 				entry := consensus[key]
@@ -396,12 +427,23 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 		if err := r.store.InsertHistoricalBacktestSignals(daySignals); err != nil {
 			return nil, err
 		}
+		// 当日收盘:持仓退出条件判定与权益结算
+		sim.onDayClose(signalDate, klines)
 		signalCount += len(daySignals)
 		if err := r.store.UpdateHistoricalBacktestProgress(run.ID, len(dates), dateIndex+1, dateText, len(symbols), signalCount); err != nil {
 			return nil, err
 		}
 	}
-	return historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount), nil
+	// 组合模拟收尾:未平仓转 open 记录并落库
+	trades := sim.finalize(run.ID)
+	if len(trades) > 0 {
+		if err := r.store.InsertHistoricalBacktestTrades(trades); err != nil {
+			return nil, fmt.Errorf("交易流水保存失败: %w", err)
+		}
+	}
+	result := historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount)
+	result["portfolio"] = sim.summary()
+	return result, nil
 }
 
 func historicalHistoryCount(start, end, reference time.Time, maxHorizon int) int {
