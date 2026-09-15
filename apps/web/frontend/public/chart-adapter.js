@@ -95,6 +95,91 @@
         return container.dataset.hqChartKey;
     }
 
+    // macOS trackpad pinch gestures arrive as small ctrl+wheel deltas in Chromium.
+    // HQChart filters those deltas out, so normalize them before handing them to
+    // the chart's native wheel zoom implementation.
+    const pinchZoomListeners = new Map();
+    const pinchZoomStepInterval = 55;
+
+    function invokeNativeZoom(chart, direction, event) {
+        const chartContainer = chart && (chart.JSChartContainer || chart);
+        if (!chartContainer || typeof chartContainer.OnWheel !== 'function') return false;
+        const deltaY = direction < 0 ? -100 : 100;
+        chartContainer.OnWheel({
+            clientX: event?.clientX || 0,
+            clientY: event?.clientY || 0,
+            ctrlKey: true,
+            deltaY,
+            wheelDelta: deltaY < 0 ? 120 : -120,
+            preventDefault() {},
+            stopPropagation() {}
+        });
+        return true;
+    }
+
+    function installPinchZoom(container, key, chart) {
+        const previous = pinchZoomListeners.get(key);
+        if (previous) {
+            container.removeEventListener('wheel', previous.onWheel, true);
+            container.removeEventListener('gesturestart', previous.onGestureStart, true);
+            container.removeEventListener('gesturechange', previous.onGestureChange, true);
+            container.removeEventListener('gestureend', previous.onGestureEnd, true);
+        }
+
+        const state = { lastStepAt: 0, lastScale: 1 };
+        const canStep = () => {
+            const now = Date.now();
+            if (now - state.lastStepAt < pinchZoomStepInterval) return false;
+            state.lastStepAt = now;
+            return true;
+        };
+        const onWheel = event => {
+            const delta = Number(event.deltaY) || Number(event.deltaX) || 0;
+            // A normal mouse wheel (and ordinary page scrolling) must remain on
+            // HQChart's existing event path. Pinch wheels are pixel-mode, ctrl
+            // modified, and have much smaller deltas than a mouse wheel.
+            if (!event.ctrlKey || event.deltaMode !== 0 || !delta || Math.abs(delta) >= 90) return;
+            if (canStep()) invokeNativeZoom(chart, delta < 0 ? -1 : 1, event);
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        const onGestureStart = event => {
+            state.lastScale = Number(event.scale) || 1;
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        const onGestureChange = event => {
+            const scale = Number(event.scale) || state.lastScale;
+            const ratio = scale / state.lastScale;
+            state.lastScale = scale;
+            if (Math.abs(ratio - 1) < 0.01) return;
+            if (canStep()) invokeNativeZoom(chart, ratio > 1 ? -1 : 1, event);
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        const onGestureEnd = event => {
+            state.lastScale = 1;
+            event.preventDefault();
+            event.stopPropagation();
+        };
+
+        container.addEventListener('wheel', onWheel, { capture: true, passive: false });
+        container.addEventListener('gesturestart', onGestureStart, { capture: true, passive: false });
+        container.addEventListener('gesturechange', onGestureChange, { capture: true, passive: false });
+        container.addEventListener('gestureend', onGestureEnd, { capture: true, passive: false });
+        pinchZoomListeners.set(key, { onWheel, onGestureStart, onGestureChange, onGestureEnd });
+    }
+
+    function removePinchZoom(container, key) {
+        const listeners = pinchZoomListeners.get(key);
+        if (!listeners || !container) return;
+        container.removeEventListener('wheel', listeners.onWheel, true);
+        container.removeEventListener('gesturestart', listeners.onGestureStart, true);
+        container.removeEventListener('gesturechange', listeners.onGestureChange, true);
+        container.removeEventListener('gestureend', listeners.onGestureEnd, true);
+        pinchZoomListeners.delete(key);
+    }
+
     async function fetchHistory(symbol, period, count) {
         const querySymbol = normalizeSymbol(symbol);
         const url = `/api/kline-all/tdx?code=${encodeURIComponent(querySymbol)}&type=${encodeURIComponent(period || 'day')}&limit=${encodeURIComponent(count || 800)}`;
@@ -430,6 +515,7 @@
     function destroyChart(container) {
         const key = chartKey(container);
         const chart = charts.get(key);
+        removePinchZoom(container, key);
         if (chart && typeof chart.ChartDestroy === 'function') {
             chart.ChartDestroy();
         } else if (container && container.JSChart && typeof container.JSChart.ChartDestroy === 'function') {
@@ -467,6 +553,7 @@
 
         const chart = window.JSChart.Init(container, false, true);
         charts.set(key, chart);
+        installPinchZoom(container, key, chart);
         chart.SetOption({
             Type: '历史K线图',
             Symbol: toHQSymbol(symbol),
@@ -532,6 +619,7 @@
 
         const chart = window.JSChart.Init(container, false, true);
         charts.set(key, chart);
+        installPinchZoom(container, key, chart);
         chart.SetOption({
             Type: '分钟走势图',
             Symbol: toHQSymbol(symbol),
