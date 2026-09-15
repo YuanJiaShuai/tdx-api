@@ -29,7 +29,8 @@ const templateActions = [
   { key: 'market_hot_money_sync', name: '游资动向同步', note: '18:05 批量同步游资动向' },
   { key: 'market_research_sync', name: '个股研报同步', note: '18:10 批量同步个股研报' },
   { key: 'market_notice_sync', name: '公司公告同步', note: '18:15 批量同步公司公告' },
-  { key: 'market_industry_research_sync', name: '行业研究同步', note: '18:20 批量同步行业研报' }
+  { key: 'market_industry_research_sync', name: '行业研究同步', note: '18:20 批量同步行业研报' },
+  { key: 'strategy_execution', name: '策略执行', note: '盘后执行策略（选策略后创建）' }
 ];
 
 function statusText(status?: string) {
@@ -59,6 +60,8 @@ export function AutomationsWorkspace() {
   const [selected, setSelected] = useState<AutomationTask | null>(null);
   const [payloadOutput, setPayloadOutput] = useState<unknown>('暂无运行');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [strategyDialogOpen, setStrategyDialogOpen] = useState(false);
+  const [selectedStrategyId, setSelectedStrategyId] = useState('');
   const [editing, setEditing] = useState<AutomationTask | null>(null);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm<AutomationTask>();
@@ -160,12 +163,44 @@ export function AutomationsWorkspace() {
   }
 
   async function createTemplate(template: string) {
+    if (template === 'strategy_execution') {
+      setSelectedStrategyId(strategies[0]?.id || '');
+      setStrategyDialogOpen(true);
+      return;
+    }
     try {
       await apiFetch('/api/automations/templates', { method: 'POST', body: JSON.stringify({ template }) });
       message.success('任务模板已创建');
       await load();
     } catch (error) {
       message.error(error instanceof Error ? error.message : '模板创建失败');
+    }
+  }
+
+  async function createStrategyExecutionTask() {
+    const strategy = strategies.find((item) => item.id === selectedStrategyId);
+    if (!strategy) {
+      message.warning('请先选择策略');
+      return;
+    }
+    try {
+      await apiFetch('/api/automations', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: '',
+          name: `策略执行-${strategy.name}`,
+          type: 'strategy_selection',
+          cron: '0 0 15 * * 1-5',
+          enabled: false,
+          payload_json: JSON.stringify({ strategy_id: strategy.id }),
+          webhook_ids: '[]'
+        })
+      });
+      message.success('策略执行任务已创建');
+      setStrategyDialogOpen(false);
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '策略执行任务创建失败');
     }
   }
 
@@ -424,6 +459,23 @@ export function AutomationsWorkspace() {
             </Space>
           </div>
         </Form>
+      </Modal>
+      <Modal
+        title="选择策略"
+        open={strategyDialogOpen}
+        onOk={createStrategyExecutionTask}
+        onCancel={() => setStrategyDialogOpen(false)}
+        okText="创建任务"
+        cancelText="取消"
+      >
+        <p>为策略执行任务选择一个策略，任务将在每个交易日 15:00 运行。</p>
+        <Select
+          style={{ width: '100%' }}
+          value={selectedStrategyId}
+          onChange={setSelectedStrategyId}
+          options={strategies.map((item) => ({ value: item.id, label: item.name }))}
+          placeholder="请选择策略"
+        />
       </Modal>
     </div>
   );

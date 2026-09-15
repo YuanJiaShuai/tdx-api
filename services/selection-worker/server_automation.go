@@ -515,6 +515,15 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			PayloadJSON: `{"limit":500,"horizons":[3,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
+	case "strategy_execution":
+		return AutomationTask{
+			Name:        "策略执行",
+			Type:        "strategy_selection",
+			Cron:        "0 0 15 * * 1-5",
+			Enabled:     false,
+			PayloadJSON: `{"strategy_id":""}`,
+			WebhookIDs:  "[]",
+		}, nil
 	case "market_long_tiger_sync":
 		return AutomationTask{
 			Name:        "龙虎榜同步",
