@@ -124,6 +124,10 @@ func (r *AutomationRunner) runSystemStrategyBatch(ctx context.Context, parentRun
 		}
 	}
 	klines, loadErrors := r.loadSystemBatchKlines(ctx, loadSymbols, maxCalcCount)
+	// 实盘盘中补K:仅实盘执行路径;历史回测(historical_backtest.go)独立加载K线,不经此处
+	for symbol, reason := range r.patchIntradayKlines(ctx, klines, time.Now()) {
+		loadErrors[symbol] = reason
+	}
 	summaries := make([]map[string]interface{}, 0, len(plans))
 	totalMatched := 0
 	failedStrategies := 0

@@ -209,6 +209,18 @@ func (c *MarketServiceClient) IsWorkday(ctx context.Context, date string) (bool,
 	return resp.IsWorkday, nil
 }
 
+// Quotes 批量获取实时行情快照(单批建议不超过50只)。
+// 返回 tdx Quote 列表,匹配键为 Quote.Code(纯6位代码);停牌股可能不返回或无今日K线。
+func (c *MarketServiceClient) Quotes(ctx context.Context, codes []string) ([]*protocol.Quote, error) {
+	query := url.Values{}
+	query.Set("code", strings.Join(codes, ","))
+	var resp []*protocol.Quote
+	if err := c.get(ctx, "/api/quote", query, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 func (c *MarketServiceClient) IndexKline(ctx context.Context, code, klineType string, limit int) (*protocol.KlineResp, error) {
 	query := url.Values{}
 	query.Set("code", code)
