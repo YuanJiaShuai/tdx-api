@@ -62,6 +62,21 @@ A 股 T+1 制度下,两种方案的时间轴对比:
 | 单元测试 | `services/selection-worker/intraday_kline_test.go` 12 个用例:非交易日/已落库/盘中补K/除权日adj/停牌移除/昨日快照拒补/接口失败/交易日接口兜底(周末与工作日)/指数保留/同代码消歧/合成K兜底 |
 | 验证状态 | `go test ./...` 全过、`go vet` 干净、`gofmt` 干净(2026-09-15) |
 
+### 0.6 实施与文档差异(以本节为准)
+
+实施中发现并处理了文档未覆盖的细节,后续章节已同步标注:
+
+| 差异点 | 原文档 | 实际实现 |
+|---|---|---|
+| 交易日判断失败 | 无明确兜底(7章风险表写"整体失败并告警") | IsWorkday 接口失败 → **按周内日兜底**(周六/周日视为非交易日,周一~周五继续尝试补K),打日志;快照仍失败才跳过股票 |
+| 指数基准(带市场前缀代码) | 4章边界表统一"跳过该股" | 如 sh000001 补K失败时**保留库内K**:指数基准被删会导致 market_momentum 因子因日期对不齐而静默失效,与纯股票"宁缺毋滥"策略区分 |
+| 同纯代码消歧 | 未提及 | 平安银行 000001(深市股票)与上证指数 sh000001 纯代码相同,同批快照按 `Quote.Exchange` 市场匹配;纯6位代码按编码规则推断市场(60x→sh、00x/30x→sz、43x/8xx/92x→bj) |
+| 指数纳入补K | 未明确 | 指数基准同样参与补K(缺今日K时拉快照补),否则市场动量因子日期对齐检查会失败 |
+| 停牌双重防线 | 2.3只写"Kline.Time非今日→跳过" | 两层:接口不返回该代码→移除;返回昨日快照→合成K后日期校验(synth.Date != today)→移除 |
+| YClose 兜底 | 2.2写"Last或历史最后Close为0时adj视为1(裸拼)" | adj=1 仍成立;YClose 优先用历史最后Close(序列连续),历史K为空时才用 rawLast×adj;快照 Close≤0/Kline为nil 直接拒补 |
+| 挂载点 | 3.1写"loadSystemBatchKlines/strategyKline 返回后统一调用" | 仅在 `system_strategy_batch.go` 126 行后(executeSystemStrategyBatch 内)挂载;单标的 strategyKline 经 KlineCache 间接受益,不重复挂 |
+| 伪代码形态 | 1.1 单标的函数式伪代码 | 实现为**批量就地修改**:`patchIntradayKlines(ctx, klines, now) → 跳过原因map` |
+
 ## 1. 补 K 判定逻辑(三层)
 
 在**实盘选股路径拉完 K 线之后、喂给策略引擎之前**,做一次统一补 K。
@@ -80,24 +95,36 @@ A 股 T+1 制度下,两种方案的时间轴对比:
    └─ 快照拉不到(停牌/接口失败) → 跳过该股,不静默用旧数据
 ```
 
-Go 风格伪代码:
+Go 风格伪代码(实现为批量就地修改版,见 0.6):
 
 ```go
-// patchIntradayKline 在实盘选股路径拉完 K 线后调用。
-// 返回值:补 K 后的完整序列、是否发生了补 K。
-func patchIntradayKline(today int, isWorkday bool, rows []FormulaKline, quote *protocol.Quote) ([]FormulaKline, bool) {
-    if !isWorkday {
-        return rows, false // 第 1 步:非交易日直接用库里的 K
+// patchIntradayKlines 在实盘选股路径拉完 K 线后调用,就地修改 klines。
+// 返回跳过原因 map(键=代码,值=原因),调用方合并进 loadErrors。
+func (r *AutomationRunner) patchIntradayKlines(ctx context.Context, klines map[string][]FormulaKline, now time.Time) map[string]string {
+    // 第 1 步:今天是否交易日;接口失败按周内日兑底(周六/周日→不补)
+    if isWorkday, err := marketClient.IsWorkday(ctx, now.Format("2006-01-02")); err != nil {
+        isWorkday = now.Weekday() != time.Saturday && now.Weekday() != time.Sunday
+    } else if !isWorkday {
+        return nil // 非交易日:库内K即最新
     }
-    if len(rows) > 0 && rows[len(rows)-1].Date == today {
-        return rows, false // 第 2 步:今日 K 已落库
+    // 第 2 步:最后一根K日期 != 今天 的标的才需要补
+    today := dateInt(now)
+    var pending []string
+    for symbol, rows := range klines {
+        if len(rows) == 0 || rows[len(rows)-1].Date != today {
+            pending = append(pending, symbol)
+        }
     }
-    // 第 3 步:合成 K(quote 为 nil 说明快照拉不到 → 调用方跳过该股)
-    synth, ok := buildSyntheticKline(rows, quote)
-    if !ok {
-        return rows, false
+    // 第 3 步:分批拉快照(单批≤50)并合成K
+    for _, batch := range chunkSymbols(pending, 50) {
+        resp, err := marketClient.Quotes(ctx, batch) // GET /api/quote
+        if err != nil { /* 该批全部移除并记录原因 */ }
+        // 按 Quote.Code 匹配,同纯代码按 Exchange 市场消歧(0.6);
+        // 无快照/无今日K线 → 纯股票移除,指数基准保留库内K
+        // synth.Date != today(昨日快照)→ 拒补并移除
+        klines[symbol] = append(rows, synth) // 合成K追加,不落库
     }
-    return append(rows, synth), true
+    return skipReasons
 }
 ```
 
@@ -115,6 +142,8 @@ func patchIntradayKline(today int, isWorkday bool, rows []FormulaKline, quote *p
 
 - **顺序有讲究**:交易日判断(查库,毫秒级)在前,日期比对(内存比较,免费)在中,补 K(调行情接口,最贵)在最后。大多数情况(非交易日、已落库)根本不会调行情接口
 - **日期用 `!=` 不用 `<`**:最后一根 K 日期理论上不可能大于今天(未来数据);用 `!=` 更简单,万一数据异常还能被快照兜底纠正
+- **交易日判断失败兜底**(见 0.6):IsWorkday 接口失败时按周内日兑底(周六/周日视为非交易日不补,周一~周五继续尝试补K),而非整体失败
+- **指数基准保留**(见 0.6):带市场前缀的代码(如 sh000001)补K失败时保留库内K;纯股票代码补K失败则移除
 - **补 K 失败兜底**:宁可少选,不选错。查不到快照就跳过该股,不要拿昨天的 K 硬算——那样今日的均线、量能因子全部滞后一天,选出来的信号是假的
 - **幂等**:盘中多次触发选股,每次"快照 + 重建合成 K",内存中覆盖,不落库,结果一致
 
@@ -143,7 +172,7 @@ tdx `protocol.Kline` 字段(`packages/tdx-core/protocol/model_kline.go`):
 |---|---|---|
 | `Date` | 快照 `Kline.Time` 的日期部分 | **用行情日期,不用本地日历"今天"**(防长假/周末误标) |
 | `Time` | 快照时间 | 可选 |
-| `YClose` | 快照 `Last` × adj | adj 为复权换算因子,见 2.2 |
+| `YClose` | 快照 `Last` × adj;Last 缺失时用历史最后 Close 兜底 | adj 为复权换算因子,见 2.2;兜底保证序列连续 |
 | `Open` | 快照 `Open` × adj | 同上 |
 | `High` | 快照 `High` × adj | 同上 |
 | `Low` | 快照 `Low` × adj | 同上 |
@@ -187,9 +216,9 @@ adj = 25 / 50 = 0.5
 涨跌幅:用 RiseRate() = (26-25)/25 = +4%(不复权原值)✓
 ```
 
-**兜底与噪声**:
+**兜底与噪声**(见 0.6 差异):
 
-- `Last` 或历史最后 Close 为 0 时,adj 视为 1(裸拼,宁可有口径瑕疵也不崩)
+- `Last` ≤ 0 或历史最后 Close ≤ 0 时,adj 视为 1;YClose 优先取历史最后 Close(保证序列连续),历史 K 为空时才用 `rawLast × adj`;快照 `Close` ≤ 0 或 `Kline` 为 nil 直接拒补(不产合成K)
 - 两源价格在非除权日可能差几分钱(源差异/四舍五入),adj 会略偏离 1;对 14:45 信号影响量级极小(远小于 1%),**实施后可记录 adj 序列观察**(列入开放问题 5.1)
 - 实施前需确认:同花顺前复权口径与 tdx 真实价的日常一致性(用最近 N 个交易日的 `qfqClose / rawClose` 序列验证)
 
@@ -197,7 +226,9 @@ adj = 25 / 50 = 0.5
 
 | 点 | 处理方式 |
 |---|---|
-| 停牌股 | 快照里无今日行情(`Quote` 为空或 `Kline.Time` 非今日)→ 跳过该股(与回测"停牌跳过"口径一致) |
+| 停牌股 | 快照里无今日行情(`Quote` 为空或 `Kline.Time` 非今日)→ 跳过该股(与回测"停牌跳过"口径一致)。**双重防线**:接口不返回该代码→移除;返回昨日快照→合成K后日期校验不通过→移除 |
+| 同纯代码消歧 | 平安银行 000001(深市)与上证指数 sh000001 纯代码相同;同批快照按 `Quote.Exchange` 市场匹配,纯6位代码按编码规则推断市场(60x→sh、00x/30x→sz、43x/8xx/92x→bj),见 0.6 |
+| 指数基准 | sh000001 同样参与补K(缺今日K时拉快照);补K失败时**保留库内K**而非移除,见 0.6 |
 | 新股/次新(K 线不足) | 历史 K 为空时无法算 adj → adj=1 裸拼;策略侧本身有最小 K 线数要求(calcCount),信号生成会自然跳过,补 K 层不必特判 |
 | 集合竞价阶段(9:15-9:25) | tdx 快照可用但价格未定型、Open 波动大;本方案目标窗口是 14:45,竞价阶段行为不做承诺 |
 | 14:57 后 | 尾盘集合竞价价格锁定,最后 3 分钟信号基本等于收盘信号 |
@@ -216,7 +247,7 @@ strategyKline(strategy_runner.go 490 行)
 ```
 批量入口:`loadSystemBatchKlines`(`system_strategy_batch.go` 219 行)。
 
-**补 K 挂载点**:实盘选股路径在 `loadSystemBatchKlines`/`strategyKline` 返回后、策略因子计算前,统一调用 `patchIntradayKline`(见 1.1 伪代码)。策略引擎内部无感知。
+**补 K 挂载点**(见 0.6 差异):实盘选股路径在 `executeSystemStrategyBatch`(`system_strategy_batch.go` 126 行后,`loadSystemBatchKlines` 返回后)调用 `patchIntradayKlines`;单标的 `strategyKline` 不重复挂,经 `KlineCache` 间接受益。历史回测(`historical_backtest.go` 345 行)同样调用 `loadSystemBatchKlines` 但**不经过该挂载点**。策略引擎内部无感知。
 
 ### 3.2 交易日历
 
@@ -232,7 +263,7 @@ strategyKline(strategy_runner.go 490 行)
 
 | 接口 | 说明 |
 |---|---|
-| `GET /api/quote?code=xxx` | `server.go` 138 行 `handleGetQuote`;单/多代码,tdx `GetQuote` → 返回 `QuoteSnapshot`(`quote_stream.go` 22 行:`Symbol/Code/Exchange/Market/Source/FetchedAt/Quote`,其中 `Quote *protocol.Quote`) |
+| `GET /api/quote?code=xxx` | `server.go` 138 行 `handleGetQuote`;单/多代码(逗号分隔),tdx `GetQuote` → 返回**裸 Quote 列表**(`[]*protocol.Quote`,含 `Code`/`Exchange`/`Kline` 字段;`QuoteSnapshot` 为 SSE 流专用包装) |
 | `POST /api/quote/standard` | `server_api_extended.go` 71 行 `handleBatchQuote`,body `{"codes": [...]}` 批量获取 |
 | 快照数据结构 | `Quote.Kline`(`packages/tdx-core/protocol/model_kline.go`):`Last/Open/High/Low/Close/Volume/Amount/Time` + `RisePrice()/RiseRate()` 方法 |
 
@@ -254,8 +285,10 @@ strategyKline(strategy_runner.go 490 行)
 | 交易日,今日 K 已落库 | 不补 K,直接用 | 第 2 步日期比对 |
 | 交易日盘中(目标场景) | 拉快照合成 K | 第 3 步 |
 | 交易日收盘后、落库前 | 补 K,但快照=收盘快照,合成 K 等价正式 K | 1.2 第三行 |
-| 停牌股 | 快照无今日行情 → 跳过该股 | 与回测"停牌跳过"口径一致 |
+| 停牌股 | 快照无今日行情 → 跳过该股 | 与回测"停牌跳过"口径一致;双重防线见 2.3 |
+| 指数基准(带市场前缀) | 补K失败 → **保留库内K**,不跳过 | 见 0.6:防 market_momentum 因子静默失效 |
 | 快照接口异常/超时 | 跳过该股,不静默用旧数据 | 宁可少选,不选错 |
+| 交易日判断接口失败 | 按周内日兑底(周六/周日不补,周一~周五继续尝试补K) | 见 0.6:不做整体失败 |
 | 除权除息日 | adj 比值法自动归入口径,无假缺口 | 2.2 |
 | 新股/次新(历史 K 不足) | adj=1 裸拼;策略侧按 calcCount 自然跳过 | 2.3 |
 | 盘中多次触发 | 重建合成 K,内存覆盖,幂等,不落库 | 1.3 |
@@ -266,11 +299,11 @@ strategyKline(strategy_runner.go 490 行)
 
 1. **14:45 口径 vs 收盘口径的信号偏差**:盘中合成 K 的 Close 是 14:45 现价而非收盘价,信号可能"收盘后消失"或"收盘后才出现"。偏差有多大,需要数据回答
 2. **adj 比值噪声**:同花顺前复权与 tdx 真实价的日常一致性(应≈1 但非严格等于),实施后记录 adj 序列观察
-3. **快照接口选型**:`GET /api/quote` vs `POST /api/quote/standard`(字段完整性、批量能力、延迟、停牌行为)
+3. **快照接口选型** ✅ 已解决(2026-09-15):选定 `GET /api/quote`(单批≤50,响应为裸 Quote 列表含 Code/Exchange/Kline),见 3.3
 
-### 5.2 验证方案(人工先行,不依赖代码)
+### 5.2 验证方案(人工双清单对照,M3)
 
-在补 K 代码落地前,先用**人工双清单对照**验证信号口径偏差:
+补K代码已落地,但"14:45 口径 vs 收盘口径"的偏差仍需实盘数据验证,方案如下:
 
 - 每个交易日 14:45 手动跑一次选股(用系统现有能力近似),记录信号清单 A
 - 收盘后(或晚上)再跑一次,记录信号清单 B
@@ -281,14 +314,14 @@ strategyKline(strategy_runner.go 490 行)
 
 若需回测验证"14:45 口径"的历史成功率,需在回测引擎加"盘中快照口径"模式(每个模拟日用当日 14:45 快照 K 代替收盘 K 再跑选股)。**依赖历史盘中快照数据,当前没有,不做**。
 
-## 6. 实施里程碑(草案,未排期)
+## 6. 实施里程碑
 
-| 里程碑 | 内容 | 验收标准 | 依赖 |
+| 里程碑 | 内容 | 验收标准 | 状态 |
 |---|---|---|---|
-| M1 | 补 K 三层判定 + 快照合成 K(含 adj 复权换算),单标的验证 | 用例全过:非交易日不补 / 已落库不补 / 盘中补 K 字段正确 / 除权日 adj 正确 / 停牌跳过 / 快照失败跳过 | 2.2 两源价格一致性确认 |
-| M2 | 实盘选股入口接入(盘中触发 → 补 K → 策略引擎),信号落库 | 14:45 触发全流程跑通;信号落库与展示正常;与收盘后跑的结果自动记录差异 | M1 |
-| M3 | 双口径对照验证(14:45 vs 收盘),产出偏差结论 | 5.2 的重合率与差异票表现报告 | M2 + 2~3 周数据 |
-| M4(可选) | 回测引擎增加"盘中快照口径"模式 | — | M3 结论 + 历史快照数据 |
+| M1 | 补 K 三层判定 + 快照合成 K(含 adj 复权换算),单标的验证 | 用例全过:非交易日不补 / 已落库不补 / 盘中补 K 字段正确 / 除权日 adj 正确 / 停牌跳过 / 快照失败跳过 | ✅ 已完成(2026-09-15) |
+| M2 | 实盘选股入口接入(盘中触发 → 补 K → 策略引擎),信号落库 | 14:45 触发全流程跑通;信号落库与展示正常;与收盘后跑的结果自动记录差异 | ✅ 已完成(2026-09-15,待实盘验证) |
+| M3 | 双口径对照验证(14:45 vs 收盘),产出偏差结论 | 5.2 的重合率与差异票表现报告 | ⏳ 进行中(待实盘数据) |
+| M4(可选) | 回测引擎增加"盘中快照口径"模式 | — | 未排期 |
 
 ## 7. 风险清单
 
@@ -297,5 +330,5 @@ strategyKline(strategy_runner.go 490 行)
 | 复权口径拼接错误 → 除权股信号静默失真 | 高 | adj 比值法 + 实施前两源一致性验证 + 单元测试覆盖除权日用例 |
 | 14:45 信号与回测口径偏差 → 实际成功率未知 | 高 | 5.2 人工双清单对照先行,数据说话后再决定推广 |
 | 补 K 失败静默用旧数据 → 假信号 | 中 | 兜底策略:跳过该股,不降级 |
-| market-service 离线 → 交易日判断与快照都失败 | 中 | 实盘选股整体失败并告警(不产出信号),而非静默;考虑 workday.db 直读降级 |
+| market-service 离线(交易日判断与快照都失败) | 中 | 交易日判断失败→周内日兑底(见 0.6);快照失败→跳过该股并记入 loadErrors(不产出假信号);后续可考虑 workday.db 直读降级 |
 | 尾盘 12 分钟执行窗口人工压力 | 中 | 流程准备(账户、计划 R 模板先行);窗口从 14:45 起而非 14:50 |
