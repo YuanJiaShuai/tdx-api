@@ -7,14 +7,22 @@
         return typeof window.JSChart !== 'undefined' && window.JSChart && typeof window.JSChart.Init === 'function';
     }
 
-    function normalizeCode(symbol) {
+    function normalizeSymbol(symbol) {
         const value = String(symbol || '').trim().toLowerCase();
         if (!value) return '000001';
+        const prefixed = value.match(/^(sh|sz|bj)(\d{6})$/);
+        if (prefixed) return `${prefixed[2]}.${prefixed[1]}`;
+        const suffixed = value.match(/^(\d{6})[._-]?(sh|sz|bj)$/);
+        if (suffixed) return `${suffixed[1]}.${suffixed[2]}`;
         return value.split('.')[0];
     }
 
+    function normalizeCode(symbol) {
+        return normalizeSymbol(symbol).split('.')[0];
+    }
+
     function toHQSymbol(symbol) {
-        const raw = String(symbol || '').trim().toLowerCase();
+        const raw = normalizeSymbol(symbol);
         if (/^\d{6}\.(sh|sz|bj)$/.test(raw)) return raw;
         const code = normalizeCode(symbol);
         if (code.startsWith('6') || code.startsWith('9')) return `${code}.sh`;
@@ -173,24 +181,24 @@
     }
 
     async function fetchHistory(symbol, period, count) {
-        const querySymbol = String(symbol || '').trim() || normalizeCode(symbol);
-        const url = `/api/hqchart/history?symbol=${encodeURIComponent(querySymbol)}&period=${encodeURIComponent(period || 'day')}&limit=${encodeURIComponent(count || 800)}`;
+        const querySymbol = normalizeSymbol(symbol);
+        const url = `/api/kline-all/tdx?code=${encodeURIComponent(querySymbol)}&type=${encodeURIComponent(period || 'day')}&limit=${encodeURIComponent(count || 800)}`;
         const response = await fetch(url);
         const result = await response.json();
         if (result.code !== 0) {
             throw new Error(result.message || 'HQChart 数据请求失败');
         }
-        return result.data;
+        return buildHistoryPayload(querySymbol, period, result.data);
     }
 
     async function fetchIndexHistory(symbol, period, count) {
-        const url = `/api/hqchart/history?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period || 'day')}&limit=${encodeURIComponent(count || 800)}&index=1`;
+        const url = `/api/index/all?code=${encodeURIComponent(normalizeCode(symbol))}&type=${encodeURIComponent(period || 'day')}&limit=${encodeURIComponent(count || 800)}`;
         const response = await fetch(url);
         const result = await response.json();
         if (result.code !== 0) {
             throw new Error(result.message || 'HQChart 大盘数据请求失败');
         }
-        return result.data;
+        return buildHistoryPayload(symbol, period, result.data, true);
     }
 
     async function fetchIndexHistoryWithFallback(symbol, period, count) {
@@ -216,7 +224,7 @@
     }
 
     async function fetchQuote(symbol) {
-        const code = normalizeCode(symbol);
+        const code = normalizeSymbol(symbol);
         const response = await fetch(`/api/quote?code=${encodeURIComponent(code)}`);
         const result = await response.json();
         if (result.code !== 0) {
@@ -248,6 +256,63 @@
             time: latest[8] || 150000,
             increase: latest[1] ? ((latest[5] - latest[1]) * 100 / latest[1]) : 0,
             amplitude: latest[1] ? ((latest[3] - latest[4]) * 100 / latest[1]) : 0
+        };
+    }
+
+    function dateToNumber(value) {
+        if (!value) return 0;
+        if (typeof value === 'number') return value;
+        const date = new Date(value);
+        if (!Number.isNaN(date.getTime())) {
+            return Number(`${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`);
+        }
+        const number = Number(String(value).replace(/\D/g, '').slice(0, 8));
+        return Number.isFinite(number) ? number : 0;
+    }
+
+    function timeToNumber(value) {
+        if (!value) return 150000;
+        if (typeof value === 'number') return value;
+        const date = new Date(value);
+        if (!Number.isNaN(date.getTime())) {
+            return date.getHours() * 10000 + date.getMinutes() * 100 + date.getSeconds();
+        }
+        const number = Number(String(value).replace(/\D/g, '').slice(8, 14));
+        return Number.isFinite(number) && number > 0 ? number : 150000;
+    }
+
+    function buildHistoryPayload(symbol, period, payload, isIndex = false) {
+        const list = Array.isArray(payload?.list)
+            ? payload.list
+            : (Array.isArray(payload?.List) ? payload.List : []);
+        const hqSymbol = isIndex ? toHQSymbol(symbol) : toHQSymbol(symbol);
+        const data = list.map(item => {
+            const close = scaledPrice(item?.Close);
+            const yclose = scaledPrice(item?.Last) || close;
+            const open = scaledPrice(item?.Open) || close;
+            const high = scaledPrice(item?.High) || close;
+            const low = scaledPrice(item?.Low) || close;
+            const row = [
+                dateToNumber(item?.Time || item?.time),
+                yclose,
+                open,
+                high,
+                low,
+                close,
+                Number(item?.Volume || item?.volume || 0),
+                Number(item?.Amount || item?.amount || 0)
+            ];
+            if (String(period || '').toLowerCase().startsWith('minute') || String(period || '').toLowerCase() === 'hour') {
+                row.push(timeToNumber(item?.Time || item?.time));
+            }
+            return row;
+        }).filter(row => row[0] > 0 && row[5] > 0);
+        return {
+            symbol: hqSymbol,
+            name: hqSymbol,
+            period: period || payload?.meta?.type || 'day',
+            data,
+            ver: 2
         };
     }
 
@@ -470,7 +535,7 @@
         if (!container || !hasHQChart()) return false;
 
         const key = chartKey(container);
-        const symbol = normalizeCode(options.symbol);
+        const symbol = normalizeSymbol(options.symbol);
         const period = options.period || 'day';
         const count = options.count || 800;
         const windows = options.windows || [
@@ -543,7 +608,7 @@
         if (!container || !hasHQChart()) return false;
 
         const key = chartKey(container);
-        const symbol = normalizeCode(options.symbol);
+        const symbol = normalizeSymbol(options.symbol);
         states.set(key, { symbol, period: 'minute', count: 240 });
         destroyChart(container);
         states.set(key, { symbol, period: 'minute', count: 240 });
