@@ -477,6 +477,18 @@ func handleAutomationTemplates(w http.ResponseWriter, r *http.Request) {
 	successResponse(w, item)
 }
 
+func handleAutomationReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		errorResponse(w, "只支持POST请求")
+		return
+	}
+	if err := automationRunner.Reload(); err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	successResponse(w, map[string]string{"status": "reloaded"})
+}
+
 func buildAutomationTemplate(name string) (AutomationTask, error) {
 	switch name {
 	case "morning_sync":

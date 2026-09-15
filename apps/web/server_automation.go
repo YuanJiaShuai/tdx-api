@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -57,6 +58,28 @@ func runSystemStrategyBatchOnWorker(ctx context.Context) (AutomationRun, error) 
 		return AutomationRun{}, err
 	}
 	return run, nil
+}
+
+// notifySelectionWorkerReload asks the selection-worker scheduler to reload its
+// cron entries. The web container runs with AUTOMATION_SCHEDULER_ENABLED=false,
+// so its own automationRunner.Reload() is a no-op; the live scheduler lives in
+// selection-worker and only re-reads tasks when told to.
+func notifySelectionWorkerReload() {
+	go func() {
+		endpoint := serviceURL("SELECTION_WORKER_URL", "http://selection-worker:8082") + "/api/automations/reload"
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(nil))
+		if err != nil {
+			return
+		}
+		resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+		if err != nil {
+			log.Printf("通知 selection-worker 重载调度失败: %v", err)
+			return
+		}
+		_ = resp.Body.Close()
+	}()
 }
 
 func initAutomationServices() error {
@@ -479,6 +502,7 @@ func handleAutomationTasks(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "任务已保存，但调度重载失败: "+err.Error())
 			return
 		}
+		notifySelectionWorkerReload()
 		successResponse(w, item)
 	default:
 		errorResponse(w, "不支持的请求方法")
@@ -511,6 +535,7 @@ func handleAutomationTemplates(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "模板已保存，但调度重载失败: "+err.Error())
 		return
 	}
+	notifySelectionWorkerReload()
 	successResponse(w, item)
 }
 
@@ -639,6 +664,7 @@ func handleAutomationOperations(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "任务已更新，但调度重载失败: "+err.Error())
 			return
 		}
+		notifySelectionWorkerReload()
 		if refreshed, err := appStore.GetAutomationTask(id); err == nil {
 			item = refreshed
 		}
@@ -693,6 +719,7 @@ func handleAutomationOperations(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "任务已保存，但调度重载失败: "+err.Error())
 			return
 		}
+		notifySelectionWorkerReload()
 		successResponse(w, item)
 	case http.MethodDelete:
 		if isFixedAutomationTaskID(id) {
@@ -707,6 +734,7 @@ func handleAutomationOperations(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "任务已删除，但调度重载失败: "+err.Error())
 			return
 		}
+		notifySelectionWorkerReload()
 		successResponse(w, map[string]string{"id": id})
 	default:
 		errorResponse(w, "不支持的请求方法")

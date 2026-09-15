@@ -28,6 +28,7 @@ func main() {
 	http.HandleFunc("/api/stock-pools/", handleStockPoolOperations)
 	http.HandleFunc("/api/automations", handleAutomationTasks)
 	http.HandleFunc("/api/automations/templates", handleAutomationTemplates)
+	http.HandleFunc("/api/automations/reload", handleAutomationReload)
 	http.HandleFunc("/api/automations/runs", handleAutomationRuns)
 	http.HandleFunc("/api/selection-results", handleSelectionResults)
 	http.HandleFunc("/api/selection-results/tracking", handleSelectionTracking)
